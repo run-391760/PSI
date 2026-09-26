@@ -157,7 +157,7 @@ export function integrations(): Integration[] {
   const pagespeed = flagEnabled("ENABLE_PAGESPEED");
   const news = flagEnabled("ENABLE_NEWS_MENTIONS");
   const anthropic = isSet("ANTHROPIC_API_KEY");
-  const googleSa = isSet("GOOGLE_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_SERVICE_ACCOUNT_FILE");
+  const googleSa = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_GA4_SERVICE_ACCOUNT_JSON", "GOOGLE_GA4_SERVICE_ACCOUNT_FILE"].some(isSet);
   const google = (isSet("GOOGLE_CLIENT_ID") && isSet("GOOGLE_CLIENT_SECRET")) || googleSa;
   return [
     {

@@ -20,29 +20,17 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
 export const oauthConfigured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-export const googleConfigured = () => oauthConfigured() || !!serviceAccount();
+export const googleConfigured = () => oauthConfigured() || !!serviceAccount("gsc") || !!serviceAccount("ga4");
 
 // ------------------------------------------------------------------ service account (server-wide)
 
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
-let saCache: { raw: string; sa: ServiceAccount | null } | null = null;
+/** Which Google API a credential is for: Search Console ("gsc") or Analytics ("ga4"). */
+export type GoogleApiKind = "gsc" | "ga4";
+const saCache = new Map<string, ServiceAccount | null>();
 
-/**
- * Optional service account used for every user instead of per-user OAuth. Configure with
- * GOOGLE_SERVICE_ACCOUNT_JSON (the key JSON, raw or base64) or GOOGLE_SERVICE_ACCOUNT_FILE (a path).
- * Grant its email access in Search Console (Users and permissions) and GA4 (Property access, Viewer).
- */
-export function serviceAccount(): ServiceAccount | null {
-  let raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim() ?? "";
-  if (!raw && process.env.GOOGLE_SERVICE_ACCOUNT_FILE) {
-    try {
-      raw = readFileSync(process.env.GOOGLE_SERVICE_ACCOUNT_FILE, "utf8");
-    } catch {
-      raw = "";
-    }
-  }
-  if (!raw) return null;
-  if (saCache?.raw === raw) return saCache.sa;
+function parseServiceAccount(raw: string): ServiceAccount | null {
+  if (saCache.has(raw)) return saCache.get(raw)!;
   let sa: ServiceAccount | null = null;
   try {
     const json = raw.startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8");
@@ -51,11 +39,37 @@ export function serviceAccount(): ServiceAccount | null {
   } catch {
     sa = null;
   }
-  saCache = { raw, sa };
+  saCache.set(raw, sa);
   return sa;
 }
+function readEnvKey(jsonVar: string, fileVar: string) {
+  const raw = process.env[jsonVar]?.trim();
+  if (raw) return raw;
+  const file = process.env[fileVar];
+  if (!file) return "";
+  try {
+    return readFileSync(file, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
 
-let saToken: { token: string; expires: number } | null = null;
+/**
+ * Optional service accounts used for every user instead of per-user OAuth:
+ * GOOGLE_SERVICE_ACCOUNT_JSON (or _FILE) for Search Console and, by default, GA4;
+ * GOOGLE_GA4_SERVICE_ACCOUNT_JSON (or _FILE) to use a separate account for GA4.
+ * Keys may be raw JSON or base64. Grant each email access in Search Console / GA4.
+ */
+export function serviceAccount(kind: GoogleApiKind = "gsc"): ServiceAccount | null {
+  if (kind === "ga4") {
+    const ga4 = readEnvKey("GOOGLE_GA4_SERVICE_ACCOUNT_JSON", "GOOGLE_GA4_SERVICE_ACCOUNT_FILE");
+    if (ga4) return parseServiceAccount(ga4);
+  }
+  const raw = readEnvKey("GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_SERVICE_ACCOUNT_FILE");
+  return raw ? parseServiceAccount(raw) : null;
+}
+
+const saTokens = new Map<string, { token: string; expires: number }>();
 
 /** Signed JWT assertion (RS256) exchanged for an access token (OAuth 2.0 JWT bearer grant). */
 export function serviceAccountAssertion(sa: ServiceAccount, now = Math.floor(Date.now() / 1000)) {
@@ -72,7 +86,8 @@ export function serviceAccountAssertion(sa: ServiceAccount, now = Math.floor(Dat
 }
 
 async function serviceAccountToken(sa: ServiceAccount, force = false) {
-  if (!force && saToken && saToken.expires > Date.now() + 60_000) return saToken.token;
+  const cachedToken = saTokens.get(sa.client_email);
+  if (!force && cachedToken && cachedToken.expires > Date.now() + 60_000) return cachedToken.token;
   let assertion: string;
   try {
     assertion = serviceAccountAssertion(sa);
@@ -88,8 +103,8 @@ async function serviceAccountToken(sa: ServiceAccount, force = false) {
   });
   const data = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
   if (!res.ok || !data.access_token) throw new AppError(`Google rejected the service account: ${data.error_description ?? data.error ?? `HTTP ${res.status}`}.`, 502);
-  saToken = { token: data.access_token, expires: Date.now() + (data.expires_in ?? 3600) * 1000 };
-  return saToken.token;
+  saTokens.set(sa.client_email, { token: data.access_token, expires: Date.now() + (data.expires_in ?? 3600) * 1000 });
+  return data.access_token;
 }
 
 export function redirectUri(requestOrigin?: string) {
@@ -100,8 +115,14 @@ export function redirectUri(requestOrigin?: string) {
 export type GoogleConnection = { email: string; scopes: string[]; connectedAt: string; serviceAccount?: boolean };
 
 export async function getGoogleConnection(userId: string): Promise<GoogleConnection | null> {
-  const sa = serviceAccount();
-  if (sa) return { email: sa.client_email, scopes: GOOGLE_SCOPES.filter((s) => s.startsWith("https://")), connectedAt: new Date(0).toISOString(), serviceAccount: true };
+  const accounts = [serviceAccount("gsc"), serviceAccount("ga4")].filter((a): a is ServiceAccount => !!a);
+  if (accounts.length)
+    return {
+      email: [...new Set(accounts.map((a) => a.client_email))].join(", "),
+      scopes: GOOGLE_SCOPES.filter((s) => s.startsWith("https://")),
+      connectedAt: new Date(0).toISOString(),
+      serviceAccount: true,
+    };
   const [row] = await query<{ email: string; scopes: string; connected_at: Date | string }>("SELECT email,scopes,connected_at FROM google_connections WHERE user_id=$1", [userId]);
   return row ? { email: row.email, scopes: row.scopes.split(" ").filter(Boolean), connectedAt: new Date(row.connected_at).toISOString() } : null;
 }
@@ -173,8 +194,8 @@ export async function finishGoogleAuth(userId: string, code: string, state: stri
 }
 
 /** A valid access token, refreshed when needed. Revoked access removes the connection. */
-export async function googleAccessToken(userId: string, forceRefresh = false) {
-  const sa = serviceAccount();
+export async function googleAccessToken(userId: string, forceRefresh = false, kind: GoogleApiKind = "gsc") {
+  const sa = serviceAccount(kind);
   if (sa) return serviceAccountToken(sa, forceRefresh);
   const [row] = await query<{ refresh_token_enc: string; access_token_enc: string | null; valid: boolean }>(
     "SELECT refresh_token_enc, access_token_enc, (access_expires_at > now()) AS valid FROM google_connections WHERE user_id=$1",
@@ -201,7 +222,8 @@ export async function googleAccessToken(userId: string, forceRefresh = false) {
 /** Authorized JSON request to a Google API (retries once after a token refresh on 401). */
 export async function googleApi<T = Record<string, any>>(userId: string, url: string, body?: unknown): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const token = await googleAccessToken(userId, attempt > 0);
+    const kind: GoogleApiKind = /analytics(data|admin)\.googleapis\.com/.test(url) ? "ga4" : "gsc";
+    const token = await googleAccessToken(userId, attempt > 0, kind);
     const res = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
       headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },

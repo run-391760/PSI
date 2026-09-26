@@ -65,6 +65,9 @@ umask 077
   echo "LOCAL_WORKER=true"
   md attributes/synapseseo-env
   echo
+  # Private settings kept only on the VM (e.g. Google service account keys): /etc/synapseseo/extra.env
+  [ -f "$CONF_DIR/extra.env" ] && cat "$CONF_DIR/extra.env"
+  echo
 } > "$CONF_DIR/env"
 umask 022
 cat > "$CONF_DIR/Caddyfile" <<CADDY

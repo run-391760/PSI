@@ -127,3 +127,16 @@ test("service account JWT assertion is RS256-signed with the right claims", asyn
   assert.match(claims.scope, /webmasters\.readonly/);
   assert.match(claims.scope, /analytics\.readonly/);
 });
+
+test("separate service accounts for Search Console and GA4", async () => {
+  const { serviceAccount } = await import("../src/lib/google/oauth");
+  const key = (email: string) => Buffer.from(JSON.stringify({ client_email: email, private_key: "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n" })).toString("base64");
+  process.env.GOOGLE_SERVICE_ACCOUNT_JSON = key("gsc@test.iam.gserviceaccount.com");
+  assert.equal(serviceAccount("gsc")?.client_email, "gsc@test.iam.gserviceaccount.com");
+  assert.equal(serviceAccount("ga4")?.client_email, "gsc@test.iam.gserviceaccount.com", "GA4 falls back to the default account");
+  process.env.GOOGLE_GA4_SERVICE_ACCOUNT_JSON = key("ga4@test.iam.gserviceaccount.com");
+  assert.equal(serviceAccount("ga4")?.client_email, "ga4@test.iam.gserviceaccount.com");
+  assert.equal(serviceAccount("gsc")?.client_email, "gsc@test.iam.gserviceaccount.com");
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  delete process.env.GOOGLE_GA4_SERVICE_ACCOUNT_JSON;
+});
