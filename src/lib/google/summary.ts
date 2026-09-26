@@ -1,8 +1,7 @@
 import type { SummaryProvider } from "@/lib/projects/summary-types";
 import { compact } from "@/lib/format";
-import { query } from "@/lib/db";
 import { getProjectGoogle, organicInsights } from "./data";
-import { googleConfigured } from "./oauth";
+import { getGoogleConnection, googleConfigured } from "./oauth";
 
 /** Project dashboard widget: real Search Console clicks (and GA4 organic sessions) for the last 28 days. */
 export const summaries: SummaryProvider[] = [
@@ -10,7 +9,7 @@ export const summaries: SummaryProvider[] = [
     const href = `/organic-traffic-insights?project=${project.id}`;
     const base = { tool: "organic-traffic-insights", label: "Organic Traffic Insights", href };
     if (!googleConfigured()) return { ...base, state: "empty", cta: "Set up", note: "Connect Google Search Console and GA4" };
-    const [link, [conn]] = await Promise.all([getProjectGoogle(project.id), query<{ user_id: string }>("SELECT user_id FROM google_connections WHERE user_id=$1", [project.owner_id])]);
+    const [link, conn] = await Promise.all([getProjectGoogle(project.id), getGoogleConnection(project.owner_id)]);
     if (!conn || (!link.gscSite && !link.ga4Property)) return { ...base, state: "empty", cta: conn ? "Link properties" : "Connect Google" };
     const { data, fetchedAt } = await organicInsights(project.owner_id, link, 28);
     const pctChange = (a: number, b: number) => (b ? Math.round(((a - b) / b) * 1000) / 10 : null);

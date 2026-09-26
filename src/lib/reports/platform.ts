@@ -157,7 +157,8 @@ export function integrations(): Integration[] {
   const pagespeed = flagEnabled("ENABLE_PAGESPEED");
   const news = flagEnabled("ENABLE_NEWS_MENTIONS");
   const anthropic = isSet("ANTHROPIC_API_KEY");
-  const google = isSet("GOOGLE_CLIENT_ID") && isSet("GOOGLE_CLIENT_SECRET");
+  const googleSa = isSet("GOOGLE_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_SERVICE_ACCOUNT_FILE");
+  const google = (isSet("GOOGLE_CLIENT_ID") && isSet("GOOGLE_CLIENT_SECRET")) || googleSa;
   return [
     {
       id: "dataforseo",
@@ -210,11 +211,12 @@ export function integrations(): Integration[] {
       name: "Google Search Console & Analytics",
       description: "Your own sites' real clicks, impressions, queries, positions, organic sessions and key events (OAuth, read-only).",
       status: google ? "enabled" : "not-configured",
-      statusLabel: google ? "Configured · each user connects their Google account" : "Not configured",
+      statusLabel: googleSa ? "Service account configured" : google ? "Configured · each user connects their Google account" : "Not configured",
       powers: ["Organic Traffic Insights", "Project dashboard widget", "Queries → Position Tracking"],
       envVars: [
-        { name: "GOOGLE_CLIENT_ID", set: isSet("GOOGLE_CLIENT_ID"), example: "…apps.googleusercontent.com", required: true },
-        { name: "GOOGLE_CLIENT_SECRET", set: isSet("GOOGLE_CLIENT_SECRET"), example: "GOCSPX-…", required: true },
+        { name: "GOOGLE_SERVICE_ACCOUNT_JSON", set: googleSa, example: "base64 of the key JSON", required: false },
+        { name: "GOOGLE_CLIENT_ID", set: isSet("GOOGLE_CLIENT_ID"), example: "…apps.googleusercontent.com", required: false },
+        { name: "GOOGLE_CLIENT_SECRET", set: isSet("GOOGLE_CLIENT_SECRET"), example: "GOCSPX-…", required: false },
         { name: "APP_SECRET", set: isSet("APP_SECRET"), example: "long random string", required: process.env.NODE_ENV === "production" },
       ],
       docs: "https://console.cloud.google.com/apis/credentials",

@@ -118,11 +118,8 @@ export default async function OrganicTrafficInsightsPage({ searchParams }: PageP
       </Page>
     );
 
-  const accountBadge = (
-    <Badge>
-      Google: {connection.email || "connected"}
-    </Badge>
-  );
+  const accountBadge = <Badge>{connection.serviceAccount ? "Service account" : "Google"}: {connection.email || "connected"}</Badge>;
+  const disconnect = connection.serviceAccount ? null : <DisconnectGoogleButton />;
 
   // 3) Link properties (first time or editing)
   if ((!link.gscSite && !link.ga4Property) || editing) {
@@ -135,8 +132,13 @@ export default async function OrganicTrafficInsightsPage({ searchParams }: PageP
     ]);
     return (
       <Page>
-        {header(accountBadge, <DisconnectGoogleButton />)}
+        {header(accountBadge, disconnect)}
         {banners}
+        {connection.serviceAccount && (
+          <Callout tone="info" className="mb-3" title="Using the service account">
+            Properties appear here once <code className="rounded bg-surface-3 px-1">{connection.email}</code> has access: in Search Console go to Settings → Users and permissions → Add user (Restricted is enough); in GA4 go to Admin → Property access management → add it as Viewer.
+          </Callout>
+        )}
         {errors.map((e) => (
           <Callout key={e} tone="warning" className="mb-3">{e}</Callout>
         ))}
@@ -165,7 +167,7 @@ export default async function OrganicTrafficInsightsPage({ searchParams }: PageP
     <>
       <RefreshGoogleButton />
       <ButtonLink href={`${returnTo}&edit=1`}>Change properties</ButtonLink>
-      <DisconnectGoogleButton />
+      {disconnect}
     </>
   );
   const rangeLinks = (

@@ -43,6 +43,18 @@ gcloud compute instances add-metadata synapseseo --zone asia-south1-b --metadata
 Metadata is readable by project members with Compute access; keep that in mind for API keys. The
 token-encryption secret (`APP_SECRET`) is generated on the VM and never leaves it.
 
+## Google Search Console + GA4 with a service account
+
+```sh
+echo "GOOGLE_SERVICE_ACCOUNT_JSON=$(base64 -i key.json | tr -d '\n')" > prod.env   # add other keys too
+gcloud compute instances add-metadata synapseseo --zone asia-south1-b --metadata-from-file synapseseo-env=prod.env
+rm prod.env   # then stop + start the VM
+```
+
+Give the service account's email access in Search Console (Settings → Users and permissions) and GA4
+(Admin → Property access management → Viewer), and enable the Search Console API, Google Analytics Data
+API and Google Analytics Admin API in the project.
+
 ## Backups
 
 The database lives on the boot disk (`/var/lib/synapseseo`). Attach a snapshot schedule to the disk

@@ -111,3 +111,19 @@ test("secrets round-trip and detect tampering", () => {
   assert.throws(() => decryptSecret([iv, tag, Buffer.from("tampered").toString("base64")].join(".")));
   assert.ok(data.length > 0);
 });
+
+test("service account JWT assertion is RS256-signed with the right claims", async () => {
+  const { generateKeyPairSync, createVerify } = await import("node:crypto");
+  const { serviceAccountAssertion } = await import("../src/lib/google/oauth");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const sa = { client_email: "sa@test.iam.gserviceaccount.com", private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString() };
+  const jwt = serviceAccountAssertion(sa, 1_000_000);
+  const [h, p, sig] = jwt.split(".");
+  assert.ok(createVerify("RSA-SHA256").update(`${h}.${p}`).verify(publicKey, Buffer.from(sig, "base64url")));
+  const claims = JSON.parse(Buffer.from(p, "base64url").toString());
+  assert.equal(claims.iss, sa.client_email);
+  assert.equal(claims.aud, "https://oauth2.googleapis.com/token");
+  assert.equal(claims.exp - claims.iat, 3600);
+  assert.match(claims.scope, /webmasters\.readonly/);
+  assert.match(claims.scope, /analytics\.readonly/);
+});
