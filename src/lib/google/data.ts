@@ -170,16 +170,20 @@ async function ga4Insights(userId: string, property: string, range: ReturnType<t
   const metrics = METRICS.map((name) => ({ name }));
   const cur = [{ startDate: range.start, endDate: range.end }];
   const prev = [{ startDate: range.prevStart, endDate: range.prevEnd }];
-  const [totals, previous, organic, organicPrevious, daily, dailyOrganic, channels, landing] = await Promise.all([
-    ga4Report(userId, property, { dateRanges: cur, metrics }),
-    ga4Report(userId, property, { dateRanges: prev, metrics }),
-    ga4Report(userId, property, { dateRanges: cur, metrics, dimensionFilter: ORGANIC }),
-    ga4Report(userId, property, { dateRanges: prev, metrics, dimensionFilter: ORGANIC }),
-    ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }], limit: 500 }),
-    ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }], dimensionFilter: ORGANIC, limit: 500 }),
-    ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "sessionDefaultChannelGroup" }], metrics, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 20 }),
-    ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "landingPagePlusQueryString" }], metrics, dimensionFilter: ORGANIC, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 500 }),
-  ]);
+  // GA4 limits concurrent requests per property, so reports run one at a time.
+  const reports: (() => Promise<Ga4Row[]>)[] = [
+    () => ga4Report(userId, property, { dateRanges: cur, metrics }),
+    () => ga4Report(userId, property, { dateRanges: prev, metrics }),
+    () => ga4Report(userId, property, { dateRanges: cur, metrics, dimensionFilter: ORGANIC }),
+    () => ga4Report(userId, property, { dateRanges: prev, metrics, dimensionFilter: ORGANIC }),
+    () => ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }], limit: 500 }),
+    () => ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }], dimensionFilter: ORGANIC, limit: 500 }),
+    () => ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "sessionDefaultChannelGroup" }], metrics, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 20 }),
+    () => ga4Report(userId, property, { dateRanges: cur, dimensions: [{ name: "landingPagePlusQueryString" }], metrics, dimensionFilter: ORGANIC, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 500 }),
+  ];
+  const results: Ga4Row[][] = [];
+  for (const run of reports) results.push(await run());
+  const [totals, previous, organic, organicPrevious, daily, dailyOrganic, channels, landing] = results;
   const organicByDay = new Map(dailyOrganic.map((r) => [r.dimensionValues?.[0]?.value ?? "", Number(r.metricValues?.[0]?.value ?? 0)]));
   const gaDate = (v: string) => (v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6)}` : v);
   return {
@@ -243,8 +247,10 @@ export function joinPages(gsc: GscInsights | null, ga4: Ga4Insights | null): Ins
 /** Real organic performance for a linked project (cached 6 h per user/property/range). */
 export async function organicInsights(userId: string, link: ProjectGoogleLink, days: number) {
   const range = dateRange(days);
-  const key = `google-insights:v1:${userId}:${link.gscSite ?? "-"}:${link.ga4Property ?? "-"}:${range.start}:${range.end}`;
-  return cached(key, "search-console", 6, async (): Promise<OrganicInsights> => {
+  const key = `google-insights:v2:${userId}:${link.gscSite ?? "-"}:${link.ga4Property ?? "-"}:${range.start}:${range.end}`;
+  let partial: OrganicInsights | null = null;
+  try {
+    return await cached(key, "search-console", 6, async (): Promise<OrganicInsights> => {
     const [gsc, ga4] = await Promise.allSettled([
       link.gscSite ? gscInsights(userId, link.gscSite, range) : Promise.resolve(null),
       link.ga4Property ? ga4Insights(userId, link.ga4Property, range) : Promise.resolve(null),
@@ -254,6 +260,16 @@ export async function organicInsights(userId: string, link: ProjectGoogleLink, d
     const a = ga4.status === "fulfilled" ? ga4.value : null;
     // Do not cache a result where every linked source failed (e.g. a transient quota error).
     if (!((link.gscSite && g) || (link.ga4Property && a))) throw new AppError(err(gsc) ?? err(ga4) ?? "Google data could not be loaded.", 502);
-    return { range, gsc: g, gscError: err(gsc), ga4: a, ga4Error: err(ga4), pages: joinPages(g, a) };
-  });
+    const result = { range, gsc: g, gscError: err(gsc), ga4: a, ga4Error: err(ga4), pages: joinPages(g, a) };
+    // A partial failure (e.g. a transient quota error on one source) is shown but not cached.
+    if (result.gscError || result.ga4Error) {
+      partial = result;
+      throw new AppError("partial", 502);
+    }
+    return result;
+    });
+  } catch (e) {
+    if (partial) return { data: partial as OrganicInsights, source: "search-console" as const, fetchedAt: new Date().toISOString(), live: true };
+    throw e;
+  }
 }

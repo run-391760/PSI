@@ -26,7 +26,7 @@ export async function linkGoogleAction(projectId: string, link: { gscSite: strin
 export async function refreshGoogleDataAction(): Promise<ActionResult<null>> {
   try {
     const user = await requireUser();
-    await query("DELETE FROM provider_cache WHERE key LIKE $1", [`google-insights:v1:${user.id}:%`]);
+    await query("DELETE FROM provider_cache WHERE key LIKE $1", [`google-insights:v2:${user.id}:%`]);
     revalidatePath("/organic-traffic-insights");
     return { ok: true, data: null };
   } catch (e) {
@@ -38,7 +38,7 @@ export async function disconnectGoogleAction(): Promise<ActionResult<null>> {
   try {
     const user = await requireUser();
     await disconnectGoogle(user.id);
-    await query("DELETE FROM provider_cache WHERE key LIKE $1", [`google-insights:v1:${user.id}:%`]);
+    await query("DELETE FROM provider_cache WHERE key LIKE $1", [`google-insights:v2:${user.id}:%`]);
     revalidatePath("/organic-traffic-insights");
     return { ok: true, data: null };
   } catch (e) {

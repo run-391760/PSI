@@ -221,6 +221,7 @@ export async function googleAccessToken(userId: string, forceRefresh = false, ki
 
 /** Authorized JSON request to a Google API (retries once after a token refresh on 401). */
 export async function googleApi<T = Record<string, any>>(userId: string, url: string, body?: unknown): Promise<T> {
+  let quotaRetries = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     const kind: GoogleApiKind = /analytics(data|admin)\.googleapis\.com/.test(url) ? "ga4" : "gsc";
     const token = await googleAccessToken(userId, attempt > 0, kind);
@@ -233,6 +234,13 @@ export async function googleApi<T = Record<string, any>>(userId: string, url: st
     });
     if (res.status === 401 && attempt === 0) continue;
     const data = (await res.json().catch(() => ({}))) as Record<string, any>;
+    // Concurrency/rate quota: brief backoff and retry (up to 3 times) before surfacing the error.
+    if (res.status === 429 && quotaRetries < 3) {
+      quotaRetries++;
+      attempt--;
+      await new Promise((r) => setTimeout(r, 1500 * quotaRetries));
+      continue;
+    }
     if (!res.ok) {
       const msg = data?.error?.message ?? `HTTP ${res.status}`;
       if (res.status === 403) throw new AppError(`Google denied access: ${msg}`, 403);
