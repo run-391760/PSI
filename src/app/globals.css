@@ -1,0 +1,296 @@
+@import "tailwindcss";
+
+/* Dark mode follows data-theme on <html> (set before paint by the inline script in layout.tsx). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  /* Surfaces */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-3: #f0f2f5;
+  --border: #e4e7ec;
+  --border-strong: #cfd4dc;
+  /* Ink */
+  --text: #101828;
+  --text-2: #475467;
+  --text-3: #7a8494;
+  --link: #1d64d8;
+  /* Brand (UI chrome only — never a data series) */
+  --brand: #5b45e8;
+  --brand-hover: #4a35d4;
+  --brand-soft: #efedff;
+  --brand-ink: #3a24b8;
+  /* Sidebar */
+  --nav-bg: #0f1422;
+  --nav-bg-2: #171d2e;
+  --nav-text: #c3c9d6;
+  --nav-muted: #6f7890;
+  --nav-active: rgba(139, 124, 255, 0.18);
+  /* Status (reserved: never reused as a series color; always paired with icon/label) */
+  --good: #0ca30c;
+  --good-ink: #067306;
+  --good-soft: #e8f6e8;
+  --warning: #fab219;
+  --warning-ink: #8a5a00;
+  --warning-soft: #fff5dc;
+  --serious: #ec835a;
+  --serious-ink: #a4461f;
+  --serious-soft: #fdeee7;
+  --critical: #d03b3b;
+  --critical-ink: #b42323;
+  --critical-soft: #fcebeb;
+  --info-soft: #eaf2fd;
+  /* Charts (validated with dataviz validate_palette.js on #ffffff) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --seq-100: #cde2fb;
+  --seq-200: #9ec5f4;
+  --seq-300: #6da7ec;
+  --seq-400: #3987e5;
+  --seq-500: #256abf;
+  --seq-600: #184f95;
+  --seq-700: #0d366b;
+  --chart-grid: #eceef2;
+  --chart-axis: #d0d5dd;
+  --chart-text: #7a8494;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0a0d14;
+    --surface: #121620;
+    --surface-2: #161b27;
+    --surface-3: #1d2331;
+    --border: #252c3b;
+    --border-strong: #353d51;
+    --text: #f2f4f7;
+    --text-2: #b3bbca;
+    --text-3: #818a9c;
+    --link: #6ea8ff;
+    --brand: #8b7cff;
+    --brand-hover: #9d90ff;
+    --brand-soft: #231f45;
+    --brand-ink: #c4bcff;
+    --nav-bg: #0b0f19;
+    --nav-bg-2: #121827;
+    --good-ink: #3fcf3f;
+    --good-soft: #0f2a12;
+    --warning-ink: #fcc451;
+    --warning-soft: #2e2410;
+    --serious-ink: #f3a07e;
+    --serious-soft: #321c14;
+    --critical-ink: #f07373;
+    --critical-soft: #331516;
+    --info-soft: #14243d;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --seq-100: #104281;
+    --seq-200: #184f95;
+    --seq-300: #1c5cab;
+    --seq-400: #256abf;
+    --seq-500: #3987e5;
+    --seq-600: #6da7ec;
+    --seq-700: #9ec5f4;
+    --chart-grid: #222837;
+    --chart-axis: #353d51;
+    --chart-text: #818a9c;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0d14;
+  --surface: #121620;
+  --surface-2: #161b27;
+  --surface-3: #1d2331;
+  --border: #252c3b;
+  --border-strong: #353d51;
+  --text: #f2f4f7;
+  --text-2: #b3bbca;
+  --text-3: #818a9c;
+  --link: #6ea8ff;
+  --brand: #8b7cff;
+  --brand-hover: #9d90ff;
+  --brand-soft: #231f45;
+  --brand-ink: #c4bcff;
+  --nav-bg: #0b0f19;
+  --nav-bg-2: #121827;
+  --good-ink: #3fcf3f;
+  --good-soft: #0f2a12;
+  --warning-ink: #fcc451;
+  --warning-soft: #2e2410;
+  --serious-ink: #f3a07e;
+  --serious-soft: #321c14;
+  --critical-ink: #f07373;
+  --critical-soft: #331516;
+  --info-soft: #14243d;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --seq-100: #104281;
+  --seq-200: #184f95;
+  --seq-300: #1c5cab;
+  --seq-400: #256abf;
+  --seq-500: #3987e5;
+  --seq-600: #6da7ec;
+  --seq-700: #9ec5f4;
+  --chart-grid: #222837;
+  --chart-axis: #353d51;
+  --chart-text: #818a9c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* Tailwind utilities mapped to the tokens: bg-surface, text-text-2, border-border, bg-brand... */
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-link: var(--link);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-nav: var(--nav-bg);
+  --color-nav-2: var(--nav-bg-2);
+  --color-nav-text: var(--nav-text);
+  --color-nav-muted: var(--nav-muted);
+  --color-nav-active: var(--nav-active);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-good-soft: var(--good-soft);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-warning-soft: var(--warning-soft);
+  --color-serious: var(--serious);
+  --color-serious-ink: var(--serious-ink);
+  --color-serious-soft: var(--serious-soft);
+  --color-critical: var(--critical);
+  --color-critical-ink: var(--critical-ink);
+  --color-critical-soft: var(--critical-soft);
+  --color-info-soft: var(--info-soft);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
+  --shadow-card: var(--shadow-sm);
+  --shadow-pop: var(--shadow-md);
+  --shadow-modal: var(--shadow-lg);
+}
+
+/* Element defaults live in the base layer so Tailwind utilities (text-link, bg-brand...) win. */
+@layer base {
+  html {
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.45;
+  }
+  ::selection {
+    background: var(--brand-soft);
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+}
+
+/* Scrollbars */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3247 transparent;
+}
+/* Recharts: recessive chrome, no focus box on click */
+.recharts-wrapper *:focus {
+  outline: none;
+}
+.recharts-cartesian-grid line {
+  stroke: var(--chart-grid);
+}
+.recharts-text {
+  fill: var(--chart-text);
+  font-size: 11px;
+}
+/* Print (reports) */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  .print-break {
+    break-before: page;
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-3) 0%, var(--surface-2) 50%, var(--surface-3) 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
