@@ -27,12 +27,15 @@ BRANCH=$(md attributes/synapseseo-branch)
 [ -n "$BRANCH" ] || BRANCH=main
 
 # 1. Packages
+# Debian 13 ships the Docker CLI separately (docker-cli) from the daemon (docker.io).
 if ! command -v docker >/dev/null 2>&1; then
   apt-get update -y
   apt-get install -y --no-install-recommends docker.io git ca-certificates curl
+  apt-get install -y --no-install-recommends docker-cli || true
   apt-get install -y --no-install-recommends docker-buildx || true
   systemctl enable --now docker
 fi
+command -v docker >/dev/null 2>&1 || { echo "== docker CLI is not available after installation"; exit 1; }
 command -v git >/dev/null 2>&1 || apt-get install -y --no-install-recommends git
 
 # 2. Source
