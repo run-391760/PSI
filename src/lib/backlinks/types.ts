@@ -76,6 +76,8 @@ export type RefDomainRow = {
   isNew: boolean;
   isLost: boolean;
   follow: boolean;
+  /** DataForSEO backlinks spam score (live only). */
+  spamScore?: number | null;
 };
 
 export type AnchorRow = { anchor: string; type: AnchorType; referringDomains: number; backlinks: number; firstSeen: string; lastSeen: string; isNew: boolean };
@@ -108,7 +110,8 @@ export type CompareEntry = {
   followPct: number;
   textPct: number;
   imagePct: number;
-  last30: { newRd: number; lostRd: number; newBl: number; lostBl: number };
+  /** null when the provider did not return new/lost counts. */
+  last30: { newRd: number; lostRd: number; newBl: number; lostBl: number } | null;
   asShares: number[];
   topCategory: string;
 };
@@ -168,17 +171,18 @@ export const REMOVE_STATUS_LABELS: Record<RemoveStatus, string> = {
 
 /** Toxic markers with the explanation shown in tooltips. */
 export const MARKER_INFO: Record<string, string> = {
-  "Spam in domain name": "The domain name contains words typical of spam sites (casino, pills, cheap links, link directories…).",
+  "Spam in domain name": "The domain name contains words typical of spam sites (casino, pills, loans, link directories…).",
   "Suspicious TLD": "The domain uses a top-level domain that is frequently abused by spam sites (.xyz, .top, .click, .icu…).",
   "Low Authority Score": "The linking domain has a very low Authority Score (under 5): it passes little value and is often low quality.",
-  "Sitewide link": "The link appears on most pages of the site (footer, sidebar, blogroll), which search engines can treat as unnatural.",
+  "Sitewide link": "The domain links to you 200+ times, typical of footer, sidebar or blogroll links that search engines can treat as unnatural.",
   "Link network": "The domain shows footprints shared with other linking domains, typical of private blog networks (PBNs).",
   "Too many outbound links": "Pages on this domain link out to hundreds of sites — a pattern of link farms and low-quality directories.",
   "Potentially unnatural anchor text": "Anchors from this domain look manipulative: keyword-rich rather than branded or natural.",
   "Same IP network": "Several domains linking to you are hosted on the same IP subnet, a common link-network footprint.",
   "Unrelated category": "The linking site's topic is unrelated to your site's topic.",
   "Geo mismatch": "The linking site is hosted outside your target country and outside common hosting countries.",
-  "Money anchor text": "Every link from this domain uses a commercial keyword anchor and none mentions your brand terms.",
+  "Money anchor text": "Links from this domain use a keyword-rich anchor that does not mention your brand or domain.",
+  "High spam score": "DataForSEO's backlinks spam score for this domain is 60 or higher (computed from signals of the linking pages).",
   "Not in latest audit": "This domain was not found in the latest audit; it may have removed its links. It stays in your list until you restore it.",
 };
 
@@ -254,9 +258,10 @@ export type PipelineRow = {
   domain: string;
   state: "in_progress" | "rejected";
   status: OutreachStatus;
-  rating: number;
+  /** null when unknown (e.g. the prospect was rated from demo data that is now hidden). */
+  rating: number | null;
   reason: string;
-  authorityScore: number;
+  authorityScore: number | null;
   contactName: string;
   contactEmail: string;
   notes: string;

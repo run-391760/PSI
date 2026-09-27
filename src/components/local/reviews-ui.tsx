@@ -24,7 +24,7 @@ export type ReviewItem = {
   text: string;
   sentiment: Sentiment;
   sentimentScore: number;
-  reply: { body: string; date: string; by: "demo" | "you"; status: "posted" | "draft" } | null;
+  reply: { body: string; date: string; by: "demo" | "you" | "owner"; status: "posted" | "draft" } | null;
 };
 export type ReplyTemplate = { id: string; label: string; body: string };
 

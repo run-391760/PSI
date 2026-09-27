@@ -5,11 +5,22 @@ import { Grid } from "@/components/shell/page";
 import { BubbleChart } from "@/components/charts/bubble-chart";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { NeedsData } from "@/components/seo/needs-data";
 import { CompetitorsTable, DiscoveredTable } from "../competitor-tables";
 import { SovBars } from "../sov-bars";
 import { Delta, domainColor, domainDashed } from "../ui";
 
 export async function CompetitorsTab({ ctx }: { ctx: Ctx }) {
+  if (ctx.measured)
+    return (
+      <NeedsData
+        providers={["dataforseo"]}
+        title="Competitor tracking needs DataForSEO"
+        shows={["Visibility, share of voice and average position of each competitor", "Competitors discovered in the top 20 of your keywords' SERPs", "Positions of competitors per keyword", "“Competitor overtakes you” alerts"]}
+      >
+        <p className="mt-3 text-[12.5px] text-text-3">This campaign uses Google Search Console, which only reports your own site ({ctx.project.domain}). Competitors saved in Settings are tracked once you switch the campaign to DataForSEO.</p>
+      </NeedsData>
+    );
   const d = await competitors(ctx);
   const keys = ctx.domains.map((_, i) => `d${i}`);
   const series = ctx.domains.map((dm, i) => ({ key: keys[i], label: dm, color: domainColor(i), dashed: domainDashed(i) }));

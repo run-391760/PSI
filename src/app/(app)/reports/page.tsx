@@ -2,8 +2,9 @@ import { BarChart3, FolderKanban, Globe, Link2, Plus, Swords } from "lucide-reac
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
-import { listReports } from "@/lib/reports";
-import { TEMPLATES, type TemplateId } from "@/lib/reports/templates";
+import { listReports, reportAvailability } from "@/lib/reports";
+import { TEMPLATES, templateAvailable, type TemplateId } from "@/lib/reports/templates";
+import { Badge } from "@/components/ui/badge";
 import { Page, PageHeader } from "@/components/shell/page";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -17,12 +18,13 @@ const ICONS: Record<TemplateId, typeof Globe> = { domain: Globe, project: Folder
 export default async function ReportsPage() {
   const user = await requirePageUser();
   const reports = await listReports(user.id);
+  const available = reportAvailability();
   return (
     <Page>
       <PageHeader
         breadcrumbs={[{ label: "Monitoring & reports" }, { label: "My Reports" }]}
         title="My Reports"
-        description="Build branded, printable SEO reports from any domain or project and export them to PDF."
+        description="Build branded, printable SEO reports from your real data sources and export them to PDF."
         actions={
           <ButtonLink href="/reports/new" variant="primary">
             <span className="inline-flex items-center gap-1.5 text-white"><Plus className="h-4 w-4" /> New report</span>
@@ -40,8 +42,9 @@ export default async function ReportsPage() {
               </span>
               <span className="mt-3 text-[14px] font-semibold text-text group-hover:text-link">{t.name}</span>
               <span className="mt-1 flex-1 text-[12.5px] text-text-3">{t.description}</span>
-              <span className="mt-3 text-[12px] text-text-3">
-                {t.sections.length} sections · {t.subject === "project" ? "for a project" : "for any domain"}
+              <span className="mt-3 flex flex-wrap items-center gap-1.5 text-[12px] text-text-3">
+                {t.subject === "project" ? "For a project · Search Console, Site Audit, Position Tracking" : "For any domain"}
+                {!templateAvailable(t, available) && <Badge tone="warning">Needs DataForSEO</Badge>}
               </span>
             </Link>
           );

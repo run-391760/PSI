@@ -1,6 +1,8 @@
 import { domainEntity, domainFacts, memo, referringDomains } from "@/lib/seo/engine";
 import { dfs } from "@/lib/providers/dataforseo";
-import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { cached, demo as demoData, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { AppError } from "@/lib/domain";
 import { BACKLINK_GAP_CATEGORIES, backlinkGapCategories, type BacklinkGapCategory } from "./gap-logic";
 
 export type BacklinkGapRow = {
@@ -103,4 +105,10 @@ async function liveGap(ownerId: string, list: string[]): Promise<BacklinkGapRepo
 export async function getBacklinkGap(ownerId: string, list: string[]): Promise<Sourced<BacklinkGapReport>> {
   if (liveEnabled()) return cached(`backlink-gap:${list.join(",")}`, "dataforseo", 24 * 7, () => liveGap(ownerId, list));
   return demo(demoGap(list));
+}
+
+/** Demo data only in local development (DEMO_DATA=true). */
+function demo<T>(data: T, note?: string): Sourced<T> {
+  if (!demoAllowed()) throw new AppError("Backlink Gap needs DataForSEO.", 409);
+  return demoData(data, note);
 }

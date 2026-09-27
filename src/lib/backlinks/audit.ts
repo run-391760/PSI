@@ -5,7 +5,8 @@ import { enqueue, getSchedule, latestJob, notify, setSchedule } from "@/lib/jobs
 import type { JobContext, JobRow } from "@/lib/jobs/types";
 import { getProject, type Project } from "@/lib/projects";
 import { liveEnabled } from "@/lib/providers/source";
-import { SPAM_TLDS } from "@/lib/seo/engine/vocab";
+import { demoAllowed } from "@/lib/data-mode";
+import { scoreLiveAudit } from "./map";
 import { overallScore, scoreProfile, toxicClass, type ScoredDomain } from "./audit-score";
 import * as live from "./live";
 import { POTENTIAL_MIN, TOXIC_MIN, type AuditDomainRow, type AuditList, type AuditRunRow, type RemoveStatus } from "./types";
@@ -39,12 +40,13 @@ export async function saveAuditSettings(ownerId: string, projectId: string, inpu
      ON CONFLICT(project_id) DO UPDATE SET brand_terms=excluded.brand_terms, country=excluded.country, weekly=excluded.weekly, updated_at=now()`,
     [projectId, JSON.stringify(brandTerms), country, input.weekly],
   );
-  await setSchedule(projectId, AUDIT_JOB, { cadence: "weekly", enabled: input.weekly });
+  await setSchedule(projectId, AUDIT_JOB, { cadence: "weekly", enabled: input.weekly && auditAvailable() });
   return startAudit(ownerId, projectId, "setup");
 }
 
 export async function startAudit(ownerId: string, projectId: string, trigger: "setup" | "manual") {
   await getProject(ownerId, projectId);
+  if (!auditAvailable()) throw new AppError("Backlink Audit needs DataForSEO. Connect it in Settings → Integrations.", 503);
   const running = await latestJob(projectId, AUDIT_JOB);
   if (running && (running.status === "queued" || running.status === "running")) return running.id;
   const job = await enqueue({ kind: AUDIT_JOB, ownerId, projectId, payload: { trigger }, dedupeKey: `${AUDIT_JOB}:${projectId}:${Date.now()}` });
@@ -167,9 +169,49 @@ const toRun = (r: RunDbRow): AuditRunRow & { source: string } => ({
   source: r.source,
 });
 
+/** Audit runs, newest first. Runs made from demo data are hidden unless DEMO_DATA=true. */
 export async function listAuditRuns(projectId: string, limit = 52) {
-  const rows = await query<RunDbRow>("SELECT * FROM bl_audit_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2", [projectId, limit]);
+  const rows = await query<RunDbRow>("SELECT * FROM bl_audit_runs WHERE project_id=$1 AND (source <> 'demo' OR $3) ORDER BY created_at DESC LIMIT $2", [projectId, limit, demoAllowed()]);
   return rows.map(toRun);
+}
+
+/**
+ * bl_audit_domains always holds the domains of the most recent run (of any source). When that run
+ * used demo data and demo data is not allowed, the stored domains must not be shown.
+ */
+export async function latestDomainsAreDemo(projectId: string) {
+  if (demoAllowed()) return false;
+  const [r] = await query<{ source: string }>("SELECT source FROM bl_audit_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT 1", [projectId]);
+  return r?.source === "demo";
+}
+
+/** Every entry of the user's whitelist / remove / disavow lists (user data), without audit metrics. */
+export async function listAllListEntries(projectId: string): Promise<AuditDomainRow[]> {
+  const rows = await query<{ domain: string; list: AuditList; contact: string; status: RemoveStatus; note: string; updated_at: string }>(
+    "SELECT domain, list, contact, status, note, updated_at FROM bl_audit_lists WHERE project_id=$1 ORDER BY updated_at DESC",
+    [projectId],
+  );
+  return rows.map((r) => ({
+    domain: r.domain,
+    toxicity: 0,
+    markers: [],
+    authorityScore: 0,
+    backlinks: 0,
+    country: "",
+    ip: "",
+    category: "",
+    follow: false,
+    firstSeen: "",
+    lastSeen: "",
+    sampleUrl: `https://${r.domain}/`,
+    sampleAnchor: "",
+    isNew: false,
+    list: r.list,
+    contact: r.contact,
+    status: r.status,
+    note: r.note,
+    listedAt: new Date(r.updated_at).toISOString(),
+  }));
 }
 
 /** Current effective stats: whitelisted and disavowed domains no longer count as toxic. */
@@ -248,42 +290,25 @@ export async function disavowText(project: Project) {
  * Job
  * ---------------------------------------------------------------------------------------------- */
 
-async function liveScored(ownerId: string, domain: string): Promise<{ rows: ScoredDomain[]; backlinksAnalyzed: number }> {
-  const items = await live.auditDomains(ownerId, domain);
-  const rows = items.map((d) => {
-    const markers: string[] = [];
-    if (d.spamScore >= 60) markers.push("Spam in domain name");
-    if (SPAM_TLDS.some((t) => d.domain.endsWith(t))) markers.push("Suspicious TLD");
-    if (d.authorityScore < 5) markers.push("Low Authority Score");
-    if (d.backlinks > 200) markers.push("Sitewide link");
-    return {
-      domain: d.domain,
-      toxicity: Math.max(0, Math.min(100, Math.round(d.spamScore))),
-      markers,
-      authority_score: d.authorityScore,
-      backlinks: d.backlinks,
-      country: "",
-      ip: "",
-      category: "",
-      follow: d.follow,
-      first_seen: d.firstSeen,
-      last_seen: d.lastSeen,
-      sample_url: `https://${d.domain}/`,
-      sample_anchor: "",
-    };
-  });
+async function liveScored(ownerId: string, domain: string, brandTerms: string[]): Promise<{ rows: ScoredDomain[]; backlinksAnalyzed: number }> {
+  const [items, samples] = await Promise.all([live.auditDomains(ownerId, domain), live.auditSamples(ownerId, domain)]);
+  const rows = scoreLiveAudit(items, samples, { domain, brandTerms });
   return { rows, backlinksAnalyzed: rows.reduce((s, r) => s + r.backlinks, 0) };
 }
+
+/** The audit can run with DataForSEO, or with demo data in local development only. */
+export const auditAvailable = () => liveEnabled() || demoAllowed();
 
 export async function runAuditJob(job: JobRow, ctx: JobContext) {
   if (!job.project_id || !job.owner_id) throw new Error("Audit job without a project.");
   const project = await getProject(job.owner_id, job.project_id);
   const settings = (await getAuditSettings(project.id)) ?? { brandTerms: project.brand_terms ?? [], country: project.country, weekly: true, createdAt: "", updatedAt: "" };
   const trigger = job.payload?.scheduled ? "scheduled" : String(job.payload?.trigger ?? "manual");
+  if (!auditAvailable()) throw new Error("Backlink Audit needs DataForSEO (DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD).");
   const source = liveEnabled() ? "dataforseo" : "demo";
 
   await ctx.progress(0, 5, "Collecting referring domains");
-  const { rows, backlinksAnalyzed } = source === "demo" ? scoreProfile(project.domain, settings) : await liveScored(job.owner_id, project.domain);
+  const { rows, backlinksAnalyzed } = source === "demo" ? scoreProfile(project.domain, settings) : await liveScored(job.owner_id, project.domain, [...settings.brandTerms, ...(project.brand_terms ?? [])]);
   await ctx.progress(1, 5, `Scoring ${rows.length.toLocaleString()} referring domains`);
   if (await ctx.cancelled()) return { cancelled: true };
 
@@ -370,5 +395,6 @@ export async function latestRunsByProject(projectIds: string[]) {
     "SELECT DISTINCT ON (project_id) * FROM bl_audit_runs WHERE project_id = ANY($1::text[]) ORDER BY project_id, created_at DESC",
     [projectIds],
   );
+  if (!demoAllowed()) return new Map(rows.filter((r) => r.source !== "demo").map((r) => [r.project_id, toRun(r)]));
   return new Map(rows.map((r) => [r.project_id, toRun(r)]));
 }

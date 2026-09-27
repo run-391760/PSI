@@ -8,7 +8,7 @@ import { Spinner } from "@/components/ui/feedback";
 import { Segmented } from "@/components/ui/tabs";
 
 /** Regional database × device × category selectors for the SERP Sensor (URL-driven). */
-export function SensorFilters({ categories, db, device, category }: { categories: { id: string; name: string }[]; db: string; device: "desktop" | "mobile"; category: string }) {
+export function SensorFilters({ categories = [], db, device, category = "all" }: { categories?: { id: string; name: string }[]; db: string; device: "desktop" | "mobile"; category?: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -28,6 +28,7 @@ export function SensorFilters({ categories, db, device, category }: { categories
           </option>
         ))}
       </select>
+      {categories.length > 1 && (
       <select value={category} onChange={(e) => set("category", e.target.value)} className={`${select} w-full sm:w-60`} aria-label="Category">
         {categories.map((c) => (
           <option key={c.id} value={c.id}>
@@ -35,6 +36,7 @@ export function SensorFilters({ categories, db, device, category }: { categories
           </option>
         ))}
       </select>
+      )}
       <Segmented
         size="md"
         value={device}

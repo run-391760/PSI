@@ -14,7 +14,7 @@ export async function TagsTab({ ctx, base }: { ctx: Ctx; base: string }) {
         description={`${ctx.tags.length} tag${ctx.tags.length === 1 ? "" : "s"} · ${untagged} untagged keyword${untagged === 1 ? "" : "s"} · performance on the ${ctx.device} end date vs start of range`}
         info="Tags group keywords so every report can be filtered by them (use the tag filter above each report)."
       />
-      <TagsManager rows={rows} projectId={ctx.project.id} base={base.includes("tags=") ? `/position-tracking?${params.toString()}` : base} />
+      <TagsManager trafficLabel={ctx.measured ? "Clicks" : "Est. traffic"} rows={rows} projectId={ctx.project.id} base={base.includes("tags=") ? `/position-tracking?${params.toString()}` : base} />
     </Card>
   );
 }

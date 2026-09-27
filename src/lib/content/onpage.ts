@@ -4,9 +4,9 @@ import { query, transaction } from "@/lib/db";
 import { AppError, database, matchesDomain, normalizeKeyword, safeUrl } from "@/lib/domain";
 import type { JobRow } from "@/lib/jobs/types";
 import type { Project } from "@/lib/projects";
-import { brandPhrase, domainKeywords, domainPages, keywordMetrics } from "@/lib/seo/engine";
 import type { PageFacts } from "./extract";
 import type { Idea, IdeaType, KeywordUse, StoredBenchmark } from "./ideas";
+import type { GscPair } from "./bench-map";
 import { STOPWORDS, normalizeText, wordList } from "./text";
 
 export const MAX_TARGETS = 50;
@@ -14,7 +14,8 @@ export const ONPAGE_JOB = "content.onpage";
 
 export type Target = { id: string; project_id: string; url: string; keyword: string; origin: string; created_at: string };
 export type Run = { id: string; project_id: string; job_id: string | null; status: "running" | "done" | "failed" | "cancelled"; db: string; pages: number; ideas: number; summary: RunSummary; created_at: string; finished_at: string | null };
-export type RunSummary = { byType?: Partial<Record<IdeaType, number>>; bySource?: { live: number; demo: number }; high?: number; fetched?: number; failed?: number };
+/** `mode` marks runs made with real benchmarks ("live", "serp+live", "gsc+live", ...); older runs used demo data and are hidden. */
+export type RunSummary = { mode?: string; byType?: Partial<Record<IdeaType, number>>; bySource?: Partial<Record<"live" | "serp" | "gsc", number>>; high?: number; fetched?: number; failed?: number };
 export type ResultRow = {
   run_id: string;
   target_id: string;
@@ -28,7 +29,7 @@ export type ResultRow = {
   ideas_count: number;
   priority: number;
 };
-export type Suggestion = { url: string; keyword: string; volume: number; position: number | null; traffic: number | null; origin: "ranking" | "live"; note?: string };
+export type Suggestion = { url: string; keyword: string; impressions: number | null; clicks: number | null; position: number | null; origin: "gsc" | "live"; note?: string };
 
 // ------------------------------------------------------------------------------------------------ targets
 
@@ -87,23 +88,13 @@ export async function removeTargets(projectId: string, ids: string[]) {
 
 // ------------------------------------------------------------------------------------------------ suggestions
 
-/** Pages + keywords from the (demo) organic ranking index. */
-export function rankingSuggestions(domain: string, db: string, limit = 20): Suggestion[] {
-  const kws = domainKeywords(domain, db);
-  const out: Suggestion[] = [];
-  for (const p of domainPages(domain, db)) {
-    const best = kws.filter((k) => k.url === p.url && !k.keyword.includes(".")).sort((a, b) => b.traffic - a.traffic)[0];
-    if (!best) continue;
-    out.push({ url: p.url, keyword: best.keyword, volume: best.metrics.volume, position: best.position, traffic: p.traffic, origin: "ranking" });
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
 const SKIP_PATH = /\/(wp-admin|wp-login|login|logout|signin|sign-in|register|cart|checkout|account|my-account|search|feed|tag|author|page\/\d+|cdn-cgi)(\/|$)|\.(pdf|jpe?g|png|gif|webp|svg|zip|docx?|xlsx?|pptx?|mp4|mp3|xml|txt|css|js)$/i;
 
-/** Discover real pages from the live homepage and pair each with the best-matching keyword. */
-export async function liveSuggestions(domain: string, db: string, limit = 30): Promise<{ fetchedUrl: string; suggestions: Suggestion[] }> {
+/**
+ * Discover real pages from the live homepage and pair each with a keyword: the page's best Search
+ * Console query when available (`gsc` pairs), otherwise words from its link text / URL.
+ */
+export async function liveSuggestions(domain: string, gsc: GscPair[] = [], limit = 30): Promise<{ fetchedUrl: string; suggestions: Suggestion[] }> {
   let res: Awaited<ReturnType<typeof crawlPage>>;
   try {
     res = await crawlPage(`https://${domain}/`);
@@ -127,39 +118,29 @@ export async function liveSuggestions(domain: string, db: string, limit = 30): P
     const anchor = l.anchor.replace(/\s+/g, " ").trim();
     if (!anchors.has(key) || (anchor.length > (anchors.get(key) ?? "").length && anchor.length < 80)) anchors.set(key, anchor);
   }
-  const kws = domainKeywords(domain, db).filter((k) => !k.keyword.includes("."));
-  const brand = brandPhrase(domain);
+  const norm = (u: string) => u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").toLowerCase();
+  const byUrl = new Map(gsc.map((p) => [norm(p.url), p]));
   const home = res.url.replace(/\/?$/, "/");
   const out: Suggestion[] = [];
-  const homeKw = brand.includes(" ") ? brand : (kws.find((k) => k.branded && k.keyword.includes(" "))?.keyword ?? brand);
-  out.push(suggest(home, homeKw, db, kws, "Homepage"));
+  const fromGsc = (url: string, fallback: string, note: string): Suggestion | null => {
+    const p = byUrl.get(norm(url));
+    if (p) return { url, keyword: p.keyword, impressions: p.impressions, clicks: p.clicks, position: p.position, origin: "live", note: "Top Search Console query" };
+    const k = normalizeKeyword(fallback);
+    return k ? { url, keyword: k, impressions: null, clicks: null, position: null, origin: "live", note } : null;
+  };
+  const homeSuggestion = fromGsc(home, domain.split(".")[0], "Brand name");
+  if (homeSuggestion) out.push(homeSuggestion);
   for (const [url, anchor] of anchors) {
     if (url.replace(/\/?$/, "/") === home) continue;
     const path = decodeURIComponent(new URL(url).pathname);
     const pathTokens = wordList(path.replace(/[-_/.]+/g, " ").toLowerCase()).filter((t) => !STOPWORDS.has(t) && !/^\d+$/.test(t) && !["html", "htm", "php", "aspx"].includes(t));
     const anchorTokens = wordList(normalizeText(anchor)).filter((t) => !STOPWORDS.has(t));
-    const tokens = new Set([...pathTokens, ...anchorTokens]);
-    if (!tokens.size) continue;
-    let best: { keyword: string; score: number } | null = null;
-    for (const k of kws) {
-      const kt = wordList(k.keyword).filter((t) => !STOPWORDS.has(t));
-      const overlap = kt.filter((t) => tokens.has(t) || tokens.has(t.replace(/s$/, "")) || tokens.has(`${t}s`)).length;
-      if (!overlap) continue;
-      const score = (overlap / kt.length) * 10 + overlap * 2 + Math.log10(k.metrics.volume + 1);
-      if (!best || score > best.score) best = { keyword: k.keyword, score };
-    }
     const fallback = anchorTokens.length >= 1 && anchorTokens.length <= 6 ? anchorTokens.join(" ") : pathTokens.slice(-4).join(" ");
-    const keyword = best && best.score >= 7 ? best.keyword : fallback;
-    if (!keyword) continue;
-    out.push(suggest(url, keyword, db, kws, best && best.score >= 7 ? "Matched to a ranking keyword" : "From link text / URL"));
+    const s = fromGsc(url, fallback, anchorTokens.length >= 1 && anchorTokens.length <= 6 ? "From link text" : "From URL");
+    if (s) out.push(s);
     if (out.length >= limit) break;
   }
   return { fetchedUrl: res.url, suggestions: out };
-}
-function suggest(url: string, keyword: string, db: string, kws: ReturnType<typeof domainKeywords>, note: string): Suggestion {
-  const k = normalizeKeyword(keyword);
-  const ranked = kws.find((x) => x.keyword === k);
-  return { url, keyword: k, volume: keywordMetrics(k, db).volume, position: ranked?.position ?? null, traffic: ranked?.traffic ?? null, origin: "live", note };
 }
 
 // ------------------------------------------------------------------------------------------------ runs
@@ -188,11 +169,11 @@ const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
 const normRun = (r: Run): Run => ({ ...r, created_at: iso(r.created_at)!, finished_at: iso(r.finished_at) });
 
 export async function latestRun(projectId: string) {
-  const [run] = await query<Run>("SELECT * FROM content_onpage_runs WHERE project_id=$1 AND status='done' ORDER BY created_at DESC LIMIT 1", [projectId]);
+  const [run] = await query<Run>("SELECT * FROM content_onpage_runs WHERE project_id=$1 AND status='done' AND summary ? 'mode' ORDER BY created_at DESC LIMIT 1", [projectId]);
   return run ? normRun(run) : null;
 }
 export async function recentRuns(projectId: string, limit = 8) {
-  return (await query<Run>("SELECT * FROM content_onpage_runs WHERE project_id=$1 AND status='done' ORDER BY created_at DESC LIMIT $2", [projectId, limit])).map(normRun);
+  return (await query<Run>("SELECT * FROM content_onpage_runs WHERE project_id=$1 AND status='done' AND summary ? 'mode' ORDER BY created_at DESC LIMIT $2", [projectId, limit])).map(normRun);
 }
 export async function runResults(runId: string) {
   return query<ResultRow>("SELECT run_id,target_id,url,keyword,fetch_status,fetch_error,page,benchmark,ideas,ideas_count,priority FROM content_onpage_results WHERE run_id=$1 ORDER BY priority DESC, url", [runId]);
@@ -224,7 +205,7 @@ export async function pruneRuns(projectId: string, keep = 6) {
 export async function latestRunsByProject(ownerId: string) {
   const rows = await query<{ project_id: string; ideas: number; pages: number; finished_at: string }>(
     `SELECT DISTINCT ON (r.project_id) r.project_id, r.ideas, r.pages, r.finished_at FROM content_onpage_runs r
-     JOIN projects p ON p.id=r.project_id WHERE p.owner_id=$1 AND r.status='done' ORDER BY r.project_id, r.created_at DESC`,
+     JOIN projects p ON p.id=r.project_id WHERE p.owner_id=$1 AND r.status='done' AND r.summary ? 'mode' ORDER BY r.project_id, r.created_at DESC`,
     [ownerId],
   );
   return new Map(rows.map((r) => [r.project_id, { ...r, finished_at: iso(r.finished_at)! }]));

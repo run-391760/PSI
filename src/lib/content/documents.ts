@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { query } from "@/lib/db";
 import { AppError, database, normalizeKeyword } from "@/lib/domain";
-import { benchmark, semanticTerms } from "./benchmark";
+import { autocompleteSuggestions } from "@/lib/providers/autocomplete";
+import { liveEnabled } from "@/lib/providers/source";
+import { recommendedFromAutocomplete } from "./bench-map";
+import { realBenchmark } from "./real";
 
 export type Tone = "casual" | "neutral" | "formal";
 export type DocSettings = {
@@ -13,8 +16,10 @@ export type DocSettings = {
   db: string;
   /** Where the targets came from (shown in the UI). */
   origin?: "template" | "manual";
-  /** True when targets were derived from the demo engine's top-10 benchmark. */
+  /** Legacy: targets derived from the demo engine (older documents). Ignored unless DEMO_DATA=true. */
   demoTargets?: boolean;
+  /** Where the recommended targets came from: the crawled live top 10, Google Autocomplete, or the user. */
+  targetsSource?: "serp" | "autocomplete" | "manual";
 };
 export type DocSummary = { id: string; title: string; keywords: string[]; words: number; score: number; created_at: string; updated_at: string };
 export type Doc = DocSummary & { body: string; settings: DocSettings };
@@ -33,6 +38,7 @@ export const docPatch = z.object({
       db: z.string().max(4),
       origin: z.enum(["template", "manual"]).optional(),
       demoTargets: z.boolean().optional(),
+      targetsSource: z.enum(["serp", "autocomplete", "manual"]).optional(),
     })
     .optional(),
   words: z.number().int().min(0).max(1_000_000).optional(),
@@ -59,28 +65,37 @@ export async function findDocument(ownerId: string, id: string) {
   }
 }
 
-/** Targets for a set of keywords from the (demo) top-10 benchmark of the first keyword. */
-export function targetsFor(keywords: string[], dbInput: string): DocSettings {
+const DEFAULT_TARGETS = { targetWords: 1000, targetReadability: 60, tone: "neutral" as Tone };
+
+/**
+ * Targets for a set of keywords from real sources: the crawled live top 10 (DataForSEO) when
+ * configured, else recommended words from Google Autocomplete with default length/readability.
+ */
+export async function targetsFor(ownerId: string, keywords: string[], dbInput: string): Promise<DocSettings> {
   const db = database(dbInput).code;
-  if (!keywords.length) return { targetWords: 1000, targetReadability: 60, tone: "neutral", recommended: [], db, origin: "manual", demoTargets: false };
-  const b = benchmark(keywords[0], db, null);
-  const intent = b.metrics.intents[0];
-  return {
-    targetWords: b.avg.words,
-    targetReadability: b.avg.readability,
-    tone: intent === "transactional" ? "casual" : "neutral",
-    recommended: (keywords.length > 1 ? semanticTerms(keywords.slice(0, 5), db, b.rivals, 20) : b.semantic).slice(0, 15).map((s) => s.term),
-    db,
-    origin: "manual",
-    demoTargets: true,
-  };
+  const base: DocSettings = { ...DEFAULT_TARGETS, recommended: [], db, origin: "manual", targetsSource: "manual" };
+  if (!keywords.length) return base;
+  if (liveEnabled()) {
+    const b = await realBenchmark(ownerId, keywords[0], db, null, keywords.slice(1, 5));
+    return {
+      ...base,
+      targetWords: b.avg?.words ?? base.targetWords,
+      targetReadability: b.avg?.readability ?? base.targetReadability,
+      recommended: b.semantic.slice(0, 15).map((s) => s.term),
+      targetsSource: "serp",
+    };
+  }
+  const ac = await autocompleteSuggestions(keywords[0], db);
+  if (ac.status !== "ok") return base;
+  return { ...base, recommended: recommendedFromAutocomplete(keywords[0], ac.data.suggestions.map((s) => s.keyword)), targetsSource: "autocomplete" };
 }
 
 export async function createDocument(ownerId: string, input: { title?: string; keywords?: string[]; body?: string; db?: string; settings?: Partial<DocSettings> }) {
   const [{ count }] = await query<{ count: number }>("SELECT count(*)::int AS count FROM content_documents WHERE owner_id=$1", [ownerId]);
   if (count >= 500) throw new AppError("You can keep up to 500 documents. Delete some to create new ones.");
   const keywords = [...new Set((input.keywords ?? []).map(normalizeKeyword).filter(Boolean))].slice(0, 10);
-  const settings: DocSettings = { ...targetsFor(keywords, input.db ?? "US"), ...input.settings };
+  const auto = input.settings?.recommended ? { ...DEFAULT_TARGETS, recommended: [], db: database(input.db ?? "US").code } : await targetsFor(ownerId, keywords, input.db ?? "US").catch(() => ({ ...DEFAULT_TARGETS, recommended: [], db: database(input.db ?? "US").code }));
+  const settings: DocSettings = { ...auto, ...input.settings };
   const parsed = docPatch.parse({ title: input.title?.trim() || (keywords[0] ? `Article: ${keywords[0]}` : "Untitled document"), body: input.body ?? "", keywords, settings });
   const id = randomUUID();
   await query("INSERT INTO content_documents(id,owner_id,title,body,keywords,settings) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)", [

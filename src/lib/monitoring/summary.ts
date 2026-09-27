@@ -2,7 +2,7 @@ import type { SummaryProvider } from "@/lib/projects/summary-types";
 import { latestJob } from "@/lib/jobs/queue";
 import { getBrandSettings, mentionStats, ownMentions } from "./brand";
 
-/** Project dashboard widget: brand mentions (Google News + optional labelled demo social). */
+/** Project dashboard widget: brand mentions from Google News (demo social only with DEMO_DATA=true). */
 export const summaries: SummaryProvider[] = [
   async (project) => {
     const base = { tool: "brand-monitoring", label: "Brand Monitoring", href: `/brand-monitoring?project=${project.id}` };

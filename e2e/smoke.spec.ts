@@ -58,6 +58,8 @@ for (const route of ROUTES) {
     expect(res?.status()).toBeLessThan(400);
     await expect(page.locator("h1").first()).toBeVisible();
     await expect(page.getByText("This tool is being built.")).toHaveCount(0);
+    // Real-data policy: with DEMO_DATA unset no report may show synthetic data.
+    await expect(page.getByText("Demo data", { exact: true })).toHaveCount(0);
     expect(problems).toEqual([]);
   });
 }

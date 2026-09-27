@@ -2,6 +2,9 @@ import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { getProject, type Project } from "@/lib/projects";
 import type { ToolSummary } from "@/lib/projects/summary-types";
+import { demoAllowed, providerStatus } from "@/lib/data-mode";
+import { oauthConfigured, serviceAccount } from "@/lib/google/oauth";
+import { LIVE_ENGINES } from "@/lib/providers/ai-engines";
 import { flagEnabled, liveEnabled } from "@/lib/providers/source";
 import type { Cadence } from "@/lib/jobs/types";
 import type { JobListRow } from "./kinds";
@@ -109,6 +112,7 @@ export async function onboardingSteps(ownerId: string, projects: Project[], summ
     [ownerId],
   );
   const widget = (tool: string) => summaries.flat().some((s) => s.tool === tool && s.state !== "empty" && s.state !== "error");
+  const linked = await linkedGoogleProjects(ownerId);
   const first = projects[0];
   const withProject = (path: string) => (first ? `${path}?project=${first.id}` : path);
   return [
@@ -116,7 +120,15 @@ export async function onboardingSteps(ownerId: string, projects: Project[], summ
     { id: "audit", label: "Run a Site Audit", description: "Crawl your site and find technical SEO issues.", done: activity.audit > 0 || widget("site-audit"), href: withProject("/site-audit"), cta: "Start audit" },
     { id: "tracking", label: "Set up Position Tracking", description: "Track daily Google rankings for your target keywords.", done: activity.tracking > 0 || widget("position-tracking"), href: withProject("/position-tracking"), cta: "Track keywords" },
     { id: "competitors", label: "Add competitors", description: "Benchmark your visibility and backlinks against rivals.", done: projects.some((p) => p.competitors.length > 0), href: first ? `/projects/${first.id}?tab=settings` : "/projects", cta: "Add competitors" },
-    { id: "live", label: "Connect live data", description: "Add DataForSEO credentials to replace demo data with live index data.", done: liveEnabled(), href: "/settings?tab=integrations", cta: "Connect" },
+    {
+      id: "google",
+      label: "Link Search Console & GA4",
+      description: "See your real clicks, queries, positions and organic sessions on the project dashboard and in reports.",
+      done: linked > 0 || widget("organic-traffic-insights"),
+      href: first ? `/organic-traffic-insights?project=${first.id}` : "/organic-traffic-insights",
+      cta: "Link Google",
+    },
+    { id: "live", label: "Connect DataForSEO", description: "Keyword volumes, live SERPs, competitor and backlink data for any domain.", done: liveEnabled(), href: "/settings?tab=integrations", cta: "Connect" },
   ];
 }
 
@@ -156,32 +168,57 @@ export function integrations(): Integration[] {
   const autocomplete = flagEnabled("ENABLE_AUTOCOMPLETE");
   const pagespeed = flagEnabled("ENABLE_PAGESPEED");
   const news = flagEnabled("ENABLE_NEWS_MENTIONS");
-  const anthropic = isSet("ANTHROPIC_API_KEY");
-  const googleSa = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_GA4_SERVICE_ACCOUNT_JSON", "GOOGLE_GA4_SERVICE_ACCOUNT_FILE"].some(isSet);
-  const google = (isSet("GOOGLE_CLIENT_ID") && isSet("GOOGLE_CLIENT_SECRET")) || googleSa;
+  const gscSa = serviceAccount("gsc");
+  const ga4Sa = serviceAccount("ga4");
+  const oauth = oauthConfigured();
+  const google = oauth || !!gscSa || !!ga4Sa;
+  const engine = (id: string) => LIVE_ENGINES.find((e) => e.id === id);
+  const saLabel = [gscSa ? `Search Console: ${gscSa.client_email}` : null, ga4Sa ? `GA4: ${ga4Sa.client_email}` : null].filter(Boolean).join(" · ");
+  const aiEngine = (id: "chatgpt" | "gemini" | "perplexity" | "claude", meta: { name: string; description: string; docs: string; vars: { name: string; example: string; required: boolean }[] }): Integration => {
+    const e = engine(id);
+    const on = !!e?.enabled();
+    return {
+      id,
+      name: meta.name,
+      description: meta.description,
+      status: on ? "connected" : "not-configured",
+      statusLabel: on ? `Connected · ${e?.model()}` : "Not configured",
+      powers: ["AI Visibility live answers, overview and cited sources"],
+      envVars: meta.vars.map((v) => ({ ...v, set: isSet(v.name) })),
+      docs: meta.docs,
+    };
+  };
   return [
+    {
+      id: "google",
+      name: "Google Search Console & Analytics 4",
+      description: "Your own sites' real clicks, impressions, queries, positions, organic sessions and key events (read-only).",
+      status: google ? "connected" : "not-configured",
+      statusLabel: gscSa || ga4Sa ? `Service account${gscSa && ga4Sa && gscSa.client_email !== ga4Sa.client_email ? "s" : ""} configured` : oauth ? "OAuth configured · each user connects their Google account" : "Not configured",
+      powers: ["Organic Traffic Insights", "Project dashboard snapshot", "Project SEO reports", "Queries → Position Tracking"],
+      envVars: [
+        { name: "GOOGLE_SERVICE_ACCOUNT_JSON", set: isSet("GOOGLE_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_SERVICE_ACCOUNT_FILE"), example: "base64 of the key JSON (or GOOGLE_SERVICE_ACCOUNT_FILE=path)", required: false },
+        { name: "GOOGLE_GA4_SERVICE_ACCOUNT_JSON", set: isSet("GOOGLE_GA4_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_GA4_SERVICE_ACCOUNT_FILE"), example: "separate GA4 key (optional; or GOOGLE_GA4_SERVICE_ACCOUNT_FILE=path)", required: false },
+        { name: "GOOGLE_CLIENT_ID", set: isSet("GOOGLE_CLIENT_ID"), example: "…apps.googleusercontent.com", required: false },
+        { name: "GOOGLE_CLIENT_SECRET", set: isSet("GOOGLE_CLIENT_SECRET"), example: "GOCSPX-…", required: false },
+        { name: "APP_SECRET", set: isSet("APP_SECRET"), example: "long random string", required: process.env.NODE_ENV === "production" && oauth },
+      ],
+      docs: "https://console.cloud.google.com/apis/credentials",
+      note: `${saLabel ? `${saLabel}. Grant these emails read access in Search Console and GA4. ` : ""}Use a service account (server-wide) or an OAuth web client (each user connects on Organic Traffic Insights; redirect URI <APP_ORIGIN>/api/integrations/google/callback). Enable the Search Console API, Analytics Data API and Analytics Admin API. Then link each project's properties on Organic Traffic Insights.`,
+    },
     {
       id: "dataforseo",
       name: "DataForSEO",
-      description: "Paid, pay-as-you-go index data: keyword metrics, live SERPs, domain analytics and backlinks.",
+      description: "Paid, pay-as-you-go index data: keyword metrics, live SERPs and Maps results, domain analytics, business data and backlinks.",
       status: dfs ? "connected" : "not-configured",
-      statusLabel: dfs ? "Connected" : "Not configured — demo data in use",
-      powers: ["Keyword Overview & Magic Tool", "Domain Overview & Organic Research", "Position Tracking", "Backlink Analytics", "Google AI Overviews in AI Visibility"],
+      statusLabel: dfs ? "Connected" : "Not configured",
+      powers: ["Keyword research", "Domain & competitor analytics", "Position Tracking", "Backlink Analytics", "SERP Sensor market score", "Map Rank Tracker", "Google listing & reviews", "Domain/backlink/comparison reports", "Google AI Overviews in AI Visibility"],
       envVars: [
         { name: "DATAFORSEO_LOGIN", set: isSet("DATAFORSEO_LOGIN"), example: "you@example.com", required: true },
         { name: "DATAFORSEO_PASSWORD", set: isSet("DATAFORSEO_PASSWORD"), example: "your-api-password", required: true },
       ],
       docs: "https://dataforseo.com/apis",
-      note: "Every paid call reserves its worst-case cost against your monthly budget first.",
-    },
-    {
-      id: "autocomplete",
-      name: "Google Autocomplete",
-      description: "Free real query suggestions for keyword ideas and questions.",
-      status: autocomplete ? "enabled" : "disabled",
-      statusLabel: autocomplete ? "Enabled" : "Disabled",
-      powers: ["Keyword Magic Tool suggestions", "Topic Research questions"],
-      envVars: [{ name: "ENABLE_AUTOCOMPLETE", set: isSet("ENABLE_AUTOCOMPLETE"), example: "true", required: false }],
+      note: "Every paid call reserves its worst-case cost against your monthly budget first (Settings → Budget).",
     },
     {
       id: "pagespeed",
@@ -198,6 +235,15 @@ export function integrations(): Integration[] {
       note: "An API key is optional but raises the request quota.",
     },
     {
+      id: "autocomplete",
+      name: "Google Autocomplete",
+      description: "Free real query suggestions for keyword ideas and questions.",
+      status: autocomplete ? "enabled" : "disabled",
+      statusLabel: autocomplete ? "Enabled" : "Disabled",
+      powers: ["Keyword Magic Tool suggestions", "Topic Research questions"],
+      envVars: [{ name: "ENABLE_AUTOCOMPLETE", set: isSet("ENABLE_AUTOCOMPLETE"), example: "true", required: false }],
+    },
+    {
       id: "news",
       name: "Google News",
       description: "Free public news RSS used to find brand mentions.",
@@ -206,72 +252,92 @@ export function integrations(): Integration[] {
       powers: ["Brand Monitoring mentions"],
       envVars: [{ name: "ENABLE_NEWS_MENTIONS", set: isSet("ENABLE_NEWS_MENTIONS"), example: "true", required: false }],
     },
-    {
-      id: "google",
-      name: "Google Search Console & Analytics",
-      description: "Your own sites' real clicks, impressions, queries, positions, organic sessions and key events (OAuth, read-only).",
-      status: google ? "enabled" : "not-configured",
-      statusLabel: googleSa ? "Service account configured" : google ? "Configured · each user connects their Google account" : "Not configured",
-      powers: ["Organic Traffic Insights", "Project dashboard widget", "Queries → Position Tracking"],
-      envVars: [
-        { name: "GOOGLE_SERVICE_ACCOUNT_JSON", set: googleSa, example: "base64 of the key JSON", required: false },
-        { name: "GOOGLE_CLIENT_ID", set: isSet("GOOGLE_CLIENT_ID"), example: "…apps.googleusercontent.com", required: false },
-        { name: "GOOGLE_CLIENT_SECRET", set: isSet("GOOGLE_CLIENT_SECRET"), example: "GOCSPX-…", required: false },
-        { name: "APP_SECRET", set: isSet("APP_SECRET"), example: "long random string", required: process.env.NODE_ENV === "production" },
-      ],
-      docs: "https://console.cloud.google.com/apis/credentials",
-      note: "Enable the Search Console API, Analytics Data API and Analytics Admin API. Redirect URI: <APP_ORIGIN>/api/integrations/google/callback. Connect your account on Organic Traffic Insights.",
-    },
-    {
-      id: "openai",
+    aiEngine("chatgpt", {
       name: "OpenAI (ChatGPT)",
-      description: "Real AI-answer checks with web search: does ChatGPT mention or cite your brand?",
-      status: isSet("OPENAI_API_KEY") ? "connected" : "not-configured",
-      statusLabel: isSet("OPENAI_API_KEY") ? `Connected · ${process.env.OPENAI_MODEL || "gpt-6-astra"}` : "Not configured",
-      powers: ["AI Visibility live answers"],
-      envVars: [
-        { name: "OPENAI_API_KEY", set: isSet("OPENAI_API_KEY"), example: "sk-…", required: true },
-        { name: "OPENAI_MODEL", set: isSet("OPENAI_MODEL"), example: "gpt-6-astra", required: false },
-      ],
+      description: "Real AI answers with web search: does ChatGPT mention or cite your brand?",
       docs: "https://platform.openai.com/api-keys",
-    },
-    {
-      id: "gemini",
+      vars: [
+        { name: "OPENAI_API_KEY", example: "sk-…", required: true },
+        { name: "OPENAI_MODEL", example: engine("chatgpt")?.model() ?? "", required: false },
+      ],
+    }),
+    aiEngine("gemini", {
       name: "Google Gemini",
-      description: "Real AI-answer checks grounded with Google Search.",
-      status: isSet("GEMINI_API_KEY") ? "connected" : "not-configured",
-      statusLabel: isSet("GEMINI_API_KEY") ? `Connected · ${process.env.GEMINI_MODEL || "gemini-3.8-flash"}` : "Not configured",
-      powers: ["AI Visibility live answers"],
-      envVars: [
-        { name: "GEMINI_API_KEY", set: isSet("GEMINI_API_KEY"), example: "AIza…", required: true },
-        { name: "GEMINI_MODEL", set: isSet("GEMINI_MODEL"), example: "gemini-3.8-flash", required: false },
-      ],
+      description: "Real AI answers grounded with Google Search.",
       docs: "https://aistudio.google.com/apikey",
-    },
-    {
-      id: "perplexity",
-      name: "Perplexity",
-      description: "Real AI-answer checks from the Perplexity Agent API with web search.",
-      status: isSet("PERPLEXITY_API_KEY") ? "connected" : "not-configured",
-      statusLabel: isSet("PERPLEXITY_API_KEY") ? `Connected · ${process.env.PERPLEXITY_MODEL || `preset ${process.env.PERPLEXITY_PRESET || "low"}`}` : "Not configured",
-      powers: ["AI Visibility live answers"],
-      envVars: [
-        { name: "PERPLEXITY_API_KEY", set: isSet("PERPLEXITY_API_KEY"), example: "pplx-…", required: true },
-        { name: "PERPLEXITY_PRESET", set: isSet("PERPLEXITY_PRESET"), example: "low", required: false },
+      vars: [
+        { name: "GEMINI_API_KEY", example: "AIza…", required: true },
+        { name: "GEMINI_MODEL", example: engine("gemini")?.model() ?? "", required: false },
       ],
+    }),
+    aiEngine("perplexity", {
+      name: "Perplexity",
+      description: "Real AI answers from the Perplexity Agent API with web search.",
       docs: "https://docs.perplexity.ai/",
+      vars: [
+        { name: "PERPLEXITY_API_KEY", example: "pplx-…", required: true },
+        { name: "PERPLEXITY_PRESET", example: "low", required: false },
+      ],
+    }),
+    aiEngine("claude", {
+      name: "Anthropic (Claude)",
+      description: "Real AI answers with web search: does Claude mention or cite your brand?",
+      docs: "https://console.anthropic.com/",
+      vars: [{ name: "ANTHROPIC_API_KEY", example: "sk-ant-…", required: true }],
+    }),
+    {
+      id: "business-profile",
+      name: "Google Business Profile / listings partner",
+      description: "Directory listing sync, owner review replies and multi-directory NAP audits need the Google Business Profile API (approval required) or a partner such as Yext or BrightLocal.",
+      status: "not-configured",
+      statusLabel: "Not available in this deployment",
+      powers: ["Listing Management across directories", "Posting review replies"],
+      envVars: [],
+      docs: "https://developers.google.com/my-business",
+      note: "Without it, Local SEO uses DataForSEO for the Google listing, Maps rankings and Google reviews.",
     },
     {
-      id: "anthropic",
-      name: "Anthropic (Claude)",
-      description: "Real AI-answer checks with web search: does Claude mention or cite your brand?",
-      status: anthropic ? "connected" : "not-configured",
-      statusLabel: anthropic ? "Connected" : "Not configured",
-      powers: ["AI Visibility live answers"],
-      envVars: [{ name: "ANTHROPIC_API_KEY", set: anthropic, example: "sk-ant-…", required: true }],
-      docs: "https://console.anthropic.com/",
+      id: "clickstream",
+      name: "Clickstream provider",
+      description: "Visits, channels and audiences for sites you don't own (Similarweb or Semrush API).",
+      status: "not-configured",
+      statusLabel: "Not available in this deployment",
+      powers: ["Traffic Analytics for other domains"],
+      envVars: [],
+      note: "For your own sites, GA4 is used instead.",
     },
   ];
+}
+
+export type DataSourceRow = { id: string; name: string; connected: boolean; detail: string; href: string };
+
+/** Compact provider list for the Home/Project "Data sources" card. */
+export function dataSources(linkedProjects?: number): DataSourceRow[] {
+  const st = providerStatus();
+  const engines = LIVE_ENGINES.filter((e) => e.enabled()).map((e) => e.name);
+  return [
+    {
+      id: "google",
+      name: "Search Console & GA4",
+      connected: st.google,
+      detail: st.google ? (linkedProjects != null ? `${linkedProjects} project${linkedProjects === 1 ? "" : "s"} linked` : "Configured") : "Not configured",
+      href: "/organic-traffic-insights",
+    },
+    { id: "dataforseo", name: "DataForSEO", connected: st.dataforseo, detail: st.dataforseo ? "Live index data" : "Not configured", href: "/settings?tab=integrations" },
+    { id: "ai", name: "AI engines", connected: st.ai, detail: engines.length ? engines.join(", ") : "No API key", href: "/settings?tab=integrations" },
+    { id: "pagespeed", name: "PageSpeed Insights", connected: flagEnabled("ENABLE_PAGESPEED"), detail: st.pagespeed ? "API key set" : flagEnabled("ENABLE_PAGESPEED") ? "Shared quota" : "Disabled", href: "/settings?tab=integrations" },
+    { id: "crawler", name: "Crawler & Google News", connected: true, detail: flagEnabled("ENABLE_NEWS_MENTIONS") ? "Free sources on" : "News off", href: "/settings?tab=integrations" },
+    ...(demoAllowed() ? [{ id: "demo", name: "Demo engine", connected: true, detail: "DEMO_DATA=true (development)", href: "/settings?tab=integrations" }] : []),
+  ];
+}
+
+/** Number of the user's projects linked to Search Console and/or GA4. */
+export async function linkedGoogleProjects(ownerId: string) {
+  const [row] = await query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM project_google g JOIN projects p ON p.id=g.project_id WHERE p.owner_id=$1 AND (g.gsc_site IS NOT NULL OR g.ga4_property IS NOT NULL)",
+    [ownerId],
+  ).catch(() => [{ n: 0 }]);
+  return row?.n ?? 0;
 }
 
 export function systemInfo() {

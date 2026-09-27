@@ -1,7 +1,9 @@
 import { domainFacts, domainKeywords, memo, paidKeywordRows } from "@/lib/seo/engine";
 import { database } from "@/lib/domain";
 import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { cached, demo as demoData, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { AppError } from "@/lib/domain";
 import type { Intent } from "@/lib/seo/types";
 import { KEYWORD_GAP_CATEGORIES, keywordGapCategories, type KeywordGapCategory } from "./gap-logic";
 
@@ -117,4 +119,10 @@ export async function getKeywordGap(ownerId: string, list: string[], dbInput: st
   const db = database(dbInput).code;
   if (liveEnabled()) return cached(`keyword-gap:${type}:${db}:${list.join(",")}`, "dataforseo", 24 * 7, () => liveGap(ownerId, list, db, type));
   return demo(demoGap(list, db, type));
+}
+
+/** Demo data only in local development (DEMO_DATA=true). */
+function demo<T>(data: T, note?: string): Sourced<T> {
+  if (!demoAllowed()) throw new AppError("Keyword Gap needs DataForSEO.", 409);
+  return demoData(data, note);
 }

@@ -1,7 +1,9 @@
 import { brandPhrase, clamp, domainEntity, domainFacts, keywordMetrics, paidKeywordRows, rng, round, topicById, topicPool, topicUniverse, unit } from "@/lib/seo/engine";
 import { database } from "@/lib/domain";
 import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { cached, demo as demoData, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { AppError } from "@/lib/domain";
 import type { Intent } from "@/lib/seo/types";
 import { changePct, recentMonths } from "./shared";
 
@@ -206,6 +208,8 @@ export async function getAdsChanges(ownerId: string, domain: string, dbInput: st
   for (const r of rows) counts[r.type]++;
   const months = recentMonths(12);
   const r = rng(`adchg:${domain}:${db}`);
+  // Month-by-month history is only reconstructed by the demo engine; live data has the current period only.
+  if (pos.source !== "demo") return { ...pos, data: { counts, trend: [], rows } };
   const trend = months.map((month, i) => (i === months.length - 1 ? { month, ...counts } : { month, new: Math.round(counts.new * r.range(0.5, 1.5)), improved: Math.round(counts.improved * r.range(0.5, 1.5)), declined: Math.round(counts.declined * r.range(0.5, 1.5)), lost: Math.round(counts.lost * r.range(0.5, 1.5)) }));
   return { ...pos, data: { counts, trend, rows } };
 }
@@ -341,4 +345,10 @@ export function adsPagesFrom(rows: PaidRow[], copies: AdCopy[]): AdsPage[] {
     if (p) p.ads++;
   }
   return [...map.values()].map((p) => ({ ...p, ads: Math.max(1, p.ads), trafficPct: round((p.traffic / total) * 100, 2) })).sort((a, b) => b.traffic - a.traffic);
+}
+
+/** Demo data only in local development (DEMO_DATA=true). */
+function demo<T>(data: T, note?: string): Sourced<T> {
+  if (!demoAllowed()) throw new AppError("Advertising Research needs DataForSEO.", 409);
+  return demoData(data, note);
 }

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db";
 import { AppError, database } from "@/lib/domain";
-import { liveEnabled } from "@/lib/providers/source";
 import { rng, serp } from "@/lib/seo/engine";
 import { ideaPool, type PoolRow } from "./ideas";
+import { metricsSource } from "./metrics";
+import { liveSerpItems } from "./serp";
+import { cleanTitle } from "./serp-map";
 import { matchesSeed, normalizeKw, rowHasWord, titleCase, wordGroups } from "./text";
 import type { AutocompleteInfo } from "./types";
 
@@ -22,11 +24,12 @@ export type Subtopic = {
   name: string;
   keyword: string;
   keywords: number;
-  volume: number;
+  /** null when no metrics provider is connected. */
+  volume: number | null;
   difficulty: number | null;
-  /** Volume per unit of difficulty, as a percentile among the subtopics (0..100). */
-  efficiency: number;
-  efficiencyLabel: "High" | "Medium" | "Low";
+  /** Volume per unit of difficulty, as a percentile among the subtopics (0..100); null without metrics. */
+  efficiency: number | null;
+  efficiencyLabel: "High" | "Medium" | "Low" | null;
   headlines: TopicIdea[];
   questions: TopicIdea[];
   related: TopicIdea[];
@@ -35,13 +38,16 @@ export type TopicResearch = {
   topic: string;
   db: string;
   topicName: string;
-  volume: number;
+  volume: number | null;
   difficulty: number | null;
   subtopics: Subtopic[];
   topHeadlines: TopicIdea[];
   topQuestions: TopicIdea[];
   relatedSearches: TopicIdea[];
-  source: "demo" | "dataforseo";
+  /** "autocomplete": no metrics provider; subtopics, questions and related searches are real Autocomplete suggestions. */
+  source: "demo" | "dataforseo" | "autocomplete";
+  /** Headlines come from ranking page titles (live or demo SERPs); false = only generated angles. */
+  serpHeadlines: boolean;
   fetchedAt: string;
   autocomplete: AutocompleteInfo;
 };
@@ -66,26 +72,33 @@ const QUESTION_TEMPLATES = ["What are the best {k}?", "How do you choose {k}?", 
 /** Modifier words that make poor content subtopics on their own. */
 const WEAK_SUBTOPICS = new Set(["under", "over", "buy", "online", "top", "good", "new", "easy", "simple", "set", "with", "without", "pdf", "logo", "image", "youtube", "reddit", "2025", "2026", "2027", "today", "near", "best", "cheap", "affordable", "local", "free", "small", "big", "uk", "usa", "india"]);
 
-/** Removes the " | Brand" / " - Brand" tail of a SERP title (the domain is shown separately). */
-const cleanTitle = (t: string) => t.replace(/\s+[|–-]\s+[^|–-]+$/, "").trim();
+/** Ranking page titles for a keyword (live or demo SERP). */
+type TitleSource = (keyword: string, depth: number) => Promise<{ title: string; url: string; domain: string; position: number }[]>;
 
-function subtopicIdeas(topic: string, db: string, groupId: string, members: PoolRow[], allAc: PoolRow[]) {
-  const top = [...members].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
+async function subtopicIdeas(topic: string, db: string, groupId: string, members: PoolRow[], allAc: PoolRow[], titles: TitleSource | null, demo: boolean, serpKeywords: number) {
+  const top = [...members].sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || a.order - b.order);
   const main = top[0];
   const r = rng(`topic-ideas:${topic}:${db}:${groupId}`);
   const headlines: TopicIdea[] = [];
   const seen = new Set<string>();
-  for (const m of top.filter((x) => !x.question).slice(0, 3))
-    for (const s of serp(m.keyword, db, { depth: 6 })) {
-      const text = cleanTitle(s.title);
-      if (seen.has(text.toLowerCase()) || text.toLowerCase() === m.keyword) continue;
-      seen.add(text.toLowerCase());
-      const g = rng(`topic-bl:${s.url}`);
-      headlines.push({ text, kind: "headline", origin: "serp", volume: m.volume, backlinks: Math.round(g.logNormal(40 / Math.sqrt(s.position), 1.1)), domain: s.domain });
-      if (headlines.length >= 6) break;
+  if (titles)
+    for (const m of top.filter((x) => !x.question).slice(0, serpKeywords)) {
+      const results = await titles(m.keyword, 6).catch(() => []);
+      for (const s of results) {
+        const text = cleanTitle(s.title);
+        if (!text || seen.has(text.toLowerCase()) || text.toLowerCase() === m.keyword) continue;
+        seen.add(text.toLowerCase());
+        // Backlinks per ranking page exist only in the demo engine; live headlines show none.
+        const backlinks = demo ? Math.round(rng(`topic-bl:${s.url}`).logNormal(40 / Math.sqrt(s.position), 1.1)) : null;
+        headlines.push({ text, kind: "headline", origin: "serp", volume: m.volume, backlinks, domain: s.domain });
+        if (headlines.length >= 6) break;
+      }
     }
   const k = titleCase(main.keyword);
-  for (const t of r.sample(HEADLINE_TEMPLATES, 4)) {
+  // Generated angles (labelled "Idea"). Outside local demo mode they carry no invented numbers.
+  const templates = demo ? HEADLINE_TEMPLATES : HEADLINE_TEMPLATES.filter((t) => !t.includes("{N}"));
+  // Without ranking titles (no DataForSEO) no generated angles are shown: only real suggestions.
+  if (demo || titles) for (const t of r.sample(templates, demo ? 4 : 3)) {
     const text = t.replace("{K}", k).replace("{Y}", String(YEAR)).replace("{N}", String(r.int(5, 15)));
     if (!seen.has(text.toLowerCase())) headlines.push({ text, kind: "headline", origin: "template", volume: null, backlinks: null, domain: null });
   }
@@ -100,7 +113,7 @@ function subtopicIdeas(topic: string, db: string, groupId: string, members: Pool
   };
   for (const m of allAc.filter((x) => x.question && rowHasWord(x.keyword, groupId)).slice(0, 4)) addQ(m.keyword, "autocomplete", m.volume);
   for (const m of top.filter((x) => x.question).slice(0, 6)) addQ(m.keyword, m.ac ? "autocomplete" : "database", m.volume);
-  for (const t of r.sample(QUESTION_TEMPLATES, 3)) addQ(t.replace("{k}", main.keyword), "template", null);
+  if (demo) for (const t of r.sample(QUESTION_TEMPLATES, 3)) addQ(t.replace("{k}", main.keyword), "template", null);
   const related: TopicIdea[] = top
     .filter((x) => !x.question && x.keyword !== main.keyword)
     .slice(0, 8)
@@ -114,7 +127,7 @@ const MEMO = new Map<string, { expires: number; value: Promise<TopicResearch> }>
 export async function getTopicResearch(ownerId: string, topicInput: string, dbInput: string): Promise<TopicResearch> {
   const topic = normalizeKw(topicInput);
   const db = database(dbInput).code;
-  const key = `${liveEnabled() ? ownerId : "demo"}|${db}|${topic}`;
+  const key = `${metricsSource()}|${ownerId}|${db}|${topic}`;
   const hit = MEMO.get(key);
   if (hit && Date.now() < hit.expires) return hit.value;
   const entry = { expires: Date.now() + 10 * 60_000, value: buildTopicResearch(ownerId, topic, db) };
@@ -126,50 +139,67 @@ export async function getTopicResearch(ownerId: string, topicInput: string, dbIn
 
 async function buildTopicResearch(ownerId: string, topic: string, db: string): Promise<TopicResearch> {
   const pool = await ideaPool(ownerId, topic, db);
+  const hasMetrics = pool.source !== "autocomplete";
+  const demo = pool.source === "demo";
+  const titles: TitleSource | null =
+    pool.source === "dataforseo" ? (k) => liveSerpItems(ownerId, k, db) : demo ? async (k, depth) => serp(k, db, { depth }) : null;
   const rows = pool.rows.filter((r) => matchesSeed(r.keyword, topic, "broad"));
-  const acRows = pool.rows.filter((r) => r.ac).sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
-  const groups = wordGroups(rows, topic, 80).filter((g) => g.count >= 3 && !WEAK_SUBTOPICS.has(g.id));
-  const picked = [...groups].sort((a, b) => b.volume - a.volume).slice(0, 24);
+  const acRows = pool.rows.filter((r) => r.ac).sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || a.order - b.order);
+  // Autocomplete-only pools are small (~300 suggestions), so two keywords are enough to form a subtopic.
+  const groups = wordGroups(rows, topic, 80).filter((g) => g.count >= (hasMetrics ? 3 : 2) && !WEAK_SUBTOPICS.has(g.id));
+  const picked = [...groups].sort((a, b) => (hasMetrics ? b.volume - a.volume : 0) || b.count - a.count).slice(0, 24);
   const raw = picked.map((g) => {
     const members = rows.filter((r) => rowHasWord(r.keyword, g.id));
     const kdRows = members.filter((m) => m.kd != null);
     const weight = kdRows.reduce((s, m) => s + (m.volume ?? 0) + 1, 0);
     const difficulty = kdRows.length ? Math.round(kdRows.reduce((s, m) => s + (m.kd ?? 0) * ((m.volume ?? 0) + 1), 0) / weight) : null;
-    const main = [...members].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))[0];
-    return { g, members, difficulty, main, ratio: g.volume / ((difficulty ?? 50) + 10) };
+    const main = [...members].sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || a.order - b.order)[0];
+    const volume = members.some((m) => m.volume != null) ? g.volume : null;
+    return { g, members, difficulty, main, volume, ratio: volume == null ? null : volume / ((difficulty ?? 50) + 10) };
   });
-  const ratios = raw.map((x) => x.ratio).sort((a, b) => a - b);
-  const subtopics: Subtopic[] = raw.map(({ g, members, difficulty, main, ratio }) => {
-    const efficiency = ratios.length > 1 ? Math.round((ratios.indexOf(ratio) / (ratios.length - 1)) * 100) : 100;
-    return {
-      id: g.id,
-      name: titleCase(g.label),
-      keyword: main.keyword,
-      keywords: members.length,
-      volume: g.volume,
-      difficulty,
-      efficiency,
-      efficiencyLabel: efficiency >= 67 ? "High" : efficiency >= 34 ? "Medium" : "Low",
-      ...subtopicIdeas(topic, db, g.id, members, acRows),
-    };
-  });
+  const ratios = raw.map((x) => x.ratio).filter((x): x is number => x != null).sort((a, b) => a - b);
+  // Live SERP headlines cost one request per keyword: only each subtopic's main keyword (cached 24 h).
+  const serpKeywords = pool.source === "dataforseo" ? 1 : 3;
+  const subtopics: Subtopic[] = await Promise.all(
+    raw.map(async ({ g, members, difficulty, main, volume, ratio }) => {
+      const efficiency = ratio == null ? null : ratios.length > 1 ? Math.round((ratios.indexOf(ratio) / (ratios.length - 1)) * 100) : 100;
+      return {
+        id: g.id,
+        name: titleCase(g.label),
+        keyword: main.keyword,
+        keywords: members.length,
+        volume,
+        difficulty,
+        efficiency,
+        efficiencyLabel: efficiency == null ? null : efficiency >= 67 ? "High" : efficiency >= 34 ? "Medium" : "Low",
+        ...(await subtopicIdeas(topic, db, g.id, members, acRows, titles, demo, serpKeywords)),
+      };
+    }),
+  );
   const all = <K extends "headlines" | "questions">(k: K) => subtopics.flatMap((s) => s[k]);
   const dedupe = (ideas: TopicIdea[]) => [...new Map(ideas.map((i) => [i.text.toLowerCase(), i])).values()];
   const kd = rows.filter((r) => r.kd != null);
+  const questions = dedupe(all("questions"));
   return {
     topic,
     db,
     topicName: pool.topicName,
-    volume: rows.reduce((s, r) => s + (r.volume ?? 0), 0),
+    volume: rows.some((r) => r.volume != null) ? rows.reduce((s, r) => s + (r.volume ?? 0), 0) : null,
     difficulty: kd.length ? Math.round(kd.reduce((s, r) => s + (r.kd ?? 0), 0) / kd.length) : null,
     subtopics,
-    topHeadlines: dedupe(all("headlines").filter((h) => h.origin === "serp")).sort((a, b) => (b.backlinks ?? 0) - (a.backlinks ?? 0)).slice(0, 10),
-    topQuestions: dedupe(all("questions").filter((q) => q.volume != null)).sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0)).slice(0, 10),
+    topHeadlines: dedupe(all("headlines").filter((h) => h.origin === "serp"))
+      .sort((a, b) => (b.backlinks ?? 0) - (a.backlinks ?? 0))
+      .slice(0, 10),
+    topQuestions: hasMetrics
+      ? questions.filter((q) => q.volume != null).sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0)).slice(0, 10)
+      : // Without volumes: every real Autocomplete question for the topic, in Google's order.
+        dedupe(acRows.filter((r) => r.question).map((r) => ({ text: r.keyword.charAt(0).toUpperCase() + r.keyword.slice(1).replace(/\?*$/, "?"), kind: "question" as const, origin: "autocomplete" as const, volume: null, backlinks: null, domain: null }))).slice(0, 15),
     relatedSearches: (acRows.length ? acRows.filter((r) => !r.question) : rows)
       .filter((r) => r.keyword !== topic)
       .slice(0, 15)
       .map((r) => ({ text: r.keyword, kind: "related", origin: r.ac ? "autocomplete" : "database", volume: r.volume, backlinks: null, domain: null })),
     source: pool.source,
+    serpHeadlines: titles != null,
     fetchedAt: pool.fetchedAt,
     autocomplete: pool.autocomplete,
   };

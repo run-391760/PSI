@@ -4,14 +4,36 @@ import { compact } from "@/lib/format";
 import { buildListings, listingRows } from "./listings";
 import { listScans } from "./map-rank";
 import { getProfile } from "./profile";
-import { generateReviews, reviewStats, savedReplies } from "./reviews";
+import { generateReviews, reviewStats, reviewsFromLive, savedReplies } from "./reviews";
+import { demoAllowed } from "@/lib/data-mode";
+import { napCheck } from "./dfs-map";
+import { getGoogleListing, getLiveReviews, profileNap } from "./live";
 
-/** Project dashboard widgets for the local module (all demo data, labelled in `note`). */
+/** Project dashboard widgets for the local module: real Google data (DataForSEO); demo data only with DEMO_DATA=true. */
 export const summaries: SummaryProvider[] = [
   async (project) => {
     const base = { tool: "local", label: "Listing Management", href: `/local/listings?project=${project.id}` };
     const stored = await getProfile(project.id);
     if (!stored) return { ...base, state: "empty", cta: "Add business profile" };
+    if (!demoAllowed()) {
+      const g = await getGoogleListing(project.id);
+      if (!g) return { ...base, state: "empty", cta: "Check Google listing", note: "Compare your profile with Google" };
+      if (!g.listing) return { ...base, state: "ready", headline: { label: "Google listing", value: "Not found" }, updatedAt: g.fetchedAt, note: "DataForSEO" };
+      const checks = napCheck(profileNap(stored.profile), g.listing);
+      const shown = checks.filter((c) => c.match != null);
+      return {
+        ...base,
+        state: "ready",
+        headline: { label: "Google NAP match", value: `${checks.filter((c) => c.match).length}/${shown.length}` },
+        stats: [
+          { label: "Rating", value: g.listing.rating == null ? "n/a" : `${g.listing.rating.toFixed(1)} ★` },
+          { label: "Reviews", value: g.listing.reviews == null ? "n/a" : compact(g.listing.reviews) },
+          { label: "Claimed", value: g.listing.claimed == null ? "n/a" : g.listing.claimed ? "Yes" : "No" },
+        ],
+        updatedAt: g.fetchedAt,
+        note: "DataForSEO",
+      };
+    }
     const job = await latestJob(project.id, "local.distribute");
     const view = buildListings(project, stored.profile, await listingRows(project.id));
     return {
@@ -51,7 +73,7 @@ export const summaries: SummaryProvider[] = [
         .reverse()
         .map((s) => s.solv ?? 0),
       updatedAt: latest.finished_at ?? latest.created_at,
-      note: "Demo data",
+      note: latest.source === "demo" ? "Demo data" : "Google Maps · DataForSEO",
     };
   },
   async (project) => {
@@ -59,7 +81,9 @@ export const summaries: SummaryProvider[] = [
     const stored = await getProfile(project.id);
     if (!stored) return { ...base, state: "empty", cta: "Add business profile" };
     const saved = await savedReplies(project.id);
-    const reviews = generateReviews(project, stored.profile).map((r) => (saved.has(r.id) ? { ...r, reply: saved.get(r.id)! } : r));
+    const live = demoAllowed() ? null : await getLiveReviews(project.id);
+    if (!demoAllowed() && !live) return { ...base, state: "empty", cta: "Fetch Google reviews" };
+    const reviews = live ? reviewsFromLive(live.reviews, saved) : generateReviews(project, stored.profile).map((r) => (saved.has(r.id) ? { ...r, reply: saved.get(r.id)! } : r));
     const s = reviewStats(reviews);
     const delta = s.last30.avg != null && s.prev30.avg != null ? ((s.last30.avg - s.prev30.avg) / s.prev30.avg) * 100 : null;
     return {
@@ -72,8 +96,8 @@ export const summaries: SummaryProvider[] = [
         { label: "Awaiting reply", value: String(s.awaiting) },
       ],
       spark: s.months.map((m) => m.rating ?? 0),
-      updatedAt: new Date().toISOString(),
-      note: "Demo data",
+      updatedAt: live?.fetchedAt ?? new Date().toISOString(),
+      note: live ? "Google reviews · DataForSEO" : "Demo data",
     };
   },
 ];

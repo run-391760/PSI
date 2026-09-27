@@ -1,11 +1,10 @@
 import { DATABASES, database } from "@/lib/domain";
-import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, liveEnabled } from "@/lib/providers/source";
 import { brandPhrase, clamp, ctrFor, domainEntity, domainLinkStats, keywordMetrics, rng, serp, slugify, topicFor, topicPool } from "@/lib/seo/engine";
-import { clusterKeywords } from "./cluster";
+import { clusterKeywords, groupBySharedWords } from "./cluster";
 import { ideaPool, selectIdeas, type AutocompleteInfo } from "./ideas";
-import { demoRow, keywordRows, trendMonths } from "./metrics";
-import { normalizeKw, titleCase } from "./text";
+import { demoRow, keywordRows, metricsSource, trendMonths, type MetricsSource } from "./metrics";
+import { liveSerpItems } from "./serp";
+import { normalizeKw, titleCase, wordGroups, type WordGroup } from "./text";
 import type { IdeaRow, KwRow } from "./types";
 
 export type SerpRow = {
@@ -25,7 +24,7 @@ export type SerpRow = {
   isProject: boolean;
 };
 
-export type IdeaBlock = { total: number; volume: number; top: IdeaRow[] };
+export type IdeaBlock = { total: number; /** null when no row has a measured volume. */ volume: number | null; top: IdeaRow[] };
 export type SampleAd = { domain: string; title: string; displayUrl: string; description: string; position: number };
 
 export type KeywordOverview = {
@@ -44,13 +43,15 @@ export type KeywordOverview = {
   rdNeeded: number | null;
   ads: SampleAd[];
   strategy: { pillar: string; pillarKeywords: number; pillarVolume: number; subpages: { name: string; keywords: number; volume: number }[]; importKeywords: string[] } | null;
-  source: "demo" | "dataforseo";
+  /** No metrics provider: Autocomplete variations grouped by shared words (real text analysis). */
+  wordGroups: (WordGroup & { examples: string[] })[];
+  source: MetricsSource;
   fetchedAt: string;
   autocomplete: AutocompleteInfo;
 };
 
 function block(rows: ReturnType<typeof selectIdeas>): IdeaBlock {
-  return { total: rows.total, volume: rows.totalVolume, top: rows.rows.slice(0, 5) };
+  return { total: rows.total, volume: rows.rows.some((r) => r.volume != null) ? rows.totalVolume : null, top: rows.rows.slice(0, 5) };
 }
 
 /** Page-level SERP metrics from the demo engine (domain AS is the same number Domain Overview shows). */
@@ -69,12 +70,7 @@ function demoSerp(keyword: string, db: string, projectDomains: string[], m: KwRo
 }
 
 async function liveSerp(ownerId: string, keyword: string, db: string, projectDomains: string[]): Promise<SerpRow[]> {
-  const { data } = await cached(`kw-serp:${db}:${keyword}`, "dataforseo", 24, async () => {
-    const [res] = await dfs(ownerId, "serp/google/organic/live/regular", { keyword, ...market(db), depth: 20 }, 6000);
-    return ((res?.items ?? []) as Record<string, unknown>[])
-      .filter((it) => it.type === "organic")
-      .map((it) => ({ position: Number(it.rank_group ?? 0), url: String(it.url ?? ""), title: String(it.title ?? ""), domain: String(it.domain ?? "").replace(/^www\./, "") }));
-  });
+  const data = await liveSerpItems(ownerId, keyword, db);
   return data.map((r) => ({ ...r, domainAs: null, refDomains: null, backlinks: null, traffic: null, urlKeywords: null, isProject: projectDomains.some((d) => r.domain === d || r.domain.endsWith(`.${d}`)) }));
 }
 
@@ -102,7 +98,7 @@ const MEMO = new Map<string, { expires: number; value: Promise<KeywordOverview> 
 export async function getKeywordOverview(ownerId: string, keywordInput: string, dbInput: string, projectDomains: string[] = []): Promise<KeywordOverview> {
   const keyword = normalizeKw(keywordInput);
   const db = database(dbInput).code;
-  const key = `${liveEnabled() ? ownerId : "demo"}|${db}|${keyword}|${[...projectDomains].sort().join(",")}`;
+  const key = `${metricsSource()}|${ownerId}|${db}|${keyword}|${[...projectDomains].sort().join(",")}`;
   const hit = MEMO.get(key);
   if (hit && Date.now() < hit.expires) return hit.value;
   const entry = { expires: Date.now() + 10 * 60_000, value: buildOverview(ownerId, keyword, db, projectDomains) };
@@ -113,17 +109,18 @@ export async function getKeywordOverview(ownerId: string, keywordInput: string, 
 }
 
 async function buildOverview(ownerId: string, keyword: string, db: string, projectDomains: string[]): Promise<KeywordOverview> {
-  const live = liveEnabled();
-  const [{ data: [metrics], fetchedAt }, pool] = await Promise.all([keywordRows(ownerId, [keyword], db), ideaPool(ownerId, keyword, db)]);
-  const serpRows = live ? await liveSerp(ownerId, keyword, db, projectDomains).catch(() => []) : demoSerp(keyword, db, projectDomains, metrics);
+  const [{ data: [metrics], fetchedAt, source }, pool] = await Promise.all([keywordRows(ownerId, [keyword], db), ideaPool(ownerId, keyword, db)]);
+  const live = source === "dataforseo";
+  const demo = source === "demo";
+  const serpRows = live ? await liveSerp(ownerId, keyword, db, projectDomains).catch(() => []) : demo ? demoSerp(keyword, db, projectDomains, metrics) : [];
   const top10 = serpRows.filter((r) => r.position <= 10 && r.refDomains != null).map((r) => r.refDomains as number).sort((a, b) => a - b);
-  const variations = selectIdeas(pool, "broad", false, 100);
+  const variations = selectIdeas(pool, "broad", false, source === "none" ? MAX_TEXT_VARIATIONS : 100);
   const questions = selectIdeas(pool, "broad", true, 5);
   const related = selectIdeas(pool, "related", false, 5);
 
-  // Keyword strategy hint: cluster the top variations by SERP overlap (demo SERPs).
+  // Keyword strategy hint: cluster the top variations by SERP overlap (demo SERPs, local development only).
   let strategy: KeywordOverview["strategy"] = null;
-  if (!live && variations.rows.length >= 5) {
+  if (demo && variations.rows.length >= 5) {
     // Same-topic variations only: other topics' SERPs never overlap and would cost a full topic ranking each.
     const topicId = topicFor(keyword).id;
     const sameTopic = variations.rows.filter((r) => topicFor(r.keyword).id === topicId).slice(0, 60);
@@ -138,15 +135,26 @@ async function buildOverview(ownerId: string, keyword: string, db: string, proje
     };
   }
 
-  const countries = live
-    ? []
-    : DATABASES.map((d) => ({ db: d.code, name: d.name, flag: d.flag, volume: keywordMetrics(keyword, d.code).volume })).sort((a, b) => b.volume - a.volume);
+  // No metrics provider: group the real Autocomplete variations by shared words (text analysis).
+  const groups =
+    source === "none"
+      ? groupBySharedWords(variations.rows.map((r) => ({ keyword: r.keyword, volume: null, kd: null })))
+          .filter((g) => g.keywords.length >= 2 && !g.pillar.endsWith("(general)") && g.pillar !== "General")
+          .slice(0, 8)
+          .map((g) => ({ id: g.id, label: g.pillar, count: g.keywords.length, volume: 0, examples: g.keywords.slice(0, 3).map((k) => k.keyword) }))
+      : [];
+  if (source === "none" && !groups.length)
+    for (const g of wordGroups(variations.rows, keyword, 8)) groups.push({ ...g, examples: variations.rows.filter((r) => r.keyword.includes(g.label)).slice(0, 3).map((r) => r.keyword) });
+
+  const countries = demo
+    ? DATABASES.map((d) => ({ db: d.code, name: d.name, flag: d.flag, volume: keywordMetrics(keyword, d.code).volume })).sort((a, b) => b.volume - a.volume)
+    : [];
   return {
     keyword,
     db,
-    topicName: live ? "" : topicFor(keyword).name,
+    topicName: demo ? topicFor(keyword).name : "",
     metrics,
-    globalVolume: live ? null : keywordMetrics(keyword, db).globalVolume,
+    globalVolume: demo ? keywordMetrics(keyword, db).globalVolume : null,
     countries,
     months: trendMonths(),
     variations: block(variations),
@@ -154,19 +162,23 @@ async function buildOverview(ownerId: string, keyword: string, db: string, proje
     related: block(related),
     serp: serpRows,
     rdNeeded: top10.length ? top10[Math.floor(top10.length / 2)] : null,
-    ads: live ? [] : sampleAds(keyword, db, metrics),
+    ads: demo ? sampleAds(keyword, db, metrics) : [],
     strategy,
-    source: live ? "dataforseo" : "demo",
+    wordGroups: groups,
+    source,
     fetchedAt,
     autocomplete: pool.autocomplete,
   };
 }
 
-/** Bulk mode: metrics for up to 100 keywords. */
+/** Variations shown for a keyword when only Autocomplete is available (all of them are real suggestions). */
+const MAX_TEXT_VARIATIONS = 400;
+
+/** Bulk mode: metrics for up to 100 keywords (global volume only from the demo engine in local development). */
 export async function getBulkOverview(ownerId: string, keywords: string[], dbInput: string) {
   const db = database(dbInput).code;
   const res = await keywordRows(ownerId, keywords, db);
-  const global = liveEnabled() ? null : Object.fromEntries(keywords.map((k) => [normalizeKw(k), keywordMetrics(k, db).globalVolume]));
+  const global = res.source === "demo" ? Object.fromEntries(keywords.map((k) => [normalizeKw(k), keywordMetrics(k, db).globalVolume])) : null;
   return { ...res, db, global };
 }
 

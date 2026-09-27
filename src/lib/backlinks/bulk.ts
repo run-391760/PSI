@@ -1,4 +1,6 @@
-import { hostname, safeUrl } from "@/lib/domain";
+import { AppError, hostname, safeUrl } from "@/lib/domain";
+import { demoAllowed } from "@/lib/data-mode";
+import { bulkRowsFromDfs } from "./map";
 import { looseRootDomain } from "./normalize";
 import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
 import { hash, round, unit } from "@/lib/seo/engine";
@@ -92,32 +94,11 @@ async function liveRows(ownerId: string, targets: BulkTarget[]): Promise<BulkRow
     ownerId,
     targets.map((t) => t.target),
   );
-  return targets.map((t) => {
-    const r = res.ranks.get(t.target);
-    const b = res.backlinks.get(t.target);
-    const d = res.referringDomains.get(t.target);
-    const bl: number | null = b?.backlinks ?? null;
-    return {
-      target: t.target,
-      kind: t.kind,
-      domain: t.domain,
-      authorityScore: r?.rank != null ? Math.round(r.rank / 10) : null,
-      referringDomains: d?.referring_domains ?? null,
-      backlinks: bl,
-      referringIps: null,
-      followPct: d?.referring_domains ? round((1 - (d.referring_domains_nofollow ?? 0) / d.referring_domains) * 100, 1) : null,
-      nofollowPct: d?.referring_domains ? round(((d.referring_domains_nofollow ?? 0) / d.referring_domains) * 100, 1) : null,
-      textPct: null,
-      imagePct: null,
-      newRd30: null,
-      lostRd30: null,
-      newBl30: null,
-      lostBl30: null,
-    };
-  });
+  return bulkRowsFromDfs(targets, res);
 }
 
 export async function bulkAnalysis(ownerId: string, targets: BulkTarget[]): Promise<Sourced<BulkRow[]>> {
-  if (liveEnabled()) return cached(`bl:bulk:${targets.length}:${hash(targets.map((t) => t.target).join("|")).toString(36)}`, "dataforseo", 24, () => liveRows(ownerId, targets));
+  if (liveEnabled()) return cached(`bl:bulk:v2:${targets.length}:${hash(targets.map((t) => t.target).join("|")).toString(36)}`, "dataforseo", 24, () => liveRows(ownerId, targets));
+  if (!demoAllowed()) throw new AppError("Bulk Analysis needs DataForSEO. Connect it in Settings → Integrations.", 503);
   return demo(targets.map(demoRow));
 }

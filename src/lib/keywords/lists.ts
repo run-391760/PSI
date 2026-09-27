@@ -2,31 +2,36 @@ import { randomUUID } from "node:crypto";
 import { query, transaction } from "@/lib/db";
 import { AppError, database, normalizeKeywords } from "@/lib/domain";
 import type { Intent, SerpFeature } from "@/lib/seo/types";
-import { keywordRows } from "./metrics";
+import { demoAllowed } from "@/lib/data-mode";
+import { keywordRows, visibleStoredRow } from "./metrics";
 import type { KeywordList, KwRow, ListItem } from "./types";
 
 export const MAX_LIST_KEYWORDS = 2000;
 export const MAX_LISTS = 100;
 
-type ListRow = { id: string; name: string; db: string; keywords: number; volume: number; avg_kd: number | null; created_at: Date | string; updated_at: Date | string };
+type ListRow = { id: string; name: string; db: string; keywords: number; volume: number | null; avg_kd: number | null; created_at: Date | string; updated_at: Date | string };
 const iso = (d: Date | string) => (d instanceof Date ? d.toISOString() : new Date(d).toISOString());
 
 function toList(r: ListRow): KeywordList {
-  return { id: r.id, name: r.name, db: r.db, keywords: Number(r.keywords), volume: Number(r.volume), avgKd: r.avg_kd == null ? null : Math.round(Number(r.avg_kd)), created_at: iso(r.created_at), updated_at: iso(r.updated_at) };
+  return { id: r.id, name: r.name, db: r.db, keywords: Number(r.keywords), volume: r.volume == null ? null : Number(r.volume), avgKd: r.avg_kd == null ? null : Math.round(Number(r.avg_kd)), created_at: iso(r.created_at), updated_at: iso(r.updated_at) };
 }
 
-const LIST_SELECT = `SELECT l.id, l.name, l.db, l.created_at, l.updated_at, count(i.keyword)::int AS keywords,
-  COALESCE(sum(i.volume),0)::float8 AS volume, avg(i.kd)::float8 AS avg_kd
+/** Aggregates only count measured metrics; stored demo metrics count only when DEMO_DATA=true. */
+const listSelect = () => {
+  const real = demoAllowed() ? "true" : "i.metrics_source<>'demo'";
+  return `SELECT l.id, l.name, l.db, l.created_at, l.updated_at, count(i.keyword)::int AS keywords,
+  (sum(i.volume) FILTER (WHERE ${real}))::float8 AS volume, (avg(i.kd) FILTER (WHERE ${real}))::float8 AS avg_kd
   FROM kw_lists l LEFT JOIN kw_list_items i ON i.list_id=l.id`;
+};
 
 export async function listLists(ownerId: string) {
-  const rows = await query<ListRow>(`${LIST_SELECT} WHERE l.owner_id=$1 GROUP BY l.id ORDER BY l.updated_at DESC`, [ownerId]);
+  const rows = await query<ListRow>(`${listSelect()} WHERE l.owner_id=$1 GROUP BY l.id ORDER BY l.updated_at DESC`, [ownerId]);
   return rows.map(toList);
 }
 
 /** Owner-scoped fetch; throws 404 for lists the user does not own. */
 export async function getList(ownerId: string, id: string) {
-  const [row] = await query<ListRow>(`${LIST_SELECT} WHERE l.id=$1 AND l.owner_id=$2 GROUP BY l.id`, [id, ownerId]);
+  const [row] = await query<ListRow>(`${listSelect()} WHERE l.id=$1 AND l.owner_id=$2 GROUP BY l.id`, [id, ownerId]);
   if (!row) throw new AppError("Keyword list not found.", 404);
   return toList(row);
 }
@@ -75,7 +80,7 @@ type ItemRow = {
 export async function listItems(ownerId: string, id: string): Promise<ListItem[]> {
   await getList(ownerId, id);
   const rows = await query<ItemRow>("SELECT * FROM kw_list_items WHERE list_id=$1 ORDER BY volume DESC NULLS LAST, keyword", [id]);
-  return rows.map((r) => ({
+  return sortItems(rows.map((r) => visibleStoredRow({
     keyword: r.keyword,
     volume: r.volume,
     kd: r.kd,
@@ -89,7 +94,12 @@ export async function listItems(ownerId: string, id: string): Promise<ListItem[]
     addedFrom: r.added_from,
     addedAt: iso(r.added_at),
     metricsAt: iso(r.metrics_at),
-  }));
+  })));
+}
+
+/** Items ordered for display: measured volume first, then keyword. */
+export function sortItems(items: ListItem[]) {
+  return [...items].sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || a.keyword.localeCompare(b.keyword));
 }
 
 async function upsertRows(listId: string, rows: KwRow[], source: string, addedFrom: string, refresh: boolean) {

@@ -4,13 +4,16 @@ import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { database } from "@/lib/domain";
 import { compact, money, pct } from "@/lib/format";
-import { getBulkOverview, getKeywordOverview, type IdeaBlock } from "@/lib/keywords/overview";
+import { gscKeywordPerformance, gscKeywordStats } from "@/lib/keywords/gsc";
+import { TEXT_INTENT_NOTE } from "@/lib/keywords/intent";
+import { getBulkOverview, getKeywordOverview, type IdeaBlock, type KeywordOverview } from "@/lib/keywords/overview";
 import { normalizeKw, parseKeywordInput } from "@/lib/keywords/text";
 import { listProjects } from "@/lib/projects";
 import { SERP_FEATURES } from "@/lib/seo/types";
 import { INTENTS } from "@/lib/seo/types";
 import { FeatureIcon, INTENT_META, IntentBadges, KD_BANDS, KdBadge, KeywordLink, kdBand } from "@/components/seo/badges";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DemoNotice } from "@/components/seo/source-badge";
+import { NeedsData } from "@/components/seo/needs-data";
 import { ToolSearch } from "@/components/seo/tool-search";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { BarChart } from "@/components/charts/bar-chart";
@@ -23,8 +26,10 @@ import { MiniTable } from "@/components/ui/mini-table";
 import { PrintButton } from "@/components/ui/print-button";
 import { Bar, DistributionBar, Gauge } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { decodeIntents } from "@/lib/keywords/types";
 import { AddToListButton } from "@/components/keywords/add-to-list";
 import { KeywordMetricsTable } from "@/components/keywords/bulk-table";
+import { GscKeywordCard } from "@/components/keywords/gsc-card";
 import { SerpTable } from "@/components/keywords/serp-table";
 import { SourceBadges } from "@/components/keywords/source-badges";
 
@@ -83,7 +88,8 @@ export default async function KeywordOverviewPage({ searchParams }: PageProps<"/
   const keyword = normalizeKw(keywords[0]);
   const projects = await listProjects(user.id);
   const projectDomains = projects.map((p) => p.domain);
-  const o = await getKeywordOverview(user.id, keyword, db, projectDomains);
+  const [o, perf] = await Promise.all([getKeywordOverview(user.id, keyword, db, projectDomains), gscKeywordPerformance(user.id, keyword)]);
+  if (o.source === "none") return <TextOverview o={o} perf={perf} />;
   const m = o.metrics;
   const info = database(db);
   const band = m.kd == null ? null : kdBand(m.kd);
@@ -101,7 +107,7 @@ export default async function KeywordOverviewPage({ searchParams }: PageProps<"/
         subject={keyword}
         meta={
           <>
-            <SourceBadges source={o.source} fetchedAt={o.fetchedAt} autocomplete={o.autocomplete} />
+            <SourceBadges source={o.source} fetchedAt={o.fetchedAt} autocomplete={o.autocomplete} gsc={perf.sites.length ? { fetchedAt: perf.status.fetchedAt } : null} />
             <Badge>
               {info.flag} {info.name}
             </Badge>
@@ -206,6 +212,8 @@ export default async function KeywordOverviewPage({ searchParams }: PageProps<"/
           </CardBody>
         </Card>
       </Grid>
+
+      <GscKeywordCard keyword={keyword} db={db} sites={perf.sites} status={perf.status} className="mb-4" />
 
       <Grid cols={3} className="mb-4">
         <IdeasCard title="Keyword variations" block={o.variations} db={db} href={magic()} showKd />
@@ -329,7 +337,7 @@ function IdeasCard({ title, block, db, href, showKd, related }: { title: string;
             <div className="text-[11.5px] text-text-3">keywords</div>
           </div>
           <div>
-            <div className="text-[20px] font-semibold text-text">{compact(block.volume)}</div>
+            <div className="text-[20px] font-semibold text-text">{block.volume == null ? "n/a" : compact(block.volume)}</div>
             <div className="text-[11.5px] text-text-3">total volume</div>
           </div>
         </div>
@@ -353,16 +361,190 @@ function IdeasCard({ title, block, db, href, showKd, related }: { title: string;
   );
 }
 
+/** No keyword-data provider: real Autocomplete ideas, text-based intent and the user's Search Console data. */
+function TextOverview({ o, perf }: { o: KeywordOverview; perf: Awaited<ReturnType<typeof gscKeywordPerformance>> }) {
+  const { keyword, db } = o;
+  const info = database(db);
+  const m = o.metrics;
+  const magic = (extra = "") => `/keyword-magic-tool?q=${encodeURIComponent(keyword)}&db=${db}${extra}`;
+  const words = keyword.split(" ").length;
+  const suggested = o.autocomplete.status === "ok";
+  const strategyImport = o.variations.top.length ? `/keyword-strategy?import=${encodeURIComponent([keyword, ...o.wordGroups.flatMap((g) => g.examples)].join(","))}&db=${db}&name=${encodeURIComponent(keyword)}` : null;
+  return (
+    <Page>
+      <PageHeader
+        breadcrumbs={BREADCRUMBS}
+        title="Keyword Overview:"
+        subject={keyword}
+        meta={
+          <>
+            <SourceBadges source="none" autocomplete={o.autocomplete} gsc={perf.sites.length ? { fetchedAt: perf.status.fetchedAt } : null} />
+            <Badge>
+              {info.flag} {info.name}
+            </Badge>
+          </>
+        }
+        actions={
+          <>
+            <AddToListButton keywords={[keyword]} db={db} defaultName={keyword} from="keyword-overview" />
+            <ButtonLink href={magic()} variant="secondary">
+              Keyword Magic Tool
+            </ButtonLink>
+            <PrintButton />
+          </>
+        }
+      >
+        <ToolSearch placeholder="Enter a keyword (or several, comma separated, for bulk analysis)" />
+      </PageHeader>
+
+      <Card className="mb-4">
+        <MetricStrip>
+          <Metric label={`Volume ${info.flag}`} value="n/a" info="Average monthly searches. Needs a keyword data provider (DataForSEO)." />
+          <Metric label="Keyword Difficulty" value="n/a" info="How hard it is to reach the top 10. Needs DataForSEO." />
+          <Metric label="CPC" value="n/a" info="Average cost per click advertisers pay. Needs DataForSEO." />
+          <Metric label="Competition" value="n/a" info="Advertiser density, 0–1. Needs DataForSEO." />
+          <Metric label="Trend" value="n/a" info="12 months of search volume. Needs DataForSEO." />
+        </MetricStrip>
+      </Card>
+
+      <Grid cols={2} className="mb-4 lg:grid-cols-[1.35fr_1fr]">
+        <GscKeywordCard keyword={keyword} db={db} sites={perf.sites} status={perf.status} />
+        <Card>
+          <CardHeader title="Search intent" description="Text-based classification" info={TEXT_INTENT_NOTE} />
+          <CardBody>
+            {m.intents.length ? (
+              <>
+                <IntentBadges intents={m.intents} full />
+                <p className="mt-2 text-[12.5px] leading-snug text-text-2">{INTENT_META[m.intents[0]].note}</p>
+              </>
+            ) : (
+              <p className="text-[13px] text-text-2">No intent words found in this keyword (e.g. “buy”, “best”, “how”). Intent from Google results needs DataForSEO.</p>
+            )}
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-border pt-3 text-[12.5px]">
+              <dt className="text-text-3">Words</dt>
+              <dd className="text-right text-text">{words}{words >= 4 ? " · long tail" : words <= 2 ? " · head term" : ""}</dd>
+              <dt className="text-text-3">Question</dt>
+              <dd className="text-right text-text">{/^(what|how|why|when|where|which|who|is|are|can|does|do|should)\b/.test(keyword) ? "Yes" : "No"}</dd>
+              <dt className="text-text-3">Autocomplete ideas</dt>
+              <dd className="text-right text-text">{suggested ? o.variations.total.toLocaleString() : "n/a"}</dd>
+            </dl>
+          </CardBody>
+        </Card>
+      </Grid>
+
+      <NeedsData
+        compact
+        className="mb-4"
+        providers={["dataforseo"]}
+        title="Connect DataForSEO for search volume, difficulty and the live SERP"
+        shows={["Volume by country, 12-month trend and global volume", "Keyword Difficulty, CPC and competition", "SERP features and the Google top 20 with page metrics", "Related keywords and clusters by SERP overlap"]}
+      />
+
+      {o.autocomplete.status !== "ok" && (
+        <Callout tone="warning" className="mb-4">
+          {o.autocomplete.status === "disabled" ? "Google Autocomplete is disabled (ENABLE_AUTOCOMPLETE=false), so no keyword ideas can be shown." : "Google Autocomplete could not be reached, so keyword ideas are missing. It will be retried shortly."}
+        </Callout>
+      )}
+
+      <Grid cols={3} className="mb-4">
+        <SuggestionsCard title="Keyword variations" block={o.variations} db={db} href={magic()} empty="No Autocomplete suggestions for this keyword." />
+        <SuggestionsCard title="Questions" block={o.questions} db={db} href={magic("&questions=1")} empty="No question suggestions found." />
+        <Card className="flex flex-col">
+          <CardHeader
+            title="Topics by shared words"
+            info="Real text analysis: Autocomplete suggestions grouped by the most specific word they share. Clustering by SERP overlap needs DataForSEO."
+            href={magic()}
+          />
+          <CardBody className="flex-1">
+            {o.wordGroups.length ? (
+              <ul className="space-y-2.5">
+                {o.wordGroups.slice(0, 6).map((g) => (
+                  <li key={g.id} className="text-[13px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-text">{g.label}</span>
+                      <span className="tabular shrink-0 text-[12px] text-text-3">{g.count} ideas</span>
+                    </div>
+                    <div className="truncate text-[12px] text-text-3">{g.examples.join(" · ")}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="py-6 text-center text-[13px] text-text-3">Not enough suggestions to group.</p>
+            )}
+          </CardBody>
+          {strategyImport && (
+            <CardFooter>
+              <Link href={strategyImport} className="inline-flex items-center gap-1 text-link hover:underline">
+                <Layers className="h-3.5 w-3.5" /> Build a keyword strategy →
+              </Link>
+            </CardFooter>
+          )}
+        </Card>
+      </Grid>
+
+      <NeedsData
+        compact
+        providers={["dataforseo"]}
+        title="SERP analysis needs DataForSEO"
+        shows={[`The live Google top 20 for “${keyword}” in ${info.name}`, "Whether your project domains rank there", "SERP features present on the results page"]}
+      >
+        <p className="mt-2 text-[12.5px] text-text-2">
+          Meanwhile, <Link href={`/seo-content-template?q=${encodeURIComponent(keyword)}&db=${db}`} className="text-link hover:underline">create a content brief</Link> or{" "}
+          <a href={`https://www.google.com/search?q=${encodeURIComponent(keyword)}`} target="_blank" rel="noopener noreferrer" className="text-link hover:underline">open the results on Google</a>.
+        </p>
+      </NeedsData>
+    </Page>
+  );
+}
+
+function SuggestionsCard({ title, block, db, href, empty }: { title: string; block: IdeaBlock; db: string; href: string; empty: string }) {
+  return (
+    <Card className="flex flex-col">
+      <CardHeader title={title} href={href} info="Real Google Autocomplete suggestions, in the order Google returns them. Volumes need DataForSEO." />
+      <CardBody className="flex-1">
+        <div className="mb-2 flex items-baseline gap-4">
+          <div>
+            <div className="text-[20px] font-semibold text-text">{compact(block.total)}</div>
+            <div className="text-[11.5px] text-text-3">suggestions</div>
+          </div>
+          <div>
+            <div className="text-[20px] font-semibold text-text-3">n/a</div>
+            <div className="text-[11.5px] text-text-3">total volume</div>
+          </div>
+        </div>
+        <MiniTable
+          empty={empty}
+          columns={[{ header: "Keyword" }, { header: "Intent", align: "right" as const }]}
+          rows={block.top.map((r) => [
+            <KeywordLink key="k" keyword={r.keyword} db={db} className="line-clamp-1 break-all" />,
+            <span key="i" className="inline-flex justify-end">{r.i ? <IntentBadges intents={decodeIntents(r.i)} /> : <span className="text-text-3">–</span>}</span>,
+          ])}
+        />
+      </CardBody>
+      <CardFooter>
+        <Link href={href} className="text-link hover:underline">
+          View all {block.total.toLocaleString()} suggestions →
+        </Link>
+      </CardFooter>
+    </Card>
+  );
+}
+
 async function BulkView({ userId, keywords, overflow, db }: { userId: string; keywords: string[]; overflow: number; db: string }) {
-  const res = await getBulkOverview(userId, keywords, db);
+  const [res, gsc] = await Promise.all([getBulkOverview(userId, keywords, db), gscKeywordStats(userId, keywords)]);
   const rows = res.data.map((r) => ({ ...r, globalVolume: res.global?.[r.keyword] ?? null }));
   const info = database(db);
-  const vol = rows.reduce((s, r) => s + (r.volume ?? 0), 0);
+  const hasMetrics = res.source !== "none";
+  const vols = rows.filter((r) => r.volume != null);
   const kds = rows.filter((r) => r.kd != null);
   const cpcs = rows.filter((r) => r.cpc != null);
   const avgKd = kds.length ? Math.round(kds.reduce((s, r) => s + (r.kd ?? 0), 0) / kds.length) : null;
   const bands = KD_BANDS.map((b, i) => ({ label: b.label, keywords: kds.filter((r) => (r.kd as number) <= b.max && (r.kd as number) > (i ? KD_BANDS[i - 1].max : -1)).length }));
   const intents = INTENTS.map((i, idx) => ({ label: INTENT_META[i].label, value: rows.filter((r) => r.intents[0] === i).length, color: `var(--series-${idx + 1})` }));
+  const unclassified = rows.filter((r) => !r.intents.length).length;
+  const questions = rows.filter((r) => /^(what|how|why|when|where|which|who|is|are|can|does|do|should)\b/.test(r.keyword)).length;
+  const gscFound = Object.keys(gsc.stats).length;
+  const gscImpr = Object.values(gsc.stats).reduce((s, x) => s + x.impressions, 0);
   return (
     <Page>
       <PageHeader
@@ -371,7 +553,7 @@ async function BulkView({ userId, keywords, overflow, db }: { userId: string; ke
         subject={`${keywords.length} keywords`}
         meta={
           <>
-            <DataSourceBadge source={res.source} fetchedAt={res.fetchedAt} />
+            <SourceBadges source={res.source} fetchedAt={res.fetchedAt} gsc={gscFound ? { fetchedAt: gsc.status.fetchedAt, note: `${gscFound} of your queries` } : null} />
             <Badge>
               {info.flag} {info.name}
             </Badge>
@@ -397,21 +579,56 @@ async function BulkView({ userId, keywords, overflow, db }: { userId: string; ke
       <Card className="mb-4">
         <MetricStrip>
           <Metric label="Keywords" value={rows.length.toLocaleString()} />
-          <Metric label="Total volume" value={compact(vol)} sub={`${info.flag} ${info.name}`} />
+          <Metric label="Total volume" value={vols.length ? compact(vols.reduce((s, r) => s + (r.volume ?? 0), 0)) : "n/a"} sub={`${info.flag} ${info.name}`} />
           <Metric label="Average KD" value={avgKd == null ? "n/a" : `${avgKd}%`} sub={avgKd == null ? undefined : kdBand(avgKd).label} />
           <Metric label="Average CPC" value={cpcs.length ? money(cpcs.reduce((s, r) => s + (r.cpc ?? 0), 0) / cpcs.length) : "n/a"} />
-          <Metric label="Question keywords" value={rows.filter((r) => /^(what|how|why|when|where|which|who|is|are|can|does|do|should)\b/.test(r.keyword)).length} sub={pct((rows.filter((r) => /^(what|how|why|when|where|which|who|is|are|can|does|do|should)\b/.test(r.keyword)).length / Math.max(1, rows.length)) * 100, 0)} />
+          {gsc.status.sites > 0 ? (
+            <Metric label="On your sites" value={`${gscFound} / ${rows.length}`} sub={`${compact(gscImpr)} impressions · 3 months`} info="Keywords that received impressions in the Search Console properties linked to your projects." />
+          ) : (
+            <Metric label="Question keywords" value={questions} sub={pct((questions / Math.max(1, rows.length)) * 100, 0)} />
+          )}
         </MetricStrip>
       </Card>
+      {!hasMetrics && (
+        <NeedsData
+          compact
+          className="mb-4"
+          providers={["dataforseo"]}
+          title="Connect DataForSEO for volume, difficulty and CPC"
+          shows={["Search volume, 12-month trend and global volume", "Keyword Difficulty distribution", "CPC and competition", "SERP features per keyword"]}
+        />
+      )}
+      {!gsc.status.configured && hasMetrics && (
+        <NeedsData compact className="mb-4" providers={["google"]} title="Connect Search Console to see which of these keywords your site already gets impressions for" />
+      )}
       <Grid cols={2} className="mb-4">
+        {hasMetrics ? (
+          <Card>
+            <CardHeader title="Keyword difficulty distribution" description="Keywords per difficulty band" />
+            <CardBody>
+              <BarChart data={bands} xKey="label" series={[{ key: "keywords", label: "Keywords" }]} valueLabels height={200} />
+            </CardBody>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader title="Keyword length" description="Keywords by number of words (text analysis)" />
+            <CardBody>
+              <BarChart
+                data={["1", "2", "3", "4", "5+"].map((label, i) => ({ label: `${label} word${label === "1" ? "" : "s"}`, keywords: rows.filter((r) => Math.min(5, r.keyword.split(" ").length) === i + 1).length }))}
+                xKey="label"
+                series={[{ key: "keywords", label: "Keywords" }]}
+                valueLabels
+                height={200}
+              />
+            </CardBody>
+          </Card>
+        )}
         <Card>
-          <CardHeader title="Keyword difficulty distribution" description="Keywords per difficulty band" />
-          <CardBody>
-            <BarChart data={bands} xKey="label" series={[{ key: "keywords", label: "Keywords" }]} valueLabels height={200} />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardHeader title="Search intent" description="Primary intent of each keyword" />
+          <CardHeader
+            title="Search intent"
+            description={hasMetrics ? "Primary intent of each keyword" : `Text-based classification${unclassified ? ` · ${unclassified} without intent words` : ""}`}
+            info={hasMetrics ? undefined : TEXT_INTENT_NOTE}
+          />
           <CardBody>
             <DistributionBar segments={intents} format={(v, s) => `${v} · ${s.toFixed(0)}%`} />
           </CardBody>
@@ -419,7 +636,7 @@ async function BulkView({ userId, keywords, overflow, db }: { userId: string; ke
       </Grid>
       <Card>
         <CardHeader title="Keywords" description="Select keywords to add them to a list, or export everything as CSV." />
-        <KeywordMetricsTable rows={rows} db={db} exportName={`keyword-overview-bulk_${db}`} listName="Bulk analysis" showGlobal={res.global != null} />
+        <KeywordMetricsTable rows={rows} db={db} exportName={`keyword-overview-bulk_${db}`} listName="Bulk analysis" showGlobal={res.global != null} metrics={hasMetrics} gsc={gsc.status.sites > 0 ? gsc.stats : undefined} />
       </Card>
       {res.source === "demo" && <DemoNotice className="mt-6" />}
     </Page>

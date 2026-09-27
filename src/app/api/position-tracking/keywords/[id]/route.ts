@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/position-tra
     const device = param && devices.includes(param) ? param : devices[0];
     const range = parseRange(req.nextUrl.searchParams.get("range"));
     const detail = await keywordDetail(kw.project_id, kw.id, device, addDays(campaign.lastDay, -(range - 1)));
-    return Response.json({ ...detail, device, domains: [kw.domain, ...campaign.competitors] }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ ...detail, device, domains: campaign.source === "search-console" ? [kw.domain] : [kw.domain, ...campaign.competitors] }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     const status = e instanceof AppError ? e.status : 500;
     return Response.json({ error: e instanceof AppError ? e.message : "Something went wrong." }, { status });

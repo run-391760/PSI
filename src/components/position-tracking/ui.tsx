@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowDownRight, ArrowUp, ArrowUpRight, Minus } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -12,11 +12,34 @@ export const domainDashed = (index: number) => index >= 8;
 export function Pos({ value, className, strong }: { value: number | null | undefined; className?: string; strong?: boolean }) {
   if (value == null)
     return (
-      <span className={cn("text-text-3", className)} title="Not in the top 100">
+      <span className={cn("text-text-3", className)} title="Not ranking / no data">
         –
       </span>
     );
   return <span className={cn("tabular", strong && "font-semibold text-text", className)}>{value}</span>;
+}
+
+/**
+ * Position change (previous → current), positive = improved. Unlike the shared PositionChange it handles
+ * Search Console's fractional average positions (one decimal).
+ */
+export function PosDiff({ previous, current, compact }: { previous: number | null | undefined; current: number | null | undefined; compact?: boolean }) {
+  if (current == null && previous != null) return <span className="text-[12px] font-medium text-critical-ink">Lost</span>;
+  if (previous == null && current != null) return <span className="rounded bg-brand-soft px-1 text-[11px] font-semibold text-brand-ink">New</span>;
+  if (previous == null || current == null) return <span className="text-text-3">–</span>;
+  const d = Math.round((previous - current) * 10) / 10;
+  if (d === 0)
+    return (
+      <span className="inline-flex items-center text-text-3" aria-label="No change">
+        {compact ? <Minus className="h-3 w-3" /> : "0"}
+      </span>
+    );
+  return (
+    <span className={cn("tabular inline-flex items-center text-[12.5px] font-medium", d > 0 ? "text-good-ink" : "text-critical-ink")}>
+      {d > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+      {Math.abs(d)}
+    </span>
+  );
 }
 
 /** Signed delta with arrow and meaning color (text stays in ink tokens). */

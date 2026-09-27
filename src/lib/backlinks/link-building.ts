@@ -3,10 +3,15 @@ import { query } from "@/lib/db";
 import { AppError, database, matchesDomain, normalizeKeywords, safeUrl } from "@/lib/domain";
 import { enqueue, getSchedule, latestJob, setSchedule } from "@/lib/jobs/queue";
 import { getProject, type Project } from "@/lib/projects";
-import { linkingDomainAs } from "./metrics";
+import { createHash } from "node:crypto";
+import { demoAllowed } from "@/lib/data-mode";
+import { cached, liveEnabled } from "@/lib/providers/source";
+import { liveSerpTop } from "@/lib/content/real";
+import { rateProspects } from "./map";
+import { getBlReferringDomains } from "./report";
 import { looseRootDomain } from "./normalize";
 import { computeProspects } from "./prospects";
-import { DEFAULT_TEMPLATE, type LbLinkRow, type LbSettings, type OutreachStatus, type PipelineRow } from "./types";
+import { DEFAULT_TEMPLATE, type LbLinkRow, type LbProspect, type LbSettings, type OutreachStatus, type PipelineRow } from "./types";
 
 export const VERIFY_JOB = "backlinks.verify";
 export const MAX_KEYWORDS = 10;
@@ -47,7 +52,8 @@ export async function saveLbSetup(ownerId: string, projectId: string, input: { k
     if (d !== project.domain && !competitors.includes(d)) competitors.push(d);
   }
   if (competitors.length > MAX_COMPETITORS) throw new AppError(`Choose at most ${MAX_COMPETITORS} competitors.`);
-  const prospectCount = computeProspects(project.domain, database(project.country).code, keywords, competitors).length;
+  // Demo counts only in local development; live prospect counts are stored when the page computes them.
+  const prospectCount = !liveEnabled() && demoAllowed() ? computeProspects(project.domain, database(project.country).code, keywords, competitors).length : null;
   await query(
     `INSERT INTO bl_lb_settings(project_id, keywords, competitors, prospect_count) VALUES($1,$2::jsonb,$3::jsonb,$4)
      ON CONFLICT(project_id) DO UPDATE SET keywords=excluded.keywords, competitors=excluded.competitors, prospect_count=excluded.prospect_count, updated_at=now()`,
@@ -67,11 +73,28 @@ export async function saveTemplate(ownerId: string, projectId: string, input: { 
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Prospects (demo engine)
+ * Prospects: competitors' real referring domains + real SERPs (DataForSEO); demo only in local dev.
  * ---------------------------------------------------------------------------------------------- */
 
-export function projectProspects(project: Project, settings: LbSettings) {
-  return computeProspects(project.domain, database(project.country).code, settings.keywords, settings.competitors);
+export const prospectsAvailable = () => liveEnabled() || demoAllowed();
+
+export async function projectProspects(ownerId: string, project: Project, settings: LbSettings): Promise<{ prospects: LbProspect[]; source: "dataforseo" | "demo"; fetchedAt: string } | null> {
+  const db = database(project.country).code;
+  if (liveEnabled()) {
+    const key = createHash("sha1").update(`${project.domain}|${db}|${settings.keywords.join(",")}|${settings.competitors.join(",")}`).digest("hex").slice(0, 16);
+    const res = await cached(`lb:prospects:v1:${key}`, "dataforseo", 24, async () => {
+      const ours = (await getBlReferringDomains(ownerId, project.domain)).data.map((r) => r.domain);
+      const competitorLinks: Record<string, { domain: string; authorityScore: number; spamScore?: number | null }[]> = {};
+      for (const c of settings.competitors) competitorLinks[c] = (await getBlReferringDomains(ownerId, c)).data;
+      const serps: Record<string, { domain: string; position: number }[]> = {};
+      for (const k of settings.keywords) serps[k] = (await liveSerpTop(ownerId, k, db, 30)).organic.map((r) => ({ domain: looseRootDomain(r.domain) ?? r.domain, position: r.position }));
+      return rateProspects({ domain: project.domain, competitors: settings.competitors, ours, competitorLinks, serps });
+    });
+    if (settings.prospectCount !== res.data.length) await query("UPDATE bl_lb_settings SET prospect_count=$2 WHERE project_id=$1", [project.id, res.data.length]);
+    return { prospects: res.data, source: "dataforseo", fetchedAt: res.fetchedAt };
+  }
+  if (demoAllowed()) return { prospects: computeProspects(project.domain, db, settings.keywords, settings.competitors), source: "demo", fetchedAt: new Date().toISOString() };
+  return null;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -79,6 +102,7 @@ export function projectProspects(project: Project, settings: LbSettings) {
  * ---------------------------------------------------------------------------------------------- */
 
 type PipelineDb = {
+  source: string;
   domain: string;
   state: "in_progress" | "rejected";
   status: OutreachStatus;
@@ -94,13 +118,15 @@ type PipelineDb = {
 
 export async function listPipeline(projectId: string): Promise<PipelineRow[]> {
   const rows = await query<PipelineDb>("SELECT * FROM bl_lb_prospects WHERE project_id=$1 ORDER BY updated_at DESC", [projectId]);
+  // Ratings of prospects found with demo data are hidden unless DEMO_DATA=true; the outreach itself is user data.
+  const hide = (r: PipelineDb) => r.source === "demo" && !demoAllowed();
   return rows.map((r) => ({
     domain: r.domain,
     state: r.state,
     status: r.status,
-    rating: r.rating,
-    reason: r.reason,
-    authorityScore: r.authority_score,
+    rating: hide(r) || !r.rating ? null : r.rating,
+    reason: hide(r) ? "" : r.reason,
+    authorityScore: hide(r) || !r.authority_score ? null : r.authority_score,
     contactName: r.contact_name,
     contactEmail: r.contact_email,
     notes: r.notes,
@@ -118,11 +144,13 @@ export async function setProspectState(ownerId: string, project: Project, domain
     return clean.length;
   }
   const settings = await getLbSettings(project.id);
-  const info = new Map((settings ? projectProspects(project, settings) : []).map((p) => [p.domain, p]));
-  const payload = clean.map((d) => ({ domain: d, rating: info.get(d)?.rating ?? 0, reason: info.get(d)?.reason ?? "", authority_score: info.get(d)?.authorityScore ?? linkingDomainAs(d) }));
+  const found = settings ? await projectProspects(ownerId, project, settings).catch(() => null) : null;
+  const info = new Map((found?.prospects ?? []).map((p) => [p.domain, p]));
+  const source = found?.source ?? "user";
+  const payload = clean.map((d) => ({ domain: d, rating: info.get(d)?.rating ?? 0, reason: info.get(d)?.reason ?? "", authority_score: info.get(d)?.authorityScore ?? 0, source }));
   await query(
-    `INSERT INTO bl_lb_prospects(project_id, domain, state, rating, reason, authority_score)
-     SELECT $1, x.domain, $2, x.rating, x.reason, x.authority_score FROM jsonb_to_recordset($3::jsonb) AS x(domain text, rating int, reason text, authority_score int)
+    `INSERT INTO bl_lb_prospects(project_id, domain, state, rating, reason, authority_score, source)
+     SELECT $1, x.domain, $2, x.rating, x.reason, x.authority_score, x.source FROM jsonb_to_recordset($3::jsonb) AS x(domain text, rating int, reason text, authority_score int, source text)
      ON CONFLICT(project_id, domain) DO UPDATE SET state=excluded.state, status=CASE WHEN excluded.state='in_progress' AND bl_lb_prospects.state='rejected' THEN 'to_contact' ELSE bl_lb_prospects.status END, updated_at=now()`,
     [project.id, state, JSON.stringify(payload)],
   );

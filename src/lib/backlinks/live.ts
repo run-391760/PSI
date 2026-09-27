@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { dfs } from "@/lib/providers/dataforseo";
 import { AS_BUCKETS, asBucketIndex, pctChange, subnetOf } from "./metrics";
+import { anchorType, samplesByDomain } from "./map";
 import {
   ANCHOR_TYPE_LABELS,
   type AnchorRow,
@@ -120,15 +121,6 @@ export async function overview(ownerId: string, domain: string): Promise<BlOverv
   };
 }
 
-function anchorType(anchor: string, domain: string): AnchorRow["type"] {
-  const a = anchor.toLowerCase().trim();
-  if (!a) return "image";
-  if (a.includes(domain) || /^https?:\/\//.test(a) || a.startsWith("www.")) return "naked";
-  if (a.includes(domain.split(".")[0])) return "branded";
-  if (/^(click here|here|website|read more|learn more|this article|source|link|visit site|official site)$/.test(a)) return "generic";
-  return "partial";
-}
-
 export async function backlinks(ownerId: string, domain: string): Promise<BacklinkRow[]> {
   const [r] = await dfs(ownerId, "backlinks/backlinks/live", { target: domain, mode: "as_is", limit: 1000, order_by: ["rank,desc"] }, cost(1000));
   return (((r as any)?.items ?? []) as any[]).map((b, i) => {
@@ -172,6 +164,7 @@ export async function referringDomains(ownerId: string, domain: string): Promise
     isNew: day(d.first_seen) >= cutoff,
     isLost: Boolean(d.lost_date),
     follow: (d.referring_links_attributes?.nofollow ?? 0) < (d.backlinks ?? 0),
+    spamScore: typeof d.backlinks_spam_score === "number" ? d.backlinks_spam_score : null,
   }));
 }
 
@@ -228,7 +221,25 @@ export async function competitors(ownerId: string, domain: string): Promise<Comp
   const [r] = await dfs(ownerId, "backlinks/competitors/live", { target: domain, limit: 20, exclude_large_domains: true }, cost(20));
   const items = (((r as any)?.items ?? []) as any[]).filter((c) => c.target && c.target !== domain);
   const max = Math.max(1, ...items.map((c) => c.intersections ?? 0));
-  return items.map((c) => ({ domain: c.target, authorityScore: as(c.rank), level: (c.intersections ?? 0) / max, common: c.intersections ?? 0, referringDomains: 0, backlinks: 0 }));
+  const targets = items.map((c) => String(c.target));
+  // Real totals for the competitors (bulk endpoints); left at 0 (= shown as n/a) if they fail.
+  const [bls, rds] = targets.length
+    ? await Promise.all([
+        dfs(ownerId, "backlinks/bulk_backlinks/live", { targets }, cost(targets.length)).catch(() => []),
+        dfs(ownerId, "backlinks/bulk_referring_domains/live", { targets }, cost(targets.length)).catch(() => []),
+      ])
+    : [[], []];
+  const by = (res: any[]) => new Map<string, any>((((res?.[0] as any)?.items ?? []) as any[]).map((i) => [i.target, i]));
+  const blMap = by(bls as any[]);
+  const rdMap = by(rds as any[]);
+  return items.map((c) => ({
+    domain: c.target,
+    authorityScore: as(c.rank),
+    level: (c.intersections ?? 0) / max,
+    common: c.intersections ?? 0,
+    referringDomains: rdMap.get(c.target)?.referring_domains ?? 0,
+    backlinks: blMap.get(c.target)?.backlinks ?? 0,
+  }));
 }
 
 export async function compare(ownerId: string, domains: string[]): Promise<CompareData> {
@@ -250,9 +261,9 @@ export async function compare(ownerId: string, domains: string[]): Promise<Compa
       followPct: total ? Math.round(((total - (s.referring_links_attributes?.nofollow ?? 0)) / total) * 1000) / 10 : 0,
       textPct: total ? Math.round(((types.anchor ?? 0) / total) * 1000) / 10 : 0,
       imagePct: total ? Math.round(((types.image ?? 0) / total) * 1000) / 10 : 0,
-      last30: { newRd: 0, lostRd: 0, newBl: 0, lostBl: 0 },
+      last30: null,
       asShares: AS_BUCKETS.map(() => 0),
-      topCategory: "n/a",
+      topCategory: "",
     });
     histories.push(hist);
   }
@@ -267,15 +278,18 @@ export async function compare(ownerId: string, domains: string[]): Promise<Compa
   };
 }
 
-/** Bulk metrics for up to 200 targets (bulk_ranks + bulk_backlinks + bulk_referring_domains). */
+/** Bulk metrics for up to 200 targets (ranks, backlinks, referring domains, new/lost in the last 30 days). */
 export async function bulk(ownerId: string, targets: string[]) {
-  const [ranks, bls, rds] = await Promise.all([
+  const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const [ranks, bls, rds, nlr, nlb] = await Promise.all([
     dfs(ownerId, "backlinks/bulk_ranks/live", { targets }, cost(targets.length)),
     dfs(ownerId, "backlinks/bulk_backlinks/live", { targets }, cost(targets.length)),
     dfs(ownerId, "backlinks/bulk_referring_domains/live", { targets }, cost(targets.length)),
+    dfs(ownerId, "backlinks/bulk_new_lost_referring_domains/live", { targets, date_from: since }, cost(targets.length)).catch(() => []),
+    dfs(ownerId, "backlinks/bulk_new_lost_backlinks/live", { targets, date_from: since }, cost(targets.length)).catch(() => []),
   ]);
   const by = (res: any[]) => new Map<string, any>((((res?.[0] as any)?.items ?? []) as any[]).map((i) => [i.target, i]));
-  return { ranks: by(ranks), backlinks: by(bls), referringDomains: by(rds) };
+  return { ranks: by(ranks), backlinks: by(bls), referringDomains: by(rds), newLostRd: by(nlr as any[]), newLostBl: by(nlb as any[]) };
 }
 
 /** Referring domains with DataForSEO's spam score, for the Backlink Audit in live mode. */
@@ -283,11 +297,17 @@ export async function auditDomains(ownerId: string, domain: string) {
   const [r] = await dfs(ownerId, "backlinks/referring_domains/live", { target: domain, limit: 1000, order_by: ["backlinks_spam_score,desc"] }, cost(1000));
   return (((r as any)?.items ?? []) as any[]).map((d) => ({
     domain: String(d.domain ?? ""),
-    spamScore: Number(d.backlinks_spam_score ?? 0),
+    spamScore: typeof d.backlinks_spam_score === "number" ? d.backlinks_spam_score : null,
     authorityScore: as(d.rank),
     backlinks: Number(d.backlinks ?? 0),
     firstSeen: day(d.first_seen),
     lastSeen: day(d.lost_date),
     follow: (d.referring_links_attributes?.nofollow ?? 0) < (d.backlinks ?? 0),
   }));
+}
+
+/** One sample backlink per referring domain (anchor, source URL, IP, country) for the live audit. */
+export async function auditSamples(ownerId: string, domain: string) {
+  const [r] = await dfs(ownerId, "backlinks/backlinks/live", { target: domain, mode: "one_per_domain", limit: 1000 }, cost(1000)).catch(() => [undefined]);
+  return samplesByDomain(((r as any)?.items ?? []) as any[]);
 }

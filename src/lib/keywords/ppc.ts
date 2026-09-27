@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { query, transaction, type Query } from "@/lib/db";
 import { AppError, database, normalizeKeywords } from "@/lib/domain";
+import { demoAllowed } from "@/lib/data-mode";
 import { keywordRows } from "./metrics";
 import { autoGroup, crossGroupNegatives, type AdMatch, type CampaignDetail, type PpcCampaign, type PpcCampaignSummary, type PpcGroup, type PpcNegative } from "./ppc-model";
 
@@ -20,14 +21,15 @@ type CampaignRow = { id: string; name: string; db: string; ctr: number; created_
 const toCampaign = (r: CampaignRow): PpcCampaign => ({ id: r.id, name: r.name, db: r.db, ctr: Number(r.ctr), created_at: iso(r.created_at), updated_at: iso(r.updated_at) });
 
 export async function listCampaigns(ownerId: string): Promise<PpcCampaignSummary[]> {
-  const rows = await query<CampaignRow & { groups: number; keywords: number; volume: number }>(
+  const real = demoAllowed() ? "" : " AND k.metrics_source<>'demo'";
+  const rows = await query<CampaignRow & { groups: number; keywords: number; volume: number | null }>(
     `SELECT c.*, (SELECT count(*)::int FROM kw_ppc_groups g WHERE g.campaign_id=c.id) AS groups,
        (SELECT count(*)::int FROM kw_ppc_keywords k WHERE k.campaign_id=c.id) AS keywords,
-       (SELECT COALESCE(sum(k.volume),0)::float8 FROM kw_ppc_keywords k WHERE k.campaign_id=c.id) AS volume
+       (SELECT sum(k.volume)::float8 FROM kw_ppc_keywords k WHERE k.campaign_id=c.id${real}) AS volume
      FROM kw_ppc_campaigns c WHERE c.owner_id=$1 ORDER BY c.updated_at DESC`,
     [ownerId],
   );
-  return rows.map((r) => ({ ...toCampaign(r), groups: Number(r.groups), keywords: Number(r.keywords), volume: Number(r.volume) }));
+  return rows.map((r) => ({ ...toCampaign(r), groups: Number(r.groups), keywords: Number(r.keywords), volume: r.volume == null ? null : Number(r.volume) }));
 }
 
 async function ownCampaign(ownerId: string, id: string) {
@@ -51,8 +53,21 @@ export async function getCampaign(ownerId: string, id: string): Promise<Campaign
   const negs = await query<{ id: string; group_id: string | null; keyword: string; match_type: string; origin: string }>("SELECT * FROM kw_ppc_negatives WHERE campaign_id=$1 ORDER BY origin DESC, keyword", [id]);
   const round2 = (v: number | null) => (v == null ? null : Math.round(Number(v) * 100) / 100);
   const byGroup = new Map<string, PpcGroup>(groups.map((g) => [g.id, { id: g.id, name: g.name, keywords: [], negatives: [] }]));
-  for (const k of kws)
-    byGroup.get(k.group_id)?.keywords.push({ id: k.id, groupId: k.group_id, keyword: k.keyword, match: asMatch(k.match_type), volume: k.volume, cpc: round2(k.cpc), competition: round2(k.competition), source: k.metrics_source });
+  // Stored demo metrics are shown only when DEMO_DATA=true; otherwise the keyword stays with n/a metrics.
+  const hideDemo = !demoAllowed();
+  for (const k of kws) {
+    const hidden = hideDemo && k.metrics_source === "demo";
+    byGroup.get(k.group_id)?.keywords.push({
+      id: k.id,
+      groupId: k.group_id,
+      keyword: k.keyword,
+      match: asMatch(k.match_type),
+      volume: hidden ? null : k.volume,
+      cpc: hidden ? null : round2(k.cpc),
+      competition: hidden ? null : round2(k.competition),
+      source: hidden ? "none" : k.metrics_source,
+    });
+  }
   const campaignNegatives: PpcNegative[] = [];
   for (const n of negs) {
     const neg: PpcNegative = { id: n.id, groupId: n.group_id, keyword: n.keyword, match: asMatch(n.match_type), origin: n.origin === "cross-group" ? "cross-group" : "manual" };

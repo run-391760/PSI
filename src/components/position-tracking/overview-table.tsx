@@ -8,14 +8,14 @@ import { downloadCsv } from "@/lib/csv";
 import { compact, displayUrl, money, pct } from "@/lib/format";
 import type { OverviewRow, TagRef } from "@/lib/position-tracking/types";
 import type { Intent } from "@/lib/seo/types";
-import { IntentBadges, PositionChange, SerpFeatureIcons } from "@/components/seo/badges";
+import { IntentBadges, SerpFeatureIcons } from "@/components/seo/badges";
 import { Button, buttonClass } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Input, Select } from "@/components/ui/input";
 import { KeywordDrawer } from "./keyword-drawer";
-import { Pos, PositionSpark, TagChip, domainColor } from "./ui";
+import { Pos, PosDiff, PositionSpark, TagChip, domainColor } from "./ui";
 
 const POSITION_FILTERS = [
   { id: "all", label: "All positions" },
@@ -47,6 +47,7 @@ export function OverviewTable({
   endDay,
   initialKeyword,
   initialFilter,
+  measured = false,
 }: {
   rows: OverviewRow[];
   projectId: string;
@@ -60,6 +61,8 @@ export function OverviewTable({
   endDay: string | null;
   initialKeyword: string | null;
   initialFilter: string | null;
+  /** Search Console campaign: average positions of the own site + real clicks/impressions; no SERP data. */
+  measured?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -140,15 +143,22 @@ export function OverviewTable({
         header: "Diff",
         align: "right",
         sortValue: (r) => (r.change != null ? r.change : r.start == null && r.end != null ? 100 : r.start != null && r.end == null ? -100 : null),
-        render: (r) => <PositionChange previous={r.start} current={r.end} />,
+        render: (r) => <PosDiff previous={r.start} current={r.end} />,
         csv: (r) => r.change,
       },
       { key: "spark", header: "Trend", sortable: false, noExport: true, render: (r) => <PositionSpark values={r.spark} /> },
+      ...(measured
+        ? ([
+            { key: "clicks", header: "Clicks", align: "right", info: "Search Console clicks over the range.", sortValue: (r) => r.clicks, render: (r) => compact(r.clicks ?? 0), csv: (r) => r.clicks },
+            { key: "impressions", header: "Impr.", align: "right", info: "Search Console impressions over the range.", sortValue: (r) => r.impressions, render: (r) => compact(r.impressions ?? 0), csv: (r) => r.impressions },
+            { key: "ctr", header: "CTR", align: "right", sortValue: (r) => r.ctr, render: (r) => (r.ctr == null ? <span className="text-text-3">n/a</span> : pct(r.ctr, 1)), csv: (r) => r.ctr?.toFixed(2) ?? null },
+          ] as Column<OverviewRow>[])
+        : []),
       { key: "visibility", header: "Visibility", align: "right", info: "CTR at the current position relative to #1.", sortValue: (r) => r.visibility, render: (r) => pct(r.visibility, 1), csv: (r) => r.visibility.toFixed(2) },
-      { key: "features", header: "SERP features", sortable: false, render: (r) => <SerpFeatureIcons features={r.features} owned={r.owned} max={4} />, csv: (r) => r.features.join("; ") },
+      ...(measured ? [] : ([{ key: "features", header: "SERP features", sortable: false, render: (r) => <SerpFeatureIcons features={r.features} owned={r.owned} max={4} />, csv: (r) => r.features.join("; ") }] as Column<OverviewRow>[])),
       { key: "volume", header: "Volume", align: "right", sortValue: (r) => r.volume, render: (r) => (r.volume == null ? <span className="text-text-3">n/a</span> : compact(r.volume)) },
       { key: "cpc", header: "CPC", align: "right", sortValue: (r) => r.cpc, render: (r) => (r.cpc == null ? <span className="text-text-3">n/a</span> : money(r.cpc)) },
-      { key: "traffic", header: "Traffic", align: "right", info: "Estimated monthly visits: volume × CTR at the current position.", sortValue: (r) => r.traffic, render: (r) => (r.traffic == null ? <span className="text-text-3">n/a</span> : compact(r.traffic)) },
+      ...(measured ? [] : ([{ key: "traffic", header: "Traffic", align: "right", info: "Estimated monthly visits: volume × CTR at the current position.", sortValue: (r) => r.traffic, render: (r) => (r.traffic == null ? <span className="text-text-3">n/a</span> : compact(r.traffic)) }] as Column<OverviewRow>[])),
       {
         key: "url",
         header: "URL",
@@ -179,7 +189,7 @@ export function OverviewTable({
           <span className="inline-flex items-center justify-end gap-1.5">
             <Pos value={r.competitors[c]?.end} />
             <span className="w-7 text-left">
-              <PositionChange previous={r.competitors[c]?.start} current={r.competitors[c]?.end} compact />
+              <PosDiff previous={r.competitors[c]?.start} current={r.competitors[c]?.end} compact />
             </span>
           </span>
         ),
@@ -187,7 +197,7 @@ export function OverviewTable({
       }),
     );
     return cols;
-  }, [competitors, setKwParam, startDay, endDay]);
+  }, [competitors, setKwParam, startDay, endDay, measured]);
 
   const applyTag = () =>
     start(async () => {
@@ -204,7 +214,7 @@ export function OverviewTable({
 
   const exportCsv = () =>
     downloadCsv(`position-tracking-${domain}-${endDay ?? ""}`, [
-      ["Keyword", "Tags", "Intent", `Position ${startDay ?? "start"}`, `Position ${endDay ?? "end"}`, "Change", "Best", "Visibility %", "Volume", "CPC", "KD", "Est. traffic", "URL", "SERP features", "Owned features", ...competitors],
+      ["Keyword", "Tags", "Intent", `Position ${startDay ?? "start"}`, `Position ${endDay ?? "end"}`, "Change", "Best", "Visibility %", "Volume", "CPC", "KD", measured ? "Clicks" : "Est. traffic", "Impressions", "URL", "SERP features", "Owned features", ...competitors],
       ...filtered.map((r) => [
         r.keyword,
         r.tags.map((t) => t.name).join("; "),
@@ -218,6 +228,7 @@ export function OverviewTable({
         r.cpc,
         r.kd,
         r.traffic,
+        r.impressions,
         r.url,
         r.features.join("; "),
         r.owned.join("; "),
@@ -254,7 +265,7 @@ export function OverviewTable({
         rows={filtered}
         columns={columns}
         rowKey={(r) => r.id}
-        defaultSort={{ key: "volume", dir: "desc" }}
+        defaultSort={{ key: measured ? "clicks" : "volume", dir: "desc" }}
         searchable
         searchText={(r) => `${r.keyword} ${r.url ?? ""} ${r.tags.map((t) => t.name).join(" ")}`}
         selectable
@@ -373,7 +384,7 @@ export function OverviewTable({
           </div>
         )}
       </Dialog>
-      <KeywordDrawer row={openRow} onClose={() => setKwParam(null)} projectId={projectId} domain={domain} domains={domains} device={device} range={range} db={db} allTags={tags} />
+      <KeywordDrawer measured={measured} row={openRow} onClose={() => setKwParam(null)} projectId={projectId} domain={domain} domains={domains} device={device} range={range} db={db} allTags={tags} />
     </>
   );
 }

@@ -24,7 +24,7 @@ const split = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "Save & fetch mentions" }: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean }; onDone?: () => void; submitLabel?: string }) {
+export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "Save & fetch mentions" }: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean; demoAvailable?: boolean }; onDone?: () => void; submitLabel?: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -60,13 +60,15 @@ export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "S
             <span className="block text-[12px] text-text-3">You get an alert on mention spikes and new negative mentions.</span>
           </span>
         </label>
-        <label className="flex items-start gap-2 text-[13px]">
-          <Checkbox name="demo" defaultChecked={initial.demoSocial} className="mt-0.5" />
-          <span>
-            <span className="font-medium text-text">Include demo social &amp; forum mentions</span>
-            <span className="block text-[12px] text-text-3">Synthetic Reddit, X, Facebook, YouTube and forum posts, clearly labelled “Demo”. Social APIs are not connected.</span>
-          </span>
-        </label>
+        {initial.demoAvailable && (
+          <label className="flex items-start gap-2 text-[13px]">
+            <Checkbox name="demo" defaultChecked={initial.demoSocial} className="mt-0.5" />
+            <span>
+              <span className="font-medium text-text">Include demo social &amp; forum mentions</span>
+              <span className="block text-[12px] text-text-3">Development only (DEMO_DATA=true): synthetic posts labelled “Demo”.</span>
+            </span>
+          </label>
+        )}
       </div>
       <div className="flex justify-end gap-2 border-t border-border pt-3">
         {onDone && (
@@ -82,7 +84,7 @@ export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "S
   );
 }
 
-export function BrandSettingsButton(props: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean } }) {
+export function BrandSettingsButton(props: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean; demoAvailable?: boolean } }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -123,8 +125,8 @@ export function FetchNowButton({ projectId, disabled }: { projectId: string; dis
 
 function exportMentions(rows: Mention[]) {
   downloadCsv("brand-mentions", [
-    ["Published", "Source", "Channel", "Publisher", "Title", "Snippet", "URL", "Term", "Sentiment", "Sentiment score", "Est. reach (demo)", "Status", "Tags"],
-    ...rows.map((m) => [m.publishedAt, m.source === "demo" ? "Demo" : "Google News", CHANNELS[m.channel] ?? m.channel, m.publisher, m.title, m.snippet, m.url, m.term, m.sentiment, m.sentimentScore, m.reach, m.status, m.tags.join("; ")]),
+    ["Published", "Source", "Channel", "Publisher", "Title", "Snippet", "URL", "Term", "Sentiment", "Sentiment score", "Est. reach", "Status", "Tags"],
+    ...rows.map((m) => [m.publishedAt, m.source === "demo" ? "Demo" : "Google News", CHANNELS[m.channel] ?? m.channel, m.publisher, m.title, m.snippet, m.url, m.term, m.sentiment, m.sentimentScore, m.reach || "n/a", m.status, m.tags.join("; ")]),
   ]);
 }
 
@@ -224,7 +226,7 @@ export function MentionsTable({ projectId, mentions, terms, initialSentiment }: 
         </Badge>
       ),
     },
-    { key: "reach", header: "Est. reach", align: "right", info: "Demo estimate of the source's audience, not measured.", sortValue: (m) => m.reach, render: (m) => (m.reach ? compact(m.reach) : <span className="text-text-3">n/a</span>) },
+    { key: "reach", header: "Est. reach", align: "right", info: "Audience reach is not measured by any connected source (n/a).", sortValue: (m) => m.reach, render: (m) => (m.reach ? compact(m.reach) : <span className="text-text-3">n/a</span>) },
     { key: "status", header: "Status", sortValue: (m) => m.status, render: (m) => <Badge tone={STATUS_META[m.status].tone}>{STATUS_META[m.status].label}</Badge> },
     {
       key: "actions",

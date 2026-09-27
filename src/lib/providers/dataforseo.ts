@@ -94,3 +94,10 @@ export async function monthlySpend(ownerId: string) {
   const [row] = await query<{ reserved_micros: string }>("SELECT reserved_micros FROM monthly_usage WHERE owner_id=$1 AND month=$2", [ownerId, month]);
   return Number(row?.reserved_micros || 0) / 1e6;
 }
+
+/** Paid call that also returns the task id (needed for task_post endpoints polled later via task_get). */
+export async function dfsTask<T = Record<string, any>>(ownerId: string, endpoint: string, payload: Record<string, unknown>, maxMicros: number) {
+  const reservation = await reserve(ownerId, endpoint, maxMicros);
+  const task = await request<T>(endpoint, [payload], reservation);
+  return { id: task.id, result: task.result ?? [] };
+}

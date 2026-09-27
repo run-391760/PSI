@@ -343,8 +343,8 @@ export function PipelineTable({ projectId, rows, template, ourSite, monitored }:
         <div className="min-w-[200px]">
           <DomainLink domain={r.domain} />
           <div className="mt-0.5 flex items-center gap-2">
-            <Stars value={r.rating} reason={r.reason} size={12} />
-            <AsBadge score={r.authorityScore} />
+            {r.rating != null && r.rating > 0 && <Stars value={r.rating} reason={r.reason} size={12} />}
+            {r.authorityScore != null && r.authorityScore > 0 && <AsBadge score={r.authorityScore} />}
           </div>
         </div>
       ),

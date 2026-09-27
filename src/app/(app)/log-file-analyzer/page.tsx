@@ -2,6 +2,7 @@ import { Bot, FileWarning, Gauge, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import { requirePageUser } from "@/lib/auth";
 import { listAnalyses } from "@/lib/content/logs/store";
+import { demoAllowed } from "@/lib/data-mode";
 import { AnalysisList } from "@/components/content/logs/analysis-list";
 import { LogUploader } from "@/components/content/logs/uploader";
 import { DataSourceBadge } from "@/components/seo/source-badge";
@@ -19,7 +20,8 @@ const FEATURES = [
 
 export default async function LogFileAnalyzerPage() {
   const user = await requirePageUser();
-  const analyses = await listAnalyses(user.id);
+  // The generated sample log is a local-development aid only; its analyses are hidden otherwise.
+  const analyses = (await listAnalyses(user.id)).filter((a) => a.origin !== "sample" || demoAllowed());
   return (
     <Page>
       <PageHeader
@@ -32,7 +34,7 @@ export default async function LogFileAnalyzerPage() {
         <Card>
           <CardHeader title="Analyze a log file" description="Files are parsed as they stream in; only aggregates are stored, never the raw lines." />
           <CardBody>
-            <LogUploader />
+            <LogUploader allowSample={demoAllowed()} />
           </CardBody>
         </Card>
         <Card>

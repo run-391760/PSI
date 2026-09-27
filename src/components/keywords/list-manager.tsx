@@ -8,7 +8,10 @@ import { addKeywordsAction, createListAction, createListFromSeedAction, deleteLi
 import { DATABASES } from "@/lib/domain";
 import { dateLabel, money } from "@/lib/format";
 import { parseKeywordInput } from "@/lib/keywords/text";
+import type { GscKwStat } from "@/lib/keywords/gsc-map";
+import { TEXT_INTENT_NOTE } from "@/lib/keywords/intent";
 import type { ListItem } from "@/lib/keywords/types";
+import { compact } from "@/lib/format";
 import { INTENT_META, IntentBadges, KdBadge, KeywordLink, SerpFeatureIcons, TrendBars, featureLabel } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
@@ -127,7 +130,7 @@ export function SeedListForm() {
           <Select id="seed-size" value={size} onChange={(e) => setSize(e.target.value)}>
             {["25", "50", "100", "200", "500"].map((n) => (
               <option key={n} value={n}>
-                Top {n} by volume
+                Top {n} ideas
               </option>
             ))}
           </Select>
@@ -366,7 +369,7 @@ export function ListActions({ listId, name }: { listId: string; name: string }) 
 }
 
 /** Keywords of a list: metrics table with remove / copy to another list. */
-export function ListKeywordsTable({ listId, listName, items, db }: { listId: string; listName: string; items: ListItem[]; db: string }) {
+export function ListKeywordsTable({ listId, listName, items, db, metrics = true, gsc }: { listId: string; listName: string; items: ListItem[]; db: string; metrics?: boolean; gsc?: Record<string, GscKwStat> }) {
   const router = useRouter();
   const [copy, setCopy] = useState<string[] | null>(null);
   const [pending, start] = useTransition();
@@ -378,6 +381,8 @@ export function ListKeywordsTable({ listId, listName, items, db }: { listId: str
       <SelectionWrapper
         rows={rows}
         db={db}
+        metrics={metrics}
+        gsc={gsc}
         exportName={`keyword-list_${listName.replace(/\s+/g, "-")}_${db}`}
         onRemove={(keywords) =>
           start(async () => {
@@ -397,11 +402,18 @@ export function ListKeywordsTable({ listId, listName, items, db }: { listId: str
 type Row = ListItem;
 const na = <span className="text-text-3">n/a</span>;
 
-function SelectionWrapper({ rows, db, exportName, onRemove, onCopy, pending }: { rows: Row[]; db: string; exportName: string; onRemove: (k: string[]) => void; onCopy: (k: string[]) => void; pending: boolean }) {
+function SelectionWrapper({ rows, db, exportName, onRemove, onCopy, pending, metrics, gsc }: { rows: Row[]; db: string; exportName: string; onRemove: (k: string[]) => void; onCopy: (k: string[]) => void; pending: boolean; metrics: boolean; gsc?: Record<string, GscKwStat> }) {
   const columns = useMemo<Column<Row>[]>(
     () => [
       { key: "keyword", header: "Keyword", sortValue: (r) => r.keyword, render: (r) => <KeywordLink keyword={r.keyword} db={db} className="whitespace-nowrap" /> },
-      { key: "intent", header: "Intent", sortValue: (r) => r.intents[0] ?? "", render: (r) => (r.intents.length ? <IntentBadges intents={r.intents} /> : na), csv: (r) => r.intents.map((i) => INTENT_META[i].label).join("; ") },
+      ...(gsc
+        ? ([
+            { key: "gscImpr", header: "Your impr.", align: "right", info: "Impressions of your linked sites (Search Console, last 3 months).", sortValue: (r) => gsc[r.keyword]?.impressions ?? null, render: (r) => (gsc[r.keyword] ? compact(gsc[r.keyword].impressions) : na), csv: (r) => gsc[r.keyword]?.impressions ?? "" },
+            { key: "gscClicks", header: "Your clicks", align: "right", sortValue: (r) => gsc[r.keyword]?.clicks ?? null, render: (r) => (gsc[r.keyword] ? compact(gsc[r.keyword].clicks) : na), csv: (r) => gsc[r.keyword]?.clicks ?? "" },
+            { key: "gscPos", header: "Your pos.", align: "right", sortValue: (r) => gsc[r.keyword]?.position ?? null, render: (r) => (gsc[r.keyword] ? gsc[r.keyword].position.toFixed(1) : na), csv: (r) => gsc[r.keyword]?.position ?? "" },
+          ] as Column<Row>[])
+        : []),
+      { key: "intent", header: metrics ? "Intent" : "Intent (text)", info: metrics ? undefined : TEXT_INTENT_NOTE, sortValue: (r) => r.intents[0] ?? "", render: (r) => (r.intents.length ? <IntentBadges intents={r.intents} /> : na), csv: (r) => r.intents.map((i) => INTENT_META[i].label).join("; ") },
       { key: "volume", header: "Volume", align: "right", sortValue: (r) => r.volume, render: (r) => (r.volume == null ? na : r.volume.toLocaleString()) },
       { key: "trend", header: "Trend", sortable: false, render: (r) => (r.trend.length ? <TrendBars values={r.trend} width={56} height={16} /> : na), csv: (r) => r.trend.join(" ") },
       { key: "kd", header: "KD %", align: "right", sortValue: (r) => r.kd, render: (r) => <KdBadge kd={r.kd} /> },
@@ -410,14 +422,15 @@ function SelectionWrapper({ rows, db, exportName, onRemove, onCopy, pending }: {
       { key: "features", header: "SERP features", sortValue: (r) => r.features.length, render: (r) => <SerpFeatureIcons features={r.features} max={4} />, csv: (r) => r.features.map(featureLabel).join("; ") },
       { key: "addedAt", header: "Added", align: "right", sortValue: (r) => r.addedAt, render: (r) => <span className="text-[12px] whitespace-nowrap text-text-3">{dateLabel(r.addedAt)}</span>, csv: (r) => r.addedAt.slice(0, 10) },
     ],
-    [db],
+    [db, metrics, gsc],
   );
+  const visible = metrics ? columns : columns.filter((c) => !["trend", "competition", "features"].includes(c.key));
   return (
     <DataTable
       rows={rows}
-      columns={columns}
+      columns={visible}
       rowKey={(r) => r.keyword}
-      defaultSort={{ key: "volume", dir: "desc" }}
+      defaultSort={metrics ? { key: "volume", dir: "desc" } : gsc ? { key: "gscImpr", dir: "desc" } : undefined}
       pageSize={50}
       searchable
       searchText={(r) => r.keyword}

@@ -7,6 +7,11 @@ import { requirePageUser } from "@/lib/auth";
 import { CHANNEL_LABELS, CHANNEL_ORDER, getTrafficCompare, getTrafficReport, shareOfVisits, type TrafficReport } from "@/lib/competitive/traffic-analytics";
 import { parseDomains, spList, spStr } from "@/lib/competitive/shared";
 import { compareHref } from "@/lib/competitive/links";
+import { getOwnTraffic, ownSiteFor, settle, type OwnTrafficReport } from "@/lib/competitive/own-site";
+import { ownRange, type OwnRangeId } from "@/lib/competitive/own-site-map";
+import { demoAllowed } from "@/lib/data-mode";
+import { ClickstreamNeeded, OwnTraffic, OwnTrafficCompare } from "@/components/competitive/own-traffic-view";
+import { RangeLinks } from "@/components/competitive/own-search-view";
 import { compact, duration, displayUrl, num, pct } from "@/lib/format";
 import { DomainAvatar } from "@/components/seo/badges";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
@@ -35,7 +40,7 @@ const COMPARE_EXAMPLES = ["nike.com,adidas.com,zara.com", "booking.com,expedia.c
 const CRUMBS = [{ label: "Competitive research" }, { label: "Traffic Analytics", href: "/traffic-analytics" }];
 
 export default async function TrafficAnalyticsPage({ searchParams }: PageProps<"/traffic-analytics">) {
-  await requirePageUser();
+  const user = await requirePageUser();
   const sp = await searchParams;
   const q = spStr(sp.q);
   const { domains, invalid, truncated } = parseDomains(spList(q));
@@ -81,6 +86,61 @@ export default async function TrafficAnalyticsPage({ searchParams }: PageProps<"
       {truncated && <Callout tone="info" className="mb-4">Only the first 5 domains are compared.</Callout>}
     </>
   );
+
+  const range = ownRange(spStr(sp.range));
+  // Own sites (a project linked to a GA4 property) use real GA4 data; other domains need clickstream.
+  const owned = await Promise.all(domains.map((d) => ownSiteFor(user.id, d)));
+  const loaded = await Promise.all(owned.map((o) => (o?.link.ga4Property ? settle(getOwnTraffic(user.id, o.link.ga4Property, range.id)) : Promise.resolve(null))));
+  const anyOwn = loaded.some((l) => l?.data);
+  if (!demoAllowed() || anyOwn) {
+    const errors = loaded.map((l, i) => (l?.error ? `${domains[i]}: ${l.error}` : null)).filter(Boolean) as string[];
+    const reports: (OwnTrafficReport | null)[] = loaded.map((l) => l?.data?.data ?? null);
+    const fetched = loaded.find((l) => l?.data)?.data?.fetchedAt;
+    const base = `/traffic-analytics?q=${encodeURIComponent(domains.join(","))}`;
+    const single = domains.length === 1;
+    const own = owned[0];
+    return (
+      <Page>
+        <PageHeader
+          breadcrumbs={CRUMBS}
+          title="Traffic Analytics:"
+          subject={domains.join(" vs ")}
+          meta={
+            <>
+              {anyOwn && <DataSourceBadge source="google-analytics" fetchedAt={fetched} note={single ? (own?.link.ga4PropertyName ?? undefined) : undefined} />}
+              {single && own && <Badge tone="brand">Your site · {own.project.name}</Badge>}
+              {!single && <Badge tone="brand">Comparing {domains.length} domains</Badge>}
+            </>
+          }
+          actions={single ? <PrintButton /> : (<><ButtonLink href={compareHref("/keyword-gap", domains)} variant="secondary">Keyword Gap</ButtonLink><PrintButton /></>)}
+        >
+          <ToolSearch placeholder="Enter a domain, or up to 5 domains separated by commas" showDb={false} buttonLabel="Analyze" keep={["range"]} />
+        </PageHeader>
+        {notices}
+        {errors.map((e) => (
+          <Callout key={e} tone="critical" className="mb-4" title="Google Analytics data could not be loaded">{e}</Callout>
+        ))}
+        {single && own && !own.link.ga4Property && (
+          <Callout tone="info" className="mb-4" title="Link GA4 for this site">
+            {domains[0]} is one of your projects, but no GA4 property is linked. <Link href={`/organic-traffic-insights?project=${own.project.id}&edit=1`} className="text-link hover:underline">Link a GA4 property</Link>.
+          </Callout>
+        )}
+        {anyOwn && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <RangeLinks base={base} current={range.id as OwnRangeId} />
+            <span className="text-[12px] text-text-3">GA4 · compared with the previous period of the same length · cached 6 hours</span>
+          </div>
+        )}
+        {single && reports[0] ? (
+          <OwnTraffic t={reports[0]} rangeId={range.id} domain={domains[0]} />
+        ) : !single && anyOwn ? (
+          <OwnTrafficCompare domains={domains} reports={reports} />
+        ) : (
+          <ClickstreamNeeded domains={domains} />
+        )}
+      </Page>
+    );
+  }
 
   if (domains.length > 1) {
     const { data, source, fetchedAt, note } = await getTrafficCompare(domains);

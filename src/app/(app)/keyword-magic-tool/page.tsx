@@ -4,10 +4,13 @@ import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { database } from "@/lib/domain";
 import { timeAgo } from "@/lib/format";
+import { gscSeedStats } from "@/lib/keywords/gsc";
+import { toCells } from "@/lib/keywords/gsc-map";
 import { ideaPool, selectIdeas } from "@/lib/keywords/ideas";
 import { normalizeKw } from "@/lib/keywords/text";
 import { MATCH_TYPES, type MatchType } from "@/lib/keywords/types";
 import { DemoNotice } from "@/components/seo/source-badge";
+import { NeedsData } from "@/components/seo/needs-data";
 import { ToolSearch } from "@/components/seo/tool-search";
 import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
@@ -63,8 +66,12 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
       </Page>
     );
 
-  const pool = await ideaPool(user.id, seed, db);
+  const [pool, gsc] = await Promise.all([ideaPool(user.id, seed, db), gscSeedStats(user.id, seed)]);
+  const textOnly = pool.source === "autocomplete";
   const sel = selectIdeas(pool, match, questions);
+  // Your Search Console queries for the seed: only for keywords already in the idea list.
+  const cells = toCells(Object.fromEntries(sel.rows.filter((r) => gsc.stats[r.keyword]).map((r) => [r.keyword, gsc.stats[r.keyword]])));
+  const gscFound = Object.keys(cells).length;
   const counts = Object.fromEntries((["broad", "phrase", "exact"] as const).map((m) => [m, selectIdeas(pool, m, questions, 0).total]));
   if (match === "related") counts.related = sel.total;
   const questionCount = selectIdeas(pool, match, true, 0).total;
@@ -81,7 +88,7 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
         subject={seed}
         meta={
           <>
-            <SourceBadges source={pool.source} fetchedAt={pool.fetchedAt} autocomplete={ac} />
+            <SourceBadges source={pool.source} fetchedAt={pool.fetchedAt} autocomplete={ac} gsc={gscFound ? { fetchedAt: gsc.status.fetchedAt, note: `${gscFound} of your queries` } : null} />
             <Badge>
               {info.flag} {info.name}
             </Badge>
@@ -98,12 +105,14 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
       </PageHeader>
 
       <p className="-mt-2 mb-4 text-[12.5px] text-text-3">
-        Sources: {pool.source === "demo" ? "demo keyword database (metrics are synthetic)" : "DataForSEO Labs keyword database"}
-        {ac.status === "ok" && (
+        Sources: {pool.source === "demo" ? "demo keyword database (metrics are synthetic)" : pool.source === "dataforseo" ? "DataForSEO Labs keyword database" : "real Google Autocomplete suggestions (no keyword metrics provider connected)"}
+        {ac.status === "ok" && pool.source !== "autocomplete" && (
           <>
             {" "}+ <span className="font-medium text-good-ink">Google Autocomplete</span> ({ac.count.toLocaleString()} real suggestions for “{seed}”, fetched {ac.fetchedAt ? timeAgo(ac.fetchedAt) : "now"}; their metrics come from the same database)
           </>
         )}
+        {ac.status === "ok" && pool.source === "autocomplete" && <> · {ac.count.toLocaleString()} suggestions for “{seed}”, fetched {ac.fetchedAt ? timeAgo(ac.fetchedAt) : "now"} · intent is text-based</>}
+        {gscFound > 0 && <> · <span className="font-medium text-good-ink">Search Console</span>: {gscFound.toLocaleString()} of these keywords already get impressions on your sites</>}
         {ac.status === "failed" && <> · Google Autocomplete was unreachable, so only database ideas are shown.</>}
         {ac.status === "disabled" && <> · Google Autocomplete is disabled (ENABLE_AUTOCOMPLETE=false).</>}
       </p>
@@ -116,14 +125,31 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
           ]}
         />
         <LinkSegmented
-          items={MATCH_TYPES.map((m) => ({ href: href(m.id, questions), label: m.label, active: match === m.id, count: counts[m.id]?.toLocaleString(), title: m.note }))}
+          items={MATCH_TYPES.map((m) => ({ href: href(m.id, questions), label: m.label, active: match === m.id, count: textOnly && m.id === "related" ? undefined : counts[m.id]?.toLocaleString(), title: m.note }))}
         />
       </div>
 
-      {sel.total === 0 ? (
+      {textOnly && match !== "related" && (
+        <NeedsData
+          compact
+          className="mb-4"
+          providers={["dataforseo"]}
+          title="Volume, KD and CPC need DataForSEO"
+          shows={["Thousands of database ideas beyond Autocomplete", "Volume, trend, KD, CPC and competition per keyword", "SERP features and related keywords by SERP overlap"]}
+        />
+      )}
+      {textOnly && match === "related" ? (
+        <NeedsData
+          providers={["dataforseo"]}
+          title="Related keywords need DataForSEO"
+          shows={["Keywords whose Google top 10 overlaps with the seed's", "Relatedness score per keyword", "Volume, KD and CPC for every idea"]}
+        />
+      ) : null}
+
+      {textOnly && match === "related" ? null : sel.total === 0 ? (
         <Card>
           <EmptyState
-            title={questions ? "No question keywords for this match type" : "No keywords found"}
+            title={textOnly && ac.status !== "ok" ? "Google Autocomplete returned no suggestions" : questions ? "No question keywords for this match type" : "No keywords found"}
             description={match === "exact" ? "Exact match needs the seed phrase word for word. Try Phrase or Broad match." : "Try a broader match type or a shorter seed keyword."}
             action={
               <div className="flex flex-wrap justify-center gap-2">
@@ -138,7 +164,7 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
           />
         </Card>
       ) : (
-        <MagicTool seed={seed} db={db} match={match} rows={sel.rows} total={sel.total} truncated={sel.truncated} hasAutocomplete={ac.status === "ok" && sel.rows.some((r) => r.ac)} />
+        <MagicTool seed={seed} db={db} match={match} rows={sel.rows} total={sel.total} truncated={sel.truncated} hasAutocomplete={!textOnly && ac.status === "ok" && sel.rows.some((r) => r.ac)} metrics={!textOnly} gsc={gsc.status.sites > 0 ? cells : undefined} />
       )}
       <p className="mt-4 text-[12px] text-text-3">
         Tip: select keywords and use <span className="font-medium text-text-2">Add to list</span> to cluster them in the{" "}

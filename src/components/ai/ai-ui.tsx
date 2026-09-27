@@ -80,7 +80,7 @@ export function PromptSetup({ projectId, suggestions }: { projectId: string; sug
         <Textarea id="ai-custom" value={custom} onChange={(e) => setCustom(e.target.value)} rows={3} className="min-h-0" placeholder="which university in gujarat has the best placements" />
       </Field>
       <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
-        <span className="text-[12.5px] text-text-3">{picked.size + lines(custom).length} prompts × 5 AI engines</span>
+        <span className="text-[12.5px] text-text-3">{picked.size + lines(custom).length} prompts · asked to every connected AI engine</span>
         <Button type="submit" variant="primary" loading={pending}>
           <Sparkles className="h-4 w-4" /> Start tracking
         </Button>
@@ -224,7 +224,7 @@ function highlight(text: string, terms: string[]): ReactNode {
   );
 }
 
-export function PromptsTable({ projectId, rows, brand }: { projectId: string; rows: PromptSummary[]; brand: string }) {
+export function PromptsTable({ projectId, rows, brand, live = true }: { projectId: string; rows: PromptSummary[]; brand: string; live?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState<PromptSummary | null>(null);
   const [engine, setEngine] = useState<EngineId>("chatgpt");
@@ -248,7 +248,7 @@ export function PromptsTable({ projectId, rows, brand }: { projectId: string; ro
     },
     {
       key: "engines",
-      header: "Today by engine",
+      header: live ? "Latest by engine" : "Today by engine",
       sortable: false,
       info: ENGINES.map((e) => e.name).join(" · "),
       csv: (r) => r.latest.map((c) => `${engineName(c.engine)}: ${!c.present ? "no answer" : c.mentioned ? `#${c.position}${c.cited ? " cited" : ""}` : "not mentioned"}`).join("; "),
@@ -298,7 +298,7 @@ export function PromptsTable({ projectId, rows, brand }: { projectId: string; ro
         )}
         toolbar={<EngineLegend />}
       />
-      <Dialog open={!!open} onClose={() => setOpen(null)} title={open ? `“${open.prompt}”` : ""} description={open ? `${open.mentioned} of ${open.answers} answers mention ${brand} in the last 7 days · Demo data` : undefined} size="xl">
+      <Dialog open={!!open} onClose={() => setOpen(null)} title={open ? `“${open.prompt}”` : ""} description={open ? `${open.mentioned} of ${open.answers} answers mention ${brand} in the last 7 days${live ? "" : " · Demo data"}` : undefined} size="xl">
         {open && (
           <div className="space-y-4">
             <div role="tablist" className="flex flex-wrap gap-1">
@@ -322,7 +322,7 @@ export function PromptsTable({ projectId, rows, brand }: { projectId: string; ro
               <>
                 <div className="flex flex-wrap gap-2">
                   {!cell.present ? (
-                    <Badge>No AI answer shown for this query today</Badge>
+                    <Badge>{live ? "No AI answer (or the check failed)" : "No AI answer shown for this query today"}</Badge>
                   ) : (
                     <>
                       <Badge tone={cell.mentioned ? "good" : "critical"}>{cell.mentioned ? `${brand} mentioned at #${cell.position}` : `${brand} not mentioned`}</Badge>
@@ -333,7 +333,7 @@ export function PromptsTable({ projectId, rows, brand }: { projectId: string; ro
                 </div>
                 <div className="rounded-lg border border-border bg-surface-2 p-3.5">
                   <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold tracking-wide text-text-3 uppercase">
-                    <Bot className="h-3.5 w-3.5" /> Illustrative answer · demo
+                    <Bot className="h-3.5 w-3.5" /> {live ? "Latest live answer" : "Illustrative answer · demo"}
                   </div>
                   <p className="text-[13.5px] leading-relaxed text-text">{highlight(cell.answer, [brand, ...cell.competitors])}</p>
                 </div>

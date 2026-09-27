@@ -1,6 +1,8 @@
 import { domainCompetitors, domainEntity, domainFacts, keywordMetrics, memo, round, TOPICS, topicPool, topicUniverse, trafficFacts, type TrafficChannel } from "@/lib/seo/engine";
 import { database, domainLabel } from "@/lib/domain";
-import { demo, type Sourced } from "@/lib/providers/source";
+import { demo as demoData, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { AppError } from "@/lib/domain";
 import { CHANNEL_ORDER } from "./traffic-analytics";
 import { changePct } from "./shared";
 
@@ -194,3 +196,9 @@ export async function getMarketByTopic(topicId: string, dbInput: string): Promis
 }
 
 export const marketLabel = (r: MarketReport) => (r.seed ? `${domainLabel(r.seed)} market` : r.topicName);
+
+/** Demo data only in local development (DEMO_DATA=true). */
+function demo<T>(data: T, note?: string): Sourced<T> {
+  if (!demoAllowed()) throw new AppError("Market Explorer needs DataForSEO.", 409);
+  return demoData(data, note);
+}

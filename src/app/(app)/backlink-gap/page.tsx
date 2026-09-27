@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { getBacklinkGap } from "@/lib/competitive/backlink-gap";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { BACKLINK_GAP_CATEGORIES, backlinkGapCategories, type BacklinkGapCategory } from "@/lib/competitive/gap-logic";
 import { compareHref } from "@/lib/competitive/links";
 import { parseDomains, spList, spStr } from "@/lib/competitive/shared";
@@ -69,6 +72,24 @@ export default async function BacklinkGapPage({ searchParams }: PageProps<"/back
             }
           />
         </Card>
+      </Page>
+    );
+
+  if (!liveEnabled() && !demoAllowed())
+    return (
+      <Page>
+        {header(`${domains[0]} vs ${domains.length - 1} competitor${domains.length > 2 ? "s" : ""}`)}
+        <NeedsData
+         
+          providers={["dataforseo"]}
+          title="Backlink Gap needs DataForSEO"
+          shows={[
+            "Referring domains that link to competitors but not to you",
+            "Best prospects: domains linking to every competitor",
+            "Referring domains and backlinks per domain, with authority",
+            "Referring-domain overlap and trend for up to 5 domains",
+          ]}
+        />
       </Page>
     );
 

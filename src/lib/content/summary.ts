@@ -16,12 +16,12 @@ const onPageChecker: SummaryProvider = async (project) => {
   const run = runs[0];
   if (!run) {
     if (active) return { ...base, state: "running", note: "Collecting ideas…" };
-    return { ...base, state: "empty", cta: targets.length ? "Collect ideas" : "Set up", note: targets.length ? `${targets.length} pages ready to check` : "Get optimization ideas for your pages from top-10 rivals." };
+    return { ...base, state: "empty", cta: targets.length ? "Collect ideas" : "Set up", note: targets.length ? `${targets.length} pages ready to check` : "Get optimization ideas for your pages from live checks, the top 10 and Search Console." };
   }
   const [results, done] = await Promise.all([runResults(run.id), doneIdeas(project.id)]);
   const rows = results.map((r) => {
     const open = openIdeas(r, done);
-    return { url: r.url, open, priority: priorityScore(r.benchmark.metrics.volume, r.benchmark.position, open, r.benchmark.metrics.serpFeatures) };
+    return { url: r.url, open, priority: priorityScore(r.benchmark, open) };
   });
   const openCount = rows.reduce((s, r) => s + r.open.length, 0);
   const optimized = rows.filter((r) => !r.open.some((i) => i.priority === "high")).length;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { AppError } from "@/lib/domain";
+import { liveEnabled } from "@/lib/providers/source";
 import { htmlDocument, markdownToHtml } from "@/lib/content/markdown";
 import { buildTemplate, parseTemplateKeywords, templateMarkdown } from "@/lib/content/template";
 
@@ -9,12 +10,13 @@ export const dynamic = "force-dynamic";
 /** Download the SEO Content Template as Markdown or HTML: GET ?q=kw1,kw2&db=US&format=md|html */
 export async function GET(request: Request) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    if (!liveEnabled()) throw new AppError("Content templates need DataForSEO.", 503);
     const url = new URL(request.url);
     const keywords = parseTemplateKeywords(url.searchParams.get("q") ?? "");
     if (!keywords.length) throw new AppError("Enter at least one keyword.");
     const format = url.searchParams.get("format") === "html" ? "html" : "md";
-    const { data } = buildTemplate(keywords, url.searchParams.get("db") ?? "US");
+    const { data } = await buildTemplate(user.id, keywords, url.searchParams.get("db") ?? "US");
     const md = templateMarkdown(data);
     const slug = keywords[0].replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60) || "template";
     const body = format === "html" ? htmlDocument(`SEO content template: ${keywords.join(", ")}`, markdownToHtml(md)) : md;

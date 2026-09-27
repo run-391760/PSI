@@ -50,11 +50,11 @@ export function CompareSections({ data }: { data: CompareData }) {
       bestIdx: best((i) => e[i].backlinks),
     },
     { label: "Referring IPs", cell: (i) => compact(e[i].referringIps), bestIdx: best((i) => e[i].referringIps) },
-    { label: "Follow links", cell: (i) => pct(e[i].followPct, 1) },
-    { label: "Text / image links", cell: (i) => `${pct(e[i].textPct, 0)} / ${pct(e[i].imagePct, 1)}` },
-    { label: "New ref. domains (30d)", cell: (i) => <span className="text-good-ink">+{compact(e[i].last30.newRd)}</span>, bestIdx: best((i) => e[i].last30.newRd) },
-    { label: "Lost ref. domains (30d)", cell: (i) => <span className="text-critical-ink">−{compact(e[i].last30.lostRd)}</span> },
-    { label: "Top category", cell: (i) => <span className="text-text-2">{e[i].topCategory}</span> },
+    { label: "Follow links", cell: (i) => (e[i].backlinks ? pct(e[i].followPct, 1) : "n/a") },
+    { label: "Text / image links", cell: (i) => (e[i].backlinks ? `${pct(e[i].textPct, 0)} / ${pct(e[i].imagePct, 1)}` : "n/a") },
+    { label: "New ref. domains (30d)", cell: (i) => { const l = e[i].last30; return l ? <span className="text-good-ink">+{compact(l.newRd)}</span> : <span className="text-text-3">n/a</span>; }, bestIdx: best((i) => e[i].last30?.newRd ?? -1) },
+    { label: "Lost ref. domains (30d)", cell: (i) => { const l = e[i].last30; return l ? <span className="text-critical-ink">−{compact(l.lostRd)}</span> : <span className="text-text-3">n/a</span>; } },
+    ...(e.some((x) => x.topCategory && x.topCategory !== "n/a") ? [{ label: "Top category", cell: (i: number) => <span className="text-text-2">{e[i].topCategory || "n/a"}</span> }] : []),
   ];
   return (
     <>

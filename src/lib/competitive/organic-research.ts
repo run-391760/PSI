@@ -1,12 +1,21 @@
 import { ctrFor, domainCompetitors, domainKeywords, domainPages, domainSubdomains, lostKeywords, rng, round } from "@/lib/seo/engine";
-import { database } from "@/lib/domain";
+import { AppError, database } from "@/lib/domain";
 import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { cached, demo as demoData, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+
 import type { Intent, SerpFeature } from "@/lib/seo/types";
 import { type KeywordRow, toKeywordRow } from "./domain-overview";
 import { recentMonths } from "./shared";
 
 export { getDomainOverview as getOrganicSummary } from "./domain-overview";
+
+/** Demo data only in local development (DEMO_DATA=true). */
+function demo<T>(data: T): Sourced<T> {
+  if (!demoAllowed()) throw new AppError("Organic Research needs DataForSEO for this domain.", 409);
+  return demoData(data);
+}
+
 
 export type OrganicPosition = KeywordRow & { branded: boolean; trafficCost: number };
 export type ChangeType = "new" | "improved" | "declined" | "lost";
@@ -104,7 +113,7 @@ export async function getOrganicPositions(ownerId: string, domain: string, dbInp
 // Position changes
 // ------------------------------------------------------------------------------------------------
 
-function changesFrom(positions: OrganicPosition[], lost: PositionChangeRow[], seed: string): OrganicChanges {
+function changesFrom(positions: OrganicPosition[], lost: PositionChangeRow[], seed: string | null): OrganicChanges {
   const rows: PositionChangeRow[] = [];
   for (const k of positions) {
     const prev = k.previousPosition;
@@ -131,6 +140,8 @@ function changesFrom(positions: OrganicPosition[], lost: PositionChangeRow[], se
   for (const r of rows) counts[r.type]++;
   const months = recentMonths(12);
   const r = rng(`orgchg:${seed}`);
+  // Month-by-month change history is not returned by the live provider: only the demo engine has one.
+  if (!seed) return { counts, trend: [], rows };
   const trend = months.map((month, i) => {
     if (i === months.length - 1) return { month, ...counts };
     const f = () => r.range(0.55, 1.45);
@@ -142,7 +153,7 @@ function changesFrom(positions: OrganicPosition[], lost: PositionChangeRow[], se
 export async function getOrganicChanges(ownerId: string, domain: string, dbInput: string): Promise<Sourced<OrganicChanges>> {
   const db = database(dbInput).code;
   const positions = await getOrganicPositions(ownerId, domain, db);
-  if (positions.source !== "demo") return { ...positions, data: changesFrom(positions.data, [], `${domain}:${db}`) };
+  if (positions.source !== "demo") return { ...positions, data: changesFrom(positions.data, [], null) };
   const lost: PositionChangeRow[] = lostKeywords(domain, db).map((l) => {
     const before = Math.round(l.metrics.volume * ctrFor(l.previousPosition, l.metrics.serpFeatures));
     return {

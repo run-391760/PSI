@@ -1,6 +1,7 @@
 import { MessageSquareQuote } from "lucide-react";
 import type { Metadata } from "next";
 import { requirePageUser } from "@/lib/auth";
+import { demoAllowed } from "@/lib/data-mode";
 import { database } from "@/lib/domain";
 import { compact, dateTimeLabel, timeAgo } from "@/lib/format";
 import { getSchedule, latestJob } from "@/lib/jobs/queue";
@@ -46,7 +47,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
   const schedule = await getSchedule(project.id, "monitoring.brand");
   const job = await latestJob(project.id, "monitoring.brand");
   const running = !!job && (job.status === "queued" || job.status === "running");
-  const settingsInitial = { terms, competitorTerms: settings?.competitorTerms ?? defaultCompetitorTerms(project), demoSocial: settings?.demoSocial ?? false, daily: schedule ? schedule.enabled : true };
+  const settingsInitial = { terms, competitorTerms: settings?.competitorTerms ?? defaultCompetitorTerms(project), demoSocial: settings?.demoSocial ?? false, demoAvailable: demoAllowed(), daily: schedule ? schedule.enabled : true };
   const newsOff = !newsEnabled();
 
   if (!settings)
@@ -55,7 +56,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
         <PageHeader breadcrumbs={BREADCRUMBS} title="Brand Monitoring:" subject={terms.join(", ")} meta={<DataSourceBadge source="google-news" />} actions={<ProjectSwitcher projects={switcher} current={project.id} />} />
         {newsOff && (
           <Callout tone="warning" className="mb-4" title="Google News is disabled">
-            ENABLE_NEWS_MENTIONS is set to false, so only demo mentions can be collected.
+            ENABLE_NEWS_MENTIONS is set to false, so no mentions can be collected until it is enabled.
           </Callout>
         )}
         <Grid cols={2} className="lg:grid-cols-[1.4fr_1fr]">
@@ -147,7 +148,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
           {running ? (
             <EmptyState icon={<MessageSquareQuote className="h-5 w-5" />} title="Collecting your first mentions" description={`Searching Google News for “${terms.join("”, “")}”${settings.competitorTerms.length ? " and your competitors" : ""}. This usually takes a few seconds.`} />
           ) : (
-            <EmptyState icon={<MessageSquareQuote className="h-5 w-5" />} title="No mentions found yet" description={`Google News has no recent articles containing “${terms.join("”, “")}”. Try adding brand variations in Settings, or enable demo social mentions to explore the dashboard.`} />
+            <EmptyState icon={<MessageSquareQuote className="h-5 w-5" />} title="No mentions found yet" description={`Google News has no recent articles containing “${terms.join("”, “")}”. Try adding brand variations in Settings.`} />
           )}
         </Card>
       ) : (
@@ -157,7 +158,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
               <Metric label="Mentions (30 days)" value={stats.last30} delta={delta} deltaLabel="vs prior 30 days" sub={`${mentions.length} stored in total`} />
               <Metric label="Negative mentions" value={stats.negative30} sub={stats.last30 ? `${Math.round((stats.negative30 / stats.last30) * 100)}% of the last 30 days` : "Last 30 days"} />
               <Metric label="Share of voice" value={sovPct == null ? "n/a" : `${sovPct}%`} sub={settings.competitorTerms.length ? `${ownNews30} of ${sovTotal} news mentions` : "Add competitors in Settings"} info="Your share of Google News mentions among you and the competitor names, last 30 days." />
-              <Metric label="Est. reach" value={compact(stats.reach30)} sub="Demo estimate · last 30 days" info="Sum of estimated source audiences (demo engine), not measured impressions." />
+              <Metric label="Sources" value={stats.sources.length} sub="Publishers mentioning you" info="Distinct publishers in the last 30 days. Audience reach is not measured by any connected source." />
               <Metric label="To review" value={stats.unreviewed} sub="New mentions not yet reviewed" />
             </MetricStrip>
           </Card>
@@ -214,7 +215,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
               <CardHeader title="Top sources" description={stats.last30 ? "Last 30 days" : "All stored mentions"} />
               <CardBody>
                 <MiniTable
-                  columns={[{ header: "Source" }, { header: "Mentions", align: "right" }, { header: "Pos / neg", align: "right" }, { header: "Est. reach", align: "right" }]}
+                  columns={[{ header: "Source" }, { header: "Mentions", align: "right" }, { header: "Pos / neg", align: "right" }, { header: "Reach", align: "right" }]}
                   rows={stats.sources.slice(0, 8).map((s) => [
                     <span key="s" className="inline-flex min-w-0 items-center gap-2">
                       <DomainAvatar domain={s.domain ?? s.publisher} size={18} />
@@ -239,7 +240,7 @@ export default async function BrandMonitoringPage({ searchParams }: PageProps<"/
         </>
       )}
       <p className="text-[12px] text-text-3">
-        News mentions come from Google News RSS{lastRun ? `, last checked ${timeAgo(lastRun)}` : ""}. Reach is a demo estimate{hasDemo ? "; social and forum mentions marked Demo are synthetic" : ""}.
+        News mentions come from Google News RSS{lastRun ? `, last checked ${timeAgo(lastRun)}` : ""}. Reach is n/a: no connected source measures audience size{hasDemo ? "; social and forum mentions marked Demo are synthetic" : ""}.
       </p>
       {hasDemo && <DemoNotice className="mt-2" />}
     </Page>

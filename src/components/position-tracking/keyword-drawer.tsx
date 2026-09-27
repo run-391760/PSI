@@ -8,13 +8,13 @@ import { deleteKeywordsAction, tagKeywordsAction } from "@/app/(app)/position-tr
 import { compact, dayLabel, displayUrl, money, pct } from "@/lib/format";
 import type { OverviewRow, TagRef } from "@/lib/position-tracking/types";
 import type { SerpFeature } from "@/lib/seo/types";
-import { DomainAvatar, FeatureIcon, IntentBadges, KdBadge, PositionChange, featureLabel } from "@/components/seo/badges";
+import { DomainAvatar, FeatureIcon, IntentBadges, KdBadge, featureLabel } from "@/components/seo/badges";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Callout, Skeleton } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { Drawer } from "./drawer";
-import { TagChip, domainColor, domainDashed } from "./ui";
+import { PosDiff, TagChip, domainColor, domainDashed } from "./ui";
 
 type Detail = {
   rows: { day: string; positions: Record<string, number | null>; urls: Record<string, string | null>; own_urls: { url: string; position: number }[]; features: SerpFeature[]; owned: SerpFeature[]; fs_owner: string | null }[];
@@ -34,6 +34,7 @@ export function KeywordDrawer({
   range,
   db,
   allTags,
+  measured = false,
 }: {
   row: OverviewRow | null;
   onClose: () => void;
@@ -44,6 +45,7 @@ export function KeywordDrawer({
   range: number;
   db: string;
   allTags: TagRef[];
+  measured?: boolean;
 }) {
   const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -131,15 +133,28 @@ export function KeywordDrawer({
           {error && <Callout tone="critical">{error}</Callout>}
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border p-3 sm:grid-cols-4">
             <Fact label="Position">
-              <span className="text-[20px] font-semibold">{row.end ?? "–"}</span> <PositionChange previous={row.start} current={row.end} />
+              <span className="text-[20px] font-semibold">{row.end ?? "–"}</span> <PosDiff previous={row.start} current={row.end} />
             </Fact>
             <Fact label="Best in range">{row.best ?? "–"}</Fact>
-            <Fact label="Visibility">{pct(row.visibility, 1)}</Fact>
-            <Fact label="Est. traffic">{row.traffic == null ? "n/a" : compact(row.traffic)}</Fact>
+            {measured ? (
+              <>
+                <Fact label="Clicks (range)">{compact(row.clicks ?? 0)}</Fact>
+                <Fact label="Impressions">{compact(row.impressions ?? 0)}</Fact>
+              </>
+            ) : (
+              <>
+                <Fact label="Visibility">{pct(row.visibility, 1)}</Fact>
+                <Fact label="Est. traffic">{row.traffic == null ? "n/a" : compact(row.traffic)}</Fact>
+              </>
+            )}
             <Fact label="Volume">{row.volume == null ? "n/a" : compact(row.volume)}</Fact>
-            <Fact label="KD %">
-              <KdBadge kd={row.kd} />
-            </Fact>
+            {measured ? (
+              <Fact label="CTR">{row.ctr == null ? "n/a" : pct(row.ctr, 1)}</Fact>
+            ) : (
+              <Fact label="KD %">
+                <KdBadge kd={row.kd} />
+              </Fact>
+            )}
             <Fact label="CPC">{row.cpc == null ? "n/a" : money(row.cpc)}</Fact>
             <Fact label="Landing page">
               {row.url ? (
@@ -170,7 +185,7 @@ export function KeywordDrawer({
             ) : (
               <p className="py-10 text-center text-[13px] text-text-3">History appears after the second daily check.</p>
             )}
-            <p className="mt-1 text-[11.5px] text-text-3">Gaps mean the domain was not in the top 100 that day.</p>
+            <p className="mt-1 text-[11.5px] text-text-3">{measured ? "Search Console daily average position. Gaps mean no impressions that day." : "Gaps mean the domain was not in the top 100 that day."}</p>
           </section>
 
           <section>
@@ -227,6 +242,12 @@ export function KeywordDrawer({
             {urlHistory.length > 1 && <p className="mt-1.5 text-[12px] text-warning-ink">Several URLs ranked for this keyword — check the Cannibalization report.</p>}
           </section>
 
+          {measured ? (
+            <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[12.5px] text-text-3">
+              SERP features and the live top 20 need DataForSEO — Search Console only reports your own site.
+            </p>
+          ) : (
+            <>
           <section>
             <h3 className="mb-2 text-[13.5px] font-semibold">SERP features</h3>
             {latest && latest.features.filter((f) => f !== "related_searches").length ? (
@@ -274,6 +295,8 @@ export function KeywordDrawer({
             )}
             <p className="mt-1 text-[11.5px] text-text-3">Your position in this list can differ slightly from the tracked position, which is measured daily.</p>
           </section>
+            </>
+          )}
 
           <div className="flex justify-end border-t border-border pt-4">
             <Button

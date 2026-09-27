@@ -4,7 +4,12 @@ import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { database } from "@/lib/domain";
 import { compact, money, timeAgo } from "@/lib/format";
-import { clusterKeywords, MAX_CLUSTER_KEYWORDS, STRICTNESS, type Cluster, type Strictness } from "@/lib/keywords/cluster";
+import { clusterKeywords, groupBySharedWords, MAX_CLUSTER_KEYWORDS, STRICTNESS, type Cluster, type Strictness } from "@/lib/keywords/cluster";
+import { gscKeywordStats } from "@/lib/keywords/gsc";
+import { TEXT_INTENT_NOTE } from "@/lib/keywords/intent";
+import { metricsSource } from "@/lib/keywords/metrics";
+import { clusterLive, MAX_LIVE_CLUSTER } from "@/lib/keywords/serp";
+import { NeedsData } from "@/components/seo/needs-data";
 import { listItems, listLists, MAX_LIST_KEYWORDS } from "@/lib/keywords/lists";
 import { parseKeywordInput } from "@/lib/keywords/text";
 import type { ListItem } from "@/lib/keywords/types";
@@ -90,6 +95,11 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
             <Card>
               <CardHeader title="How clustering works" />
               <CardBody>
+                {metricsSource() === "none" && (
+                  <p className="mb-3 rounded-md bg-surface-2 px-3 py-2 text-[12.5px] text-text-2">
+                    Without DataForSEO, lists group keywords by the words they share (real text analysis) and show your Search Console data. SERP-overlap clusters and volumes need DataForSEO.
+                  </p>
+                )}
                 <ol className="space-y-2 text-[12.5px] text-text-2">
                   <li className="flex gap-2">
                     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-ink">1</span>
@@ -114,7 +124,14 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
   const items = await listItems(user.id, list.id);
   const view = ["clusters", "map"].includes(str(sp.view)) ? str(sp.view) : "keywords";
   const strict: Strictness = STRICTNESS.some((s) => s.id === sp.strict) ? (sp.strict as Strictness) : "medium";
-  const clusters = items.length ? clusterKeywords(items, list.db, strict) : [];
+  const source = metricsSource();
+  const clusterMode: "serp" | "words" = source === "none" ? "words" : "serp";
+  const wantClusters = view !== "keywords" || source !== "dataforseo";
+  const live = source === "dataforseo" && wantClusters && items.length ? await clusterLive(user.id, items, list.db, strict).catch(() => null) : null;
+  const clusters = !items.length ? [] : source === "demo" ? clusterKeywords(items, list.db, strict) : source === "none" ? groupBySharedWords(items) : (live?.clusters ?? []);
+  const gsc = await gscKeywordStats(user.id, items.map((i) => i.keyword));
+  const gscFound = Object.keys(gsc.stats).length;
+  const textIntents = items.length > 0 && items.every((i) => i.source === "none");
   const info = database(list.db);
   const sources = [...new Set(items.map((i) => i.source))];
   const cpcs = items.filter((i) => i.cpc != null);
@@ -130,9 +147,11 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
         subject={list.name}
         meta={
           <>
-            {(sources.length ? sources : ["demo"]).map((s) => (
-              <DataSourceBadge key={s} source={s === "dataforseo" ? "dataforseo" : "demo"} fetchedAt={newest || undefined} />
+            <DataSourceBadge source="user" note="your keyword list" />
+            {sources.filter((s) => s === "dataforseo" || s === "demo").map((s) => (
+              <DataSourceBadge key={s} source={s as "dataforseo" | "demo"} fetchedAt={newest || undefined} />
             ))}
+            {gscFound > 0 && <DataSourceBadge source="search-console" fetchedAt={gsc.status.fetchedAt ?? undefined} note={`${gscFound} of your queries`} />}
             <Badge>
               {info.flag} {info.name}
             </Badge>
@@ -174,9 +193,10 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
             <MetricStrip>
               <Metric label="Keywords" value={items.length.toLocaleString()} sub={`of ${MAX_LIST_KEYWORDS.toLocaleString()} max`} />
               <Metric label="Total volume" value={compact(list.volume)} sub={`${info.flag} monthly searches`} />
+              {gsc.status.sites > 0 && <Metric label="On your sites" value={`${gscFound} / ${items.length}`} sub="Search Console, 3 months" />}
               <Metric label="Average KD" value={list.avgKd == null ? "n/a" : `${list.avgKd}%`} sub={list.avgKd == null ? undefined : kdBand(list.avgKd).label} />
-              <Metric label="Average CPC" value={cpcs.length ? money(cpcs.reduce((s, i) => s + (i.cpc ?? 0), 0) / cpcs.length) : "n/a"} />
-              <Metric label="Clusters" value={clusters.filter((c) => c.keywords.length > 1).length} sub={`${clusters.filter((c) => c.keywords.length === 1).length} standalone keywords`} href={`${base}&view=clusters`} />
+              {gsc.status.sites === 0 && <Metric label="Average CPC" value={cpcs.length ? money(cpcs.reduce((s, i) => s + (i.cpc ?? 0), 0) / cpcs.length) : "n/a"} />}
+              <Metric label={clusterMode === "words" ? "Word groups" : "Clusters"} value={wantClusters ? clusters.filter((c) => c.keywords.length > 1).length : "–"} sub={wantClusters ? `${clusters.filter((c) => c.keywords.length === 1).length} standalone keywords` : "open the Clusters tab"} href={`${base}&view=clusters`} />
             </MetricStrip>
           </Card>
 
@@ -185,17 +205,21 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
             className="mb-4"
             items={[
               { href: `${base}&view=keywords`, label: "Keywords", count: items.length.toLocaleString() },
-              { href: `${base}&view=clusters`, label: "Clusters", count: clusters.filter((c) => c.keywords.length > 1).length.toLocaleString() },
+              { href: `${base}&view=clusters`, label: clusterMode === "words" ? "Word groups" : "Clusters", count: wantClusters ? clusters.filter((c) => c.keywords.length > 1).length.toLocaleString() : undefined },
               { href: `${base}&view=map`, label: "Mind map" },
             ]}
           />
 
           {view === "keywords" && (
             <>
-              {items.length > 0 && <IntentStrip items={items} />}
+              {items.length > 0 && <IntentStrip items={items} text={textIntents} />}
+              {source === "none" && items.length > 0 && (
+                <NeedsData compact className="mb-4" providers={["dataforseo"]} title="Volume, KD and CPC for this list need DataForSEO" shows={["Search volume and trend per keyword", "Keyword Difficulty and CPC", "Clusters by overlap of the live Google top 10"]} />
+              )}
+              {!gsc.status.configured && items.length > 0 && <NeedsData compact className="mb-4" providers={["google"]} title="Connect Search Console to see your clicks, impressions and position for these keywords" />}
               <Card>
-                <CardHeader title="Keywords" description={newest ? `Metrics updated ${timeAgo(newest)}` : undefined} />
-                <ListKeywordsTable listId={list.id} listName={list.name} items={items} db={list.db} />
+                <CardHeader title="Keywords" description={source === "none" ? (gscFound ? "Your Search Console data where available; metrics need DataForSEO" : "Metrics need DataForSEO") : newest ? `Metrics updated ${timeAgo(newest)}` : undefined} />
+                <ListKeywordsTable listId={list.id} listName={list.name} items={items} db={list.db} metrics={!textIntents} gsc={gsc.status.sites > 0 ? gsc.stats : undefined} />
               </Card>
             </>
           )}
@@ -208,14 +232,33 @@ export default async function KeywordStrategyPage({ searchParams }: PageProps<"/
 
           {view !== "keywords" && items.length > 0 && (
             <>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[12.5px] text-text-2">
-                  Grouped by overlap of the Google top 10 (demo SERPs) · {STRICTNESS.find((s) => s.id === strict)?.note}
-                  {items.length > MAX_CLUSTER_KEYWORDS && ` Only the top ${MAX_CLUSTER_KEYWORDS.toLocaleString()} keywords by volume are clustered.`}
-                </p>
-                <LinkSegmented items={STRICTNESS.map((s) => ({ href: `${base}&view=${view}${s.id !== "medium" ? `&strict=${s.id}` : ""}`, label: s.label, active: s.id === strict, title: s.note }))} />
-              </div>
-              {view === "clusters" ? <ClusterCards clusters={clusters} db={list.db} /> : <ClusterMap clusters={clusters} name={list.name} db={list.db} volume={list.volume} />}
+              {clusterMode === "words" ? (
+                <>
+                  <NeedsData
+                    compact
+                    className="mb-3"
+                    providers={["dataforseo"]}
+                    title="Clustering by SERP overlap needs DataForSEO"
+                    shows={["Groups of keywords that share 3+ of the same Google top-10 URLs", "One page per cluster, sized by real search volume"]}
+                  />
+                  <p className="mb-3 text-[12.5px] text-text-2">
+                    <Badge className="mr-1.5">Text analysis</Badge>
+                    Grouped by shared words instead: each keyword joins the most specific word it shares with other keywords. Group names are words, not keywords.
+                  </p>
+                </>
+              ) : (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12.5px] text-text-2">
+                    Grouped by overlap of the Google top 10 ({source === "demo" ? "demo SERPs" : "live SERPs via DataForSEO"}) · {STRICTNESS.find((s) => s.id === strict)?.note}
+                    {source === "dataforseo" && items.length > MAX_LIVE_CLUSTER && ` Only the top ${MAX_LIVE_CLUSTER} keywords by volume are clustered.`}
+                    {source === "demo" && items.length > MAX_CLUSTER_KEYWORDS && ` Only the top ${MAX_CLUSTER_KEYWORDS.toLocaleString()} keywords by volume are clustered.`}
+                    {live && live.failed > 0 && ` ${live.failed} SERPs could not be fetched.`}
+                  </p>
+                  <LinkSegmented items={STRICTNESS.map((s) => ({ href: `${base}&view=${view}${s.id !== "medium" ? `&strict=${s.id}` : ""}`, label: s.label, active: s.id === strict, title: s.note }))} />
+                </div>
+              )}
+              {source === "dataforseo" && !live && <Callout tone="warning" className="mb-3">Live SERPs could not be loaded for clustering. Try again in a minute.</Callout>}
+              {view === "clusters" ? <ClusterCards clusters={clusters} db={list.db} mode={clusterMode} /> : <ClusterMap clusters={clusters} name={list.name} db={list.db} volume={list.volume} mode={clusterMode} />}
             </>
           )}
         </div>
@@ -237,12 +280,14 @@ function trackable(items: ListItem[]) {
   return out;
 }
 
-function IntentStrip({ items }: { items: ListItem[] }) {
+function IntentStrip({ items, text }: { items: ListItem[]; text: boolean }) {
   const segments = INTENTS.map((i, idx) => ({ label: INTENT_META[i].label, value: items.filter((k) => k.intents[0] === i).length, color: `var(--series-${idx + 1})` }));
   return (
     <Card className="mb-4">
       <CardBody className="pt-3.5">
-        <div className="mb-2 text-[12.5px] font-medium text-text-2">Keywords by primary intent</div>
+        <div className="mb-2 text-[12.5px] font-medium text-text-2" title={text ? TEXT_INTENT_NOTE : undefined}>
+          Keywords by primary intent{text && <span className="font-normal text-text-3"> · text-based{items.some((k) => !k.intents.length) ? `, ${items.filter((k) => !k.intents.length).length} without intent words` : ""}</span>}
+        </div>
         <DistributionBar segments={segments} showLegend={false} />
         <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[12.5px]">
           {segments.map((s) => (
@@ -258,12 +303,14 @@ function IntentStrip({ items }: { items: ListItem[] }) {
   );
 }
 
-function ClusterCards({ clusters, db }: { clusters: Cluster[]; db: string }) {
+const clusterVolume = (c: Cluster) => (c.hasVolume ? compact(c.volume) : "n/a");
+
+function ClusterCards({ clusters, db, mode }: { clusters: Cluster[]; db: string; mode: "serp" | "words" }) {
   const grouped = clusters.filter((c) => c.keywords.length > 1);
   const single = clusters.filter((c) => c.keywords.length === 1);
   return (
     <>
-      {grouped.length === 0 && <Callout className="mb-4">No keywords share enough results to form clusters at this strictness. Try “Loose”.</Callout>}
+      {grouped.length === 0 && <Callout className="mb-4">{mode === "words" ? "No keywords share a word with other keywords in this list." : "No keywords share enough results to form clusters at this strictness. Try “Loose”."}</Callout>}
       <Grid cols={3} className="mb-4">
         {grouped.map((c, i) => (
           <Card key={c.id} className="flex flex-col">
@@ -271,17 +318,17 @@ function ClusterCards({ clusters, db }: { clusters: Cluster[]; db: string }) {
               title={
                 <span className="inline-flex items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: `var(--series-${(i % 8) + 1})` }} aria-hidden />
-                  <KeywordLink keyword={c.pillar} db={db} className="text-text hover:text-link" />
+                  {mode === "words" ? <span className="text-text">{c.pillar}</span> : <KeywordLink keyword={c.pillar} db={db} className="text-text hover:text-link" />}
                 </span>
               }
-              description={i === 0 || c.keywords.length >= 8 ? "Pillar page · one page targets all these keywords" : "Subpage · supports a pillar page"}
+              description={mode === "words" ? "Keywords sharing this word · candidate page topic" : i === 0 || c.keywords.length >= 8 ? "Pillar page · one page targets all these keywords" : "Subpage · supports a pillar page"}
               actions={<Badge tone={i === 0 || c.keywords.length >= 8 ? "brand" : "neutral"}>{c.keywords.length} kw</Badge>}
             />
             <CardBody className="flex-1">
               <div className="mb-2 grid grid-cols-2 gap-2 rounded-md bg-surface-2 px-3 py-2">
                 <div>
                   <div className="text-[11.5px] text-text-3">Total volume</div>
-                  <div className="tabular text-[15px] font-semibold text-text">{compact(c.volume)}</div>
+                  <div className="tabular text-[15px] font-semibold text-text">{clusterVolume(c)}</div>
                 </div>
                 <div>
                   <div className="text-[11.5px] text-text-3">Avg. KD</div>
@@ -303,7 +350,7 @@ function ClusterCards({ clusters, db }: { clusters: Cluster[]; db: string }) {
       </Grid>
       {single.length > 0 && (
         <Card>
-          <CardHeader title="Standalone keywords" description={`${single.length} keywords with a unique SERP; each needs its own page or can be dropped.`} />
+          <CardHeader title="Standalone keywords" description={mode === "words" ? `${single.length} keywords that share no word with the others.` : `${single.length} keywords with a unique SERP; each needs its own page or can be dropped.`} />
           <CardBody>
             <div className="flex flex-wrap gap-1.5">
               {single.slice(0, 120).map((c) => (
@@ -321,13 +368,13 @@ function ClusterCards({ clusters, db }: { clusters: Cluster[]; db: string }) {
   );
 }
 
-function ClusterMap({ clusters, name, db, volume }: { clusters: Cluster[]; name: string; db: string; volume: number }) {
+function ClusterMap({ clusters, name, db, volume, mode }: { clusters: Cluster[]; name: string; db: string; volume: number | null; mode: "serp" | "words" }) {
   const grouped = clusters.filter((c) => c.keywords.length > 1).slice(0, 14);
   const standalone = clusters.filter((c) => c.keywords.length === 1);
   const branches = grouped.map((c) => ({
     label: c.pillar,
-    sub: `${c.keywords.length} kw · ${compact(c.volume)} vol${c.avgKd != null ? ` · KD ${c.avgKd}%` : ""}`,
-    href: `/keyword-overview?q=${encodeURIComponent(c.pillar)}&db=${db}`,
+    sub: `${c.keywords.length} kw${c.hasVolume ? ` · ${compact(c.volume)} vol` : ""}${c.avgKd != null ? ` · KD ${c.avgKd}%` : ""}`,
+    href: mode === "words" ? "" : `/keyword-overview?q=${encodeURIComponent(c.pillar)}&db=${db}`,
     children: c.keywords.filter((k) => k.keyword !== c.pillar).map((k) => ({ label: k.keyword, sub: k.volume == null ? undefined : compact(k.volume), href: `/keyword-overview?q=${encodeURIComponent(k.keyword)}&db=${db}` })),
   }));
   if (standalone.length)
@@ -336,7 +383,7 @@ function ClusterMap({ clusters, name, db, volume }: { clusters: Cluster[]; name:
     <Card>
       <CardHeader title="Topic mind map" description={`${grouped.length} clusters${clusters.filter((c) => c.keywords.length > 1).length > grouped.length ? " (largest 14 shown)" : ""} · click a keyword to open its overview`} />
       <CardBody>
-        <MindMap root={name} rootSub={`${compact(volume)} total volume`} branches={branches.map((b) => ({ ...b, href: b.href || undefined }))} maxLeaves={5} />
+        <MindMap root={name} rootSub={volume == null ? `${clusters.reduce((n, c) => n + c.keywords.length, 0)} keywords` : `${compact(volume)} total volume`} branches={branches.map((b) => ({ ...b, href: b.href || undefined }))} maxLeaves={5} />
       </CardBody>
     </Card>
   );

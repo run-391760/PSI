@@ -2,7 +2,8 @@
  * Tables owned by the position-tracking module. Use CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS only:
  * this SQL runs on every server start against existing data.
  *
- * pt_campaigns     one tracking campaign per project (targeting, device mode, competitors, data source)
+ * pt_campaigns     one tracking campaign per project (targeting, device mode, competitors, data source:
+ *                  'search-console' | 'dataforseo' | 'demo' — demo only when DEMO_DATA=true)
  * pt_keywords      tracked keywords (+ keyword metrics captured when added / refreshed by live checks)
  * pt_tags          per-project keyword tags; pt_keyword_tags links them
  * pt_rankings      daily snapshot per keyword × device × day: positions/URLs of every tracked domain,
@@ -115,6 +116,13 @@ CREATE TABLE IF NOT EXISTS pt_alert_rules (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE pt_alert_rules ADD COLUMN IF NOT EXISTS last_eval_day text;
+
+-- Search Console campaigns (source 'search-console'): real clicks/impressions per keyword × device × day
+-- (positions are Search Console average positions, 1 decimal). NULL for SERP-based sources.
+ALTER TABLE pt_rankings ADD COLUMN IF NOT EXISTS clicks real;
+ALTER TABLE pt_rankings ADD COLUMN IF NOT EXISTS impressions real;
+ALTER TABLE pt_daily ADD COLUMN IF NOT EXISTS clicks real;
+ALTER TABLE pt_daily ADD COLUMN IF NOT EXISTS impressions real;
 CREATE INDEX IF NOT EXISTS pt_alert_rules_owner ON pt_alert_rules(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS pt_alert_rules_project ON pt_alert_rules(project_id);
 `;

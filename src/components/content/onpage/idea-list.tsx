@@ -1,10 +1,10 @@
 "use client";
 
-import { Check, FlaskConical, Radio } from "lucide-react";
+import { BarChart3, Check, FlaskConical, Radio, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
 import { toggleIdeaAction } from "@/app/(app)/on-page-checker/actions";
-import type { Idea, IdeaType } from "@/lib/content/ideas";
+import type { Idea, IdeaSource, IdeaType } from "@/lib/content/ideas";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -12,14 +12,18 @@ import { Segmented } from "@/components/ui/tabs";
 
 const PRIORITY = { high: { tone: "critical", label: "High" }, medium: { tone: "warning", label: "Medium" }, low: { tone: "neutral", label: "Low" } } as const;
 
-export function SourceTag({ source }: { source: "live" | "demo" }) {
-  return source === "live" ? (
-    <span className="inline-flex cursor-help items-center gap-1 text-[11.5px] font-medium text-good-ink" title="Based on the page we fetched from your live site.">
-      <Radio className="h-3 w-3" /> Live page
-    </span>
-  ) : (
-    <span className="inline-flex cursor-help items-center gap-1 text-[11.5px] font-medium text-warning-ink" title="Based on the demo engine (rival benchmarks, SERP features, rankings or backlinks) — synthetic, not measured.">
-      <FlaskConical className="h-3 w-3" /> Demo data
+const SOURCE_TAGS: Record<IdeaSource, { label: string; title: string; cls: string; Icon: typeof Radio }> = {
+  live: { label: "Live page", title: "Based on the page we fetched from your live site.", cls: "text-good-ink", Icon: Radio },
+  serp: { label: "Top 10", title: "Based on the live Google top 10 (DataForSEO) and those pages crawled for comparison.", cls: "text-link", Icon: Search },
+  gsc: { label: "Search Console", title: "Based on your Search Console data for this page (last 28 days).", cls: "text-brand-ink", Icon: BarChart3 },
+  demo: { label: "Demo data", title: "Based on the demo engine — synthetic, not measured.", cls: "text-warning-ink", Icon: FlaskConical },
+};
+
+export function SourceTag({ source }: { source: IdeaSource }) {
+  const t = SOURCE_TAGS[source] ?? SOURCE_TAGS.live;
+  return (
+    <span className={cn("inline-flex cursor-help items-center gap-1 text-[11.5px] font-medium", t.cls)} title={t.title}>
+      <t.Icon className="h-3 w-3" /> {t.label}
     </span>
   );
 }

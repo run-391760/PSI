@@ -7,8 +7,9 @@ import { useMemo, useState, useTransition } from "react";
 import { createReportAction, updateReportAction } from "@/app/(app)/reports/actions";
 import { DATABASES, database, tryRootDomain } from "@/lib/domain";
 import { dateLabel } from "@/lib/format";
-import { ACCENTS, type AccentId, defaultSections, type ReportRecord, TEMPLATES, type TemplateId, templateById } from "@/lib/reports/templates";
+import { ACCENTS, type AccentId, type Availability, defaultSections, type ReportRecord, sectionAvailable, TEMPLATES, type TemplateId, templateAvailable, templateById, visibleSections } from "@/lib/reports/templates";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Callout } from "@/components/ui/feedback";
@@ -45,20 +46,24 @@ export function ReportBuilder({
   projects,
   initial,
   defaults,
+  available,
 }: {
+  available: Availability;
   projects: ProjectOption[];
   initial?: ReportRecord | null;
   defaults?: { template?: string; project?: string; domain?: string; db?: string };
 }) {
   const router = useRouter();
-  const startTemplate = templateById(initial?.template ?? defaults?.template) ?? TEMPLATES[0];
+  const firstAvailable = TEMPLATES.find((t) => templateAvailable(t, available)) ?? TEMPLATES[1];
+  const requestedTemplate = templateById(initial?.template ?? defaults?.template);
+  const startTemplate = requestedTemplate && (initial || templateAvailable(requestedTemplate, available)) ? requestedTemplate : firstAvailable;
   const startProject = projects.find((p) => p.id === (initial?.project_id ?? defaults?.project)) ?? (startTemplate.subject === "project" ? projects[0] : undefined);
   const [templateId, setTemplateId] = useState<TemplateId>(startTemplate.id);
   const [projectId, setProjectId] = useState<string>(startProject?.id ?? "");
   const [subject, setSubject] = useState(initial?.subject ?? defaults?.domain ?? startProject?.domain ?? "");
   const [db, setDb] = useState(initial?.db ?? defaults?.db ?? startProject?.country ?? "US");
   const [competitors, setCompetitors] = useState((initial?.options.competitors ?? startProject?.competitors.slice(0, 4) ?? []).join("\n"));
-  const [sections, setSections] = useState<string[]>(initial?.sections ?? defaultSections(startTemplate));
+  const [sections, setSections] = useState<string[]>(initial?.sections ?? defaultSections(startTemplate, available));
   const [title, setTitle] = useState(initial?.title ?? "");
   const [titleTouched, setTitleTouched] = useState(!!initial);
   const [company, setCompany] = useState(initial?.branding.company ?? "");
@@ -76,12 +81,14 @@ export function ReportBuilder({
   const accentHex = ACCENTS.find((a) => a.id === accent)?.color ?? ACCENTS[0].color;
   const compList = lines(competitors);
   const domainError = template.subject === "domain" && subject.trim() && !tryRootDomain(subject) ? "Enter a valid domain, e.g. example.com" : null;
-  const orderedSections = useMemo(() => template.sections.filter((s) => sections.includes(s.id)), [template, sections]);
+  const shownSections = useMemo(() => visibleSections(template, available), [template, available]);
+  const orderedSections = useMemo(() => shownSections.filter((s) => sections.includes(s.id) && sectionAvailable(template, s, available)), [template, shownSections, sections, available]);
+  const needLabel = (p: "dataforseo" | "google") => (p === "dataforseo" ? "Needs DataForSEO" : "Needs Search Console / GA4");
 
   const chooseTemplate = (id: TemplateId) => {
     const t = templateById(id)!;
     setTemplateId(id);
-    setSections(defaultSections(t));
+    setSections(defaultSections(t, available));
     if (t.subject === "project" && !projectId && projects[0]) chooseProject(projects[0].id);
     setError(null);
   };
@@ -129,14 +136,17 @@ export function ReportBuilder({
             {TEMPLATES.map((t) => {
               const Icon = ICONS[t.id];
               const on = t.id === templateId;
+              const ok = templateAvailable(t, available);
               return (
                 <button
                   key={t.id}
                   type="button"
                   role="radio"
                   aria-checked={on}
+                  aria-disabled={!ok}
+                  disabled={!ok}
                   onClick={() => chooseTemplate(t.id)}
-                  className={cn("relative flex gap-3 rounded-lg border p-3 text-left transition-colors", on ? "border-brand bg-brand-soft/60 ring-1 ring-brand" : "border-border hover:border-border-strong hover:bg-surface-2")}
+                  className={cn("relative flex gap-3 rounded-lg border p-3 text-left transition-colors", on ? "border-brand bg-brand-soft/60 ring-1 ring-brand" : ok ? "border-border hover:border-border-strong hover:bg-surface-2" : "cursor-not-allowed border-dashed border-border opacity-70")}
                 >
                   <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-md", on ? "bg-brand text-white" : "bg-surface-3 text-text-2")}>
                     <Icon className="h-4 w-4" />
@@ -144,6 +154,11 @@ export function ReportBuilder({
                   <span className="min-w-0">
                     <span className="block text-[13px] font-semibold text-text">{t.name}</span>
                     <span className="mt-0.5 block text-[12px] text-text-3">{t.description}</span>
+                    {!ok && t.needs && (
+                      <Badge tone="warning" className="mt-1.5">
+                        {needLabel(t.needs)}
+                      </Badge>
+                    )}
                   </span>
                   {on && <Check className="absolute top-2.5 right-2.5 h-4 w-4 text-brand-ink" />}
                 </button>
@@ -198,12 +213,12 @@ export function ReportBuilder({
           )}
         </Step>
 
-        <Step n={3} title="Sections" description={`${sections.length} of ${template.sections.length} sections selected`}>
+        <Step n={3} title="Sections" description={`${orderedSections.length} of ${shownSections.length} sections selected · sections marked “needs API” have no connected source`}>
           <div className="mb-2 flex gap-3 text-[12.5px]">
-            <button type="button" className="text-link hover:underline" onClick={() => setSections(template.sections.map((s) => s.id))}>
+            <button type="button" className="text-link hover:underline" onClick={() => setSections(shownSections.filter((s) => sectionAvailable(template, s, available)).map((s) => s.id))}>
               Select all
             </button>
-            <button type="button" className="text-link hover:underline" onClick={() => setSections(defaultSections(template))}>
+            <button type="button" className="text-link hover:underline" onClick={() => setSections(defaultSections(template, available))}>
               Recommended
             </button>
             <button type="button" className="text-link hover:underline" onClick={() => setSections([])}>
@@ -211,17 +226,25 @@ export function ReportBuilder({
             </button>
           </div>
           <ul className="grid gap-1.5 sm:grid-cols-2">
-            {template.sections.map((s) => (
-              <li key={s.id}>
-                <label className={cn("flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2", sections.includes(s.id) ? "border-brand/40 bg-brand-soft/40" : "border-border hover:bg-surface-2")}>
-                  <Checkbox checked={sections.includes(s.id)} onChange={() => toggle(s.id)} className="mt-0.5" />
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-text">{s.label}</span>
-                    <span className="block text-[12px] text-text-3">{s.description}</span>
-                  </span>
-                </label>
-              </li>
-            ))}
+            {shownSections.map((s) => {
+              const ok = sectionAvailable(template, s, available);
+              const need = s.needs ?? template.needs;
+              return (
+                <li key={s.id}>
+                  <label className={cn("flex items-start gap-2.5 rounded-md border px-3 py-2", !ok ? "cursor-not-allowed border-dashed border-border opacity-75" : sections.includes(s.id) ? "cursor-pointer border-brand/40 bg-brand-soft/40" : "cursor-pointer border-border hover:bg-surface-2")}>
+                    <Checkbox checked={ok && sections.includes(s.id)} disabled={!ok} onChange={() => toggle(s.id)} className="mt-0.5" />
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium text-text">
+                        {s.label}
+                        {!ok && need && <Badge tone="warning">needs API</Badge>}
+                      </span>
+                      <span className="block text-[12px] text-text-3">{s.description}</span>
+                      {s.source && <span className="block text-[11.5px] text-text-3">Source: {!ok && need ? needLabel(need).replace("Needs ", "") : s.source}</span>}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         </Step>
 

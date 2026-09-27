@@ -82,6 +82,7 @@ export function ScorePanel({
   onRecommend,
   recommending,
   recommendError,
+  recommendSource,
 }: {
   a: DocAnalysis;
   settings: DocSettings;
@@ -92,6 +93,7 @@ export function ScorePanel({
   onRecommend: () => void;
   recommending: boolean;
   recommendError: string | null;
+  recommendSource: "serp" | "autocomplete";
 }) {
   const [tab, setTab] = useState<Tab>("seo");
   const kwJoined = keywords.join(", ");
@@ -188,7 +190,7 @@ export function ScorePanel({
                 Add target keywords →
               </button>
             )}
-            <Heading right={settings.demoTargets ? <Badge tone="warning">Demo data</Badge> : undefined}>Recommended keywords</Heading>
+            <Heading right={settings.targetsSource === "serp" ? <Badge>Top 10</Badge> : settings.targetsSource === "autocomplete" ? <Badge>Autocomplete</Badge> : undefined}>Recommended keywords</Heading>
             {a.recommended.length ? (
               <ul className="flex flex-wrap gap-1.5">
                 {a.recommended.map((r) => (
@@ -337,13 +339,17 @@ export function ScorePanel({
               />
             </Field>
             <Field label="Recommended keywords" hint="Comma separated related words to cover." htmlFor="wa-rec">
-              <Textarea id="wa-rec" rows={3} value={recDraft} onChange={(e) => setRecDraft(e.target.value)} onBlur={() => onSettings({ ...settings, recommended: recDraft.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 40), demoTargets: false })} className="min-h-0" />
+              <Textarea id="wa-rec" rows={3} value={recDraft} onChange={(e) => setRecDraft(e.target.value)} onBlur={() => onSettings({ ...settings, recommended: recDraft.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 40), demoTargets: false, targetsSource: "manual" })} className="min-h-0" />
             </Field>
             <div className="rounded-md border border-border bg-surface-2 p-3">
               <div className="flex items-center gap-2 text-[13px] font-medium text-text">
-                <Sparkles className="h-4 w-4 text-brand" /> Targets from the top 10
+                <Sparkles className="h-4 w-4 text-brand" /> {recommendSource === "serp" ? "Targets from the top 10" : "Words from Google Autocomplete"}
               </div>
-              <p className="mt-1 text-[12px] text-text-3">Sets word count, readability and recommended keywords from the top-10 benchmark for your main keyword (demo data).</p>
+              <p className="mt-1 text-[12px] text-text-3">
+                {recommendSource === "serp"
+                  ? "Sets word count, readability and recommended keywords from the live Google top 10 for your main keyword, crawled for real."
+                  : "Suggests recommended words that searchers add to your main keyword in Google Autocomplete. Length and readability stay as you set them."}
+              </p>
               {recommendError && <p className="mt-1 text-[12px] text-critical-ink">{recommendError}</p>}
               <Button
                 size="sm"

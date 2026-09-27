@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { database } from "@/lib/domain";
 import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { cached, liveEnabled } from "@/lib/providers/source";
 import { keywordMetrics, trailingMonths } from "@/lib/seo/engine";
 import type { Intent, SerpFeature } from "@/lib/seo/types";
+import { textIntents } from "./intent";
 import { normalizeKw } from "./text";
 import type { KwRow } from "./types";
 
@@ -85,14 +87,43 @@ async function liveRows(ownerId: string, keywords: string[], db: string): Promis
   return out;
 }
 
+/** Where keyword metrics came from. "none" = no metrics provider: numbers are null, intent is text-based. */
+export type MetricsSource = "dataforseo" | "demo" | "none";
+export type MetricsResult = { data: KwRow[]; source: MetricsSource; fetchedAt: string };
+
+/** A row without measured metrics: every number is null ("n/a"); intent is classified from the text. */
+export function textRow(keyword: string): KwRow {
+  return { keyword, volume: null, kd: null, cpc: null, competition: null, intents: textIntents(keyword), features: [], trend: [], results: null };
+}
+
+/** Which metrics source is active right now (DataForSEO → demo engine in local dev only → none). */
+export function metricsSource(): MetricsSource {
+  return liveEnabled() ? "dataforseo" : demoAllowed() ? "demo" : "none";
+}
+
 /**
- * Metrics for a set of keywords in one database. Live (DataForSEO Labs, cached 7 days) when configured,
- * otherwise the demo engine. Never mixes the two.
+ * Metrics for a set of keywords in one database. Live (DataForSEO Labs, cached 7 days) when configured;
+ * the demo engine only when DEMO_DATA=true; otherwise null metrics with text-based intent. Never mixes.
  */
-export async function keywordRows(ownerId: string, keywordsInput: string[], dbInput: string): Promise<Sourced<KwRow[]>> {
+export async function keywordRows(ownerId: string, keywordsInput: string[], dbInput: string): Promise<MetricsResult> {
   const db = database(dbInput).code;
   const keywords = [...new Set(keywordsInput.map(normalizeKw).filter(Boolean))];
-  if (!keywords.length) return demo([]);
-  if (liveEnabled()) return cached(`kw-metrics:${db}:${digest([...keywords].sort().join("|"))}`, "dataforseo", 24 * 7, () => liveRows(ownerId, keywords, db));
-  return demo(keywords.map((k) => demoRow(k, db)));
+  const source = metricsSource();
+  const now = new Date().toISOString();
+  if (!keywords.length) return { data: [], source, fetchedAt: now };
+  if (source === "dataforseo") {
+    const r = await cached(`kw-metrics:${db}:${digest([...keywords].sort().join("|"))}`, "dataforseo", 24 * 7, () => liveRows(ownerId, keywords, db));
+    return { data: r.data, source, fetchedAt: r.fetchedAt };
+  }
+  if (source === "demo") return { data: keywords.map((k) => demoRow(k, db)), source, fetchedAt: now };
+  return { data: keywords.map(textRow), source, fetchedAt: now };
+}
+
+/**
+ * Stored metrics (lists, PPC campaigns) that came from the demo engine are hidden unless DEMO_DATA=true:
+ * the keyword stays, its numbers become n/a and intent is re-classified from the text.
+ */
+export function visibleStoredRow<T extends KwRow & { source: string }>(r: T): T {
+  if (r.source !== "demo" || demoAllowed()) return r;
+  return { ...r, ...textRow(r.keyword), source: "none" };
 }

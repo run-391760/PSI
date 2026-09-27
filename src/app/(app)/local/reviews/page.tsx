@@ -2,9 +2,17 @@ import { Star } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
+import { timeAgo } from "@/lib/format";
 import { getProfile } from "@/lib/local/profile";
 import { projectContext } from "@/lib/local/project-context";
-import { PLATFORMS, REPLY_TEMPLATES, competitorRatings, reviewStats, reviewsWithReplies } from "@/lib/local/reviews";
+import { PLATFORMS, REPLY_TEMPLATES, competitorRatings, reviewStats, reviewsFromLive, reviewsWithReplies, savedReplies } from "@/lib/local/reviews";
+import { getLiveReviews } from "@/lib/local/live";
+import { latestJob } from "@/lib/jobs/queue";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
+import { NeedsData } from "@/components/seo/needs-data";
+import { JobProgress } from "@/components/local/job-progress";
+import { FetchReviewsButton } from "@/components/local/listings-ui";
 import { SENTIMENT_META } from "@/lib/monitoring/sentiment";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
@@ -44,7 +52,7 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
   if (!stored)
     return (
       <Page>
-        <PageHeader breadcrumbs={BREADCRUMBS} title="Review Management:" subject={project.domain} meta={<DataSourceBadge source="demo" />} actions={<ProjectSwitcher projects={switcher} current={project.id} />} />
+        <PageHeader breadcrumbs={BREADCRUMBS} title="Review Management:" subject={project.domain} actions={<ProjectSwitcher projects={switcher} current={project.id} />} />
         <Card>
           <EmptyState
             icon={<Star className="h-5 w-5" />}
@@ -61,9 +69,37 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
     );
 
   const profile = stored.profile;
-  const reviews = await reviewsWithReplies(project, profile);
+  const demo = demoAllowed();
+  const live = liveEnabled();
+  const [liveData, job, saved] = await Promise.all([demo ? null : getLiveReviews(project.id), latestJob(project.id, "local.reviews"), savedReplies(project.id)]);
+  const fetching = !!job && (job.status === "queued" || job.status === "running");
+  if (!demo && !liveData)
+    return (
+      <Page>
+        <PageHeader breadcrumbs={BREADCRUMBS} title="Review Management:" subject={profile.name} actions={<><ProjectSwitcher projects={switcher} current={project.id} />{live && <FetchReviewsButton projectId={project.id} disabled={fetching} />}</>} />
+        {fetching && job && <JobProgress jobId={job.id} endpoint="/api/local/jobs" title="Fetching your Google reviews" className="mb-4" />}
+        {!fetching && job?.status === "failed" && <Callout tone="critical" className="mb-4" title="The last reviews fetch failed">{job.error}</Callout>}
+        {live ? (
+          <Card>
+            <EmptyState
+              icon={<Star className="h-5 w-5" />}
+              title="Fetch your Google reviews"
+              description={`Reviews for “${[profile.name, profile.city].filter(Boolean).join(" ")}” are collected from Google via DataForSEO (about $0.01 per 100 reviews; it can take a few minutes). Check your Google listing in Listing Management first for an exact match.`}
+              action={<FetchReviewsButton projectId={project.id} disabled={fetching} />}
+            />
+          </Card>
+        ) : (
+          <NeedsData
+            providers={["dataforseo", "business-profile"]}
+            title="Reviews need DataForSEO or the Google Business Profile API"
+            shows={["Your Google reviews with rating trend and distribution", "Sentiment and response rate", "Reply drafting with templates", "Average response time"]}
+          />
+        )}
+      </Page>
+    );
+  const reviews = demo ? await reviewsWithReplies(project, profile) : reviewsFromLive(liveData!.reviews, saved);
   const s = reviewStats(reviews);
-  const rivals = competitorRatings(project, profile, s);
+  const rivals = demo ? competitorRatings(project, profile, s) : [];
   const ratingDelta = s.last30.avg != null && s.prev30.avg != null ? ((s.last30.avg - s.prev30.avg) / s.prev30.avg) * 100 : null;
   const countDelta = s.prev30.count ? ((s.last30.count - s.prev30.count) / s.prev30.count) * 100 : null;
   const maxDist = Math.max(...s.distribution.map((d) => d.count), 1);
@@ -78,16 +114,22 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
         subject={profile.name}
         meta={
           <>
-            <DataSourceBadge source="demo" />
-            <Badge>{s.platforms.length} platforms</Badge>
+            {demo ? <DataSourceBadge source="demo" /> : <DataSourceBadge source="dataforseo" fetchedAt={liveData?.fetchedAt} note="Google reviews" />}
+            {!demo && liveData?.total != null && <Badge>{liveData.total.toLocaleString()} on Google{liveData.rating != null ? ` · ${liveData.rating.toFixed(1)} ★` : ""}</Badge>}
+            <Badge>{s.platforms.length} platform{s.platforms.length === 1 ? "" : "s"}</Badge>
             <Badge>{profile.primaryCategory}</Badge>
           </>
         }
-        actions={<ProjectSwitcher projects={switcher} current={project.id} />}
+        actions={<><ProjectSwitcher projects={switcher} current={project.id} />{!demo && live && <FetchReviewsButton projectId={project.id} label="Refresh reviews" variant="secondary" disabled={fetching} />}</>}
       />
-      <Callout tone="warning" className="mb-4" title="Demo reviews">
-        Review platforms are not connected in this environment. Reviews are generated deterministically from templates for your category and market; replies you draft are saved for real.
-      </Callout>
+      {fetching && job && <JobProgress jobId={job.id} endpoint="/api/local/jobs" title="Fetching your Google reviews" className="mb-4" />}
+      {demo ? (
+        <Callout tone="warning" className="mb-4" title="Demo reviews">
+          Review platforms are not connected in this environment. Reviews are generated deterministically from templates for your category and market; replies you draft are saved for real.
+        </Callout>
+      ) : (
+        <p className="mb-3 text-[12.5px] text-text-3">The latest {reviews.length} Google reviews, fetched {liveData ? timeAgo(liveData.fetchedAt) : ""}. Owner replies shown on Google count as replied; replies you draft here are saved to your project (posting them needs the Google Business Profile API).</p>
+      )}
 
       <Card className="mb-4">
         <MetricStrip>
@@ -160,6 +202,7 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
         <Card>
           <CardHeader title="What reviewers talk about" description="Topics mentioned, split by praise and complaints" />
           <CardBody>
+            {s.aspects.length === 0 && <p className="py-8 text-center text-[12.5px] text-text-3">Topic analysis is not available for these reviews. Read them in the inbox below.</p>}
             <ul className="space-y-2.5">
               {s.aspects.map((a) => (
                 <li key={a.aspect} className="grid grid-cols-[110px_1fr_76px] items-center gap-2 text-[13px]">
@@ -181,7 +224,7 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
         </Card>
       </Grid>
 
-      <Grid cols={2} className="mb-4">
+      <Grid cols={demo ? 2 : 1} className="mb-4">
         <Card>
           <CardHeader title="Platforms" description="Where your reviews come from" />
           <CardBody>
@@ -191,6 +234,7 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
             />
           </CardBody>
         </Card>
+        {demo && (
         <Card>
           <CardHeader title="Competitor ratings" description={`You rank #${rank} of ${rivals.length} nearby ${profile.primaryCategory.toLowerCase()} businesses by rating`} info="Nearby businesses in your category (demo). Tracked competitor domains are included first." />
           <CardBody>
@@ -211,6 +255,7 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
             />
           </CardBody>
         </Card>
+        )}
       </Grid>
 
       <Card className="mb-4">
@@ -219,13 +264,13 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/local/re
       </Card>
 
       <p className="text-[12px] text-text-3">
-        Reviews are <span className="font-medium text-warning-ink">Demo data</span>. Improve prominence in the{" "}
+        {demo ? <>Reviews are <span className="font-medium text-warning-ink">Demo data</span>. </> : <>Reviews are real Google reviews collected via DataForSEO. </>}Improve prominence in the{" "}
         <Link href={`/local/map-rank-tracker?project=${project.id}`} className="text-link hover:underline">
           Map Rank Tracker
         </Link>{" "}
         by growing review volume and replying consistently.
       </p>
-      <DemoNotice className="mt-2" />
+      {demo && <DemoNotice className="mt-2" />}
     </Page>
   );
 }

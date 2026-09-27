@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { query, transaction, type Query } from "@/lib/db";
 import { AppError, database, normalizeKeywords, rootDomain } from "@/lib/domain";
+import { demoAllowed } from "@/lib/data-mode";
 import { keywordMetrics } from "@/lib/seo/engine";
 import { liveEnabled } from "@/lib/providers/source";
+import { linkedGscSite } from "./gsc";
 import type { Intent } from "@/lib/seo/types";
-import { MAX_COMPETITORS, MAX_KEYWORDS, type Campaign, type DeviceMode, type KeywordEntry, type Tag, type TrackedKeyword } from "./types";
+import { MAX_COMPETITORS, MAX_KEYWORDS, type Campaign, type CampaignSource, type DeviceMode, type KeywordEntry, type Tag, type TrackedKeyword } from "./types";
 
 type CampaignRow = {
   project_id: string;
@@ -30,7 +32,7 @@ function toCampaign(r: CampaignRow): Campaign {
     location: r.location,
     device: r.device,
     competitors: r.competitors ?? [],
-    source: r.source === "dataforseo" ? "dataforseo" : "demo",
+    source: r.source === "dataforseo" || r.source === "search-console" ? r.source : "demo",
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
     lastCheckAt: iso(r.last_check_at),
@@ -131,7 +133,7 @@ export async function insertKeywords(q: Query, projectId: string, db: string, so
   const tagIds = await ensureTags(q, projectId, entries.flatMap((e) => e.tags));
   const inserted: string[] = [];
   const rows = entries.map((e) => {
-    const m = source === "demo" ? keywordMetrics(e.keyword, db) : null;
+    const m = source === "demo" && demoAllowed() ? keywordMetrics(e.keyword, db) : null;
     return { id: randomUUID(), project_id: projectId, keyword: e.keyword, volume: m?.volume ?? null, cpc: m?.cpc ?? null, kd: m?.kd ?? null, intents: m?.intents ?? [], metrics_source: m ? "demo" : "pending" };
   });
   for (let i = 0; i < rows.length; i += 500) {
@@ -170,7 +172,7 @@ export async function keywordCount(projectId: string) {
 
 export async function createCampaign(
   project: { id: string; domain: string },
-  input: { db: string; location: string; device: DeviceMode; competitors: string[]; keywords: KeywordEntry[] },
+  input: { db: string; location: string; device: DeviceMode; competitors: string[]; keywords: KeywordEntry[]; source?: CampaignSource | null },
 ) {
   const db = database(input.db).code;
   const location = input.location.trim().slice(0, 120);
@@ -178,7 +180,9 @@ export async function createCampaign(
   const competitors = cleanCompetitors(input.competitors, project.domain);
   const entries = cleanEntries(input.keywords);
   if (!entries.length) throw new AppError("Add at least one keyword to track.");
-  const source = liveEnabled() ? "dataforseo" : "demo";
+  const available = await availableSources(project.id);
+  const source = input.source && available.includes(input.source) ? input.source : available[0];
+  if (!source) throw new AppError("Link a Search Console property to this project or connect DataForSEO first.");
   await transaction(async (q) => {
     const created = await q(
       `INSERT INTO pt_campaigns(project_id,db,location,device,competitors,source) VALUES($1,$2,$3,$4,$5::jsonb,$6)
@@ -189,6 +193,18 @@ export async function createCampaign(
     await insertKeywords(q, project.id, db, source, entries);
   });
   return getCampaign(project.id);
+}
+
+/**
+ * Data sources a new campaign can use, best first: Search Console (the project's linked property; real
+ * average positions of your own site), DataForSEO (live SERPs incl. competitors), demo only with DEMO_DATA=true.
+ */
+export async function availableSources(projectId: string): Promise<CampaignSource[]> {
+  const out: CampaignSource[] = [];
+  if (await linkedGscSite(projectId)) out.push("search-console");
+  if (liveEnabled()) out.push("dataforseo");
+  if (demoAllowed()) out.push("demo");
+  return out;
 }
 
 export async function updateCampaign(projectId: string, patch: Partial<{ db: string; location: string; device: DeviceMode; competitors: string[]; source: string }>) {

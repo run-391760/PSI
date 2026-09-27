@@ -55,6 +55,8 @@ export type AiContextOptions = {
   category?: string | null;
   /** Nearby businesses (local profile) used when the project tracks few competitors. */
   localRivals?: { name: string; strength: number }[];
+  /** Real mode (DEMO_DATA unset): no competitor fill or pages from the demo engine. */
+  realOnly?: boolean;
 };
 
 export function aiContext(project: Pick<Project, "domain" | "country" | "brand_terms" | "competitors" | "location">, opts: AiContextOptions = {}): AiContext {
@@ -70,17 +72,17 @@ export function aiContext(project: Pick<Project, "domain" | "country" | "brand_t
     if (competitors.length >= 4) break;
     if (!competitors.some((c) => c.name === r.name)) competitors.push({ name: r.name, domain: null, strength: r.strength });
   }
-  for (const l of topic.leaders) {
+  for (const l of opts.realOnly ? [] : topic.leaders) {
     if (competitors.length >= 4) break;
     const d = l.split("@")[0];
     if (d === project.domain || competitors.some((c) => c.domain === d)) continue;
     competitors.push({ name: brandName(d), domain: d, strength: domainEntity(d).strength });
   }
   const words = phrase.split(" ");
-  const category = (opts.category?.trim() || CATEGORY_WORDS[words[words.length - 1]] || words.map((w) => CATEGORY_WORDS[w]).find(Boolean) || topic.heads[0]).toLowerCase();
+  const category = (opts.category?.trim() || CATEGORY_WORDS[words[words.length - 1]] || words.map((w) => CATEGORY_WORDS[w]).find(Boolean) || (opts.realOnly ? "business" : topic.heads[0])).toLowerCase();
   const label = domainLabel(project.domain);
   let pages: string[] = [];
-  try {
+  if (!opts.realOnly) try {
     pages = domainPages(project.domain, project.country)
       .map((p) => p.url)
       .filter((u) => !new URL(u).pathname.includes(label))
@@ -210,7 +212,7 @@ export function suggestPrompts(ctx: AiContext, project: Pick<Project, "country">
     `what should I look for in a ${cat}`,
     `most trusted ${cat} near ${ctx.place}`,
     `how much does ${brand} cost`,
-    `${ctx.topic.heads[0]} recommendations`,
+    ...(ctx.category !== "business" ? [`${ctx.category} recommendations`] : []),
   ];
   return [...new Set(list.map((p) => p.replace(/\s+/g, " ").trim().toLowerCase()))].slice(0, 10);
 }

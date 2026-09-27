@@ -4,6 +4,9 @@ import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { adCopiesFrom, adsPagesFrom, getAdsChanges, getAdsCompetitors, getAdsHistory, getAdsPositions, getAdsSummary, type AdsSummary, type PaidRow } from "@/lib/competitive/advertising-research";
 import { compareHref } from "@/lib/competitive/links";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { spStr } from "@/lib/competitive/shared";
 import { database, tryRootDomain } from "@/lib/domain";
 import { compact, money, pct } from "@/lib/format";
@@ -66,6 +69,26 @@ export default async function AdvertisingResearchPage({ searchParams }: PageProp
             }
           />
         </Card>
+      </Page>
+    );
+
+  if (!liveEnabled() && !demoAllowed())
+    return (
+      <Page>
+        <PageHeader breadcrumbs={CRUMBS} title="Advertising Research:" subject={domain}>
+          <ToolSearch placeholder="Enter a domain" keep={["tab"]} />
+        </PageHeader>
+        <NeedsData
+         
+          providers={["dataforseo"]}
+          title="Advertising Research needs DataForSEO"
+          shows={[
+            "Paid keywords with ad position, volume, CPC and estimated clicks",
+            "Estimated Google Ads traffic and budget, with monthly history",
+            "Ad copies and the landing pages they point to",
+            "Paid search competitors and position changes",
+          ]}
+        />
       </Page>
     );
 
@@ -259,7 +282,11 @@ async function Changes({ ownerId, domain, db }: { ownerId: string; domain: strin
         <Card>
           <CardHeader title="Position changes trend" description="Paid keywords per change type, last 12 months" />
           <CardBody>
-            <BarChart data={data.trend} xKey="month" xFormat="monthShort" series={CHANGE_ORDER.map((t) => ({ key: t, label: CHANGE_META[t].label, color: CHANGE_META[t].color }))} height={240} />
+            {data.trend.length ? (
+  <BarChart data={data.trend} xKey="month" xFormat="monthShort" series={CHANGE_ORDER.map((t) => ({ key: t, label: CHANGE_META[t].label, color: CHANGE_META[t].color }))} height={240} />
+            ) : (
+              <p className="py-10 text-center text-[13px] text-text-3">Monthly change history is not available from the connected provider.</p>
+            )}
           </CardBody>
         </Card>
       </Grid>

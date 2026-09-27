@@ -113,7 +113,8 @@ export async function deleteRule(ownerId: string, id: string) {
 // ------------------------------------------------------------------------------------ Evaluation
 
 type Hit = { keywordId: string | null; device: Device; title: string; body: string };
-const fmt = (p: number | null | undefined) => (p == null ? ">100" : `#${p}`);
+const r1 = (n: number) => Math.round(n * 10) / 10;
+const plural = (n: number) => (n === 1 ? "" : "s");
 const MAX_PER_RULE = 10;
 
 /**
@@ -123,8 +124,12 @@ const MAX_PER_RULE = 10;
 export async function evaluateAlerts(project: { id: string; owner_id: string; domain: string; name: string }, day: string) {
   const rules = await query<RuleRow>(`${SELECT} WHERE r.project_id=$1 AND r.enabled AND (r.last_eval_day IS NULL OR r.last_eval_day<$2)`, [project.id, day]);
   if (!rules.length) return 0;
-  const [campaign] = await query<{ device: string; competitors: string[] }>("SELECT device, competitors FROM pt_campaigns WHERE project_id=$1", [project.id]);
+  const [campaign] = await query<{ device: string; competitors: string[]; source: string }>("SELECT device, competitors, source FROM pt_campaigns WHERE project_id=$1", [project.id]);
   if (!campaign) return 0;
+  // Search Console: average positions of the own site; no impressions = no position. No competitor data.
+  const gsc = campaign.source === "search-console";
+  const fmt = (p: number | null | undefined) => (p == null ? (gsc ? "no impressions" : ">100") : `#${r1(p)}`);
+  const outOf = gsc ? "out of Search Console results (no impressions)" : "out of the top 100";
   const devices: Device[] = campaign.device === "both" ? ["desktop", "mobile"] : [campaign.device as Device];
   const keywords = await query<{ id: string; keyword: string; volume: number | null }>("SELECT id, keyword, volume FROM pt_keywords WHERE project_id=$1", [project.id]);
   const kwName = new Map(keywords.map((k) => [k.id, k.keyword]));
@@ -141,7 +146,7 @@ export async function evaluateAlerts(project: { id: string; owner_id: string; do
       snapshots.set(device, null);
       continue;
     }
-    const rows = await query<RankRow>("SELECT keyword_id, day, positions, features FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day IN ($3,$4)", [project.id, device, day, p.day]);
+    const rows = await query<RankRow>("SELECT keyword_id, day, positions, features, clicks, impressions FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day IN ($3,$4)", [project.id, device, day, p.day]);
     snapshots.set(device, {
       prevDay: p.day,
       cur: new Map(rows.filter((r) => r.day === day).map((r) => [r.keyword_id, r])),
@@ -161,8 +166,8 @@ export async function evaluateAlerts(project: { id: string; owner_id: string; do
       const devLabel = device === "mobile" ? "Mobile" : "Desktop";
       if (rule.kind === "visibility_change") {
         const pick = (m: Map<string, RankRow>) => [...m.values()].filter((r) => kwName.has(r.keyword_id) && (!inTag || inTag.has(r.keyword_id)));
-        const [cur] = aggregateDay(day, pick(snap.cur), [own], volumes);
-        const [prev] = aggregateDay(snap.prevDay, pick(snap.prev), [own], volumes);
+        const [cur] = aggregateDay(day, pick(snap.cur), [own], volumes, { measured: gsc });
+        const [prev] = aggregateDay(snap.prevDay, pick(snap.prev), [own], volumes, { measured: gsc });
         if (!prev || prev.visibility <= 0) continue;
         const change = ((cur.visibility - prev.visibility) / prev.visibility) * 100;
         if (Math.abs(change) >= rule.threshold)
@@ -182,12 +187,14 @@ export async function evaluateAlerts(project: { id: string; owner_id: string; do
         const a = prev.positions[own] ?? null;
         const b = cur.positions[own] ?? null;
         const n = rule.threshold;
+        // Search Console: a day without impressions is "no data", not a ranking loss — compare measured days only.
+        if (gsc && (a == null || b == null)) continue;
         const suffix = `${devLabel} · ${project.name}`;
         if (rule.kind === "enter_top" && b != null && b <= n && (a == null || a > n)) hits.push({ keywordId, device, title: `“${kw}” entered the top ${n}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
         else if (rule.kind === "leave_top" && a != null && a <= n && (b == null || b > n)) hits.push({ keywordId, device, title: `“${kw}” dropped out of the top ${n}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
-        else if (rule.kind === "drop" && (b ?? 101) - (a ?? 101) >= n && a != null) hits.push({ keywordId, device, title: `“${kw}” dropped ${b == null ? "out of the top 100" : `${b - a} position${b - a === 1 ? "" : "s"}`}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
-        else if (rule.kind === "rise" && (a ?? 101) - (b ?? 101) >= n && b != null) hits.push({ keywordId, device, title: `“${kw}” improved ${(a ?? 101) - b} position${(a ?? 101) - b === 1 ? "" : "s"}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
-        else if (rule.kind === "overtaken") {
+        else if (rule.kind === "drop" && (b ?? 101) - (a ?? 101) >= n && a != null) hits.push({ keywordId, device, title: `“${kw}” dropped ${b == null ? outOf : `${r1(b - a)} position${plural(r1(b - a))}`}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
+        else if (rule.kind === "rise" && (a ?? 101) - (b ?? 101) >= n && b != null) hits.push({ keywordId, device, title: a == null ? `“${kw}” started ranking at ${fmt(b)}` : `“${kw}” improved ${r1(a - b)} position${plural(r1(a - b))}`, body: `${fmt(a)} → ${fmt(b)} · ${suffix}` });
+        else if (rule.kind === "overtaken" && !gsc) {
           const comps = rule.competitor ? [rule.competitor] : campaign.competitors;
           for (const c of comps) {
             const ca = prev.positions[c] ?? null;

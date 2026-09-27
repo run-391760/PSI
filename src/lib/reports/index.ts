@@ -4,7 +4,14 @@ import { query } from "@/lib/db";
 import { AppError, DB_CODES, rootDomain } from "@/lib/domain";
 import { getProject } from "@/lib/projects";
 import { iso } from "./platform";
-import { ACCENTS, TEMPLATES, templateById, type ReportRecord } from "./templates";
+import { demoAllowed, providerStatus } from "@/lib/data-mode";
+import { ACCENTS, type Availability, sectionAvailable, TEMPLATES, templateAvailable, templateById, type ReportRecord } from "./templates";
+
+/** Which report sources are connected on this server. */
+export function reportAvailability(): Availability {
+  const st = providerStatus();
+  return { dataforseo: st.dataforseo, google: st.google, demo: demoAllowed() };
+}
 
 /** Saved reports (My Reports). Server-only. */
 
@@ -34,9 +41,11 @@ const SELECT = `SELECT r.id, r.template, r.title, r.subject, r.db, r.project_id,
 async function normalize(ownerId: string, raw: ReportInput) {
   const input = reportInput.parse(raw);
   const template = templateById(input.template)!;
-  const allowed = new Set(template.sections.map((s) => s.id));
+  const available = reportAvailability();
+  if (!templateAvailable(template, available)) throw new AppError(`${template.name} needs DataForSEO, which is not connected on this server.`);
+  const allowed = new Set(template.sections.filter((s) => sectionAvailable(template, s, available)).map((s) => s.id));
   const sections = [...new Set(input.sections)].filter((s) => allowed.has(s));
-  if (!sections.length) throw new AppError("Choose at least one section.");
+  if (!sections.length) throw new AppError("Choose at least one section that has a connected data source.");
   let subject = input.subject;
   let db: string = input.db;
   let projectId: string | null = input.project_id || null;

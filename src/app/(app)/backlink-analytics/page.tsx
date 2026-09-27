@@ -12,11 +12,13 @@ import {
   getBlOverview,
   getBlReferringDomains,
   getBlSummary,
+  blAvailable,
 } from "@/lib/backlinks/report";
 import { splitList } from "@/lib/backlinks/metrics";
 import { looseRootDomain } from "@/lib/backlinks/normalize";
 import { compact } from "@/lib/format";
 import { BubbleChart } from "@/components/charts/bubble-chart";
+import { NeedsData } from "@/components/seo/needs-data";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
 import { ToolSearch } from "@/components/seo/tool-search";
 import { Page, PageHeader } from "@/components/shell/page";
@@ -90,6 +92,29 @@ export default async function BacklinkAnalyticsPage({ searchParams }: PageProps<
             }
           />
         </Card>
+      </Page>
+    );
+
+  if (!blAvailable())
+    return (
+      <Page className="overflow-x-clip">
+        <PageHeader breadcrumbs={BREADCRUMBS} title="Backlink Analytics:" subject={domains.length > 1 ? `comparing ${Math.min(5, domains.length)} domains` : domains[0]}>
+          <ToolSearch placeholder={SEARCH_PLACEHOLDER} showDb={false} buttonLabel="Analyze" />
+        </PageHeader>
+        <NeedsData
+          providers={["dataforseo"]}
+          title="Connect DataForSEO to analyze backlink profiles"
+          shows={[
+            "Authority Score, referring domains, backlinks and referring IPs",
+            "Monthly referring-domain and backlink history",
+            "New and lost links per day",
+            "Every backlink with anchor, attributes and first/last seen",
+            "Anchor texts and anchor-type mix",
+            "Referring domains, IPs and subnets",
+            "Most linked pages of the domain",
+            "Backlink competitors and side-by-side comparison",
+          ]}
+        />
       </Page>
     );
 
@@ -248,7 +273,8 @@ async function TabContent({ tab, ownerId, domain, totals, summary }: { tab: Tab;
     }
     case "competitors": {
       const { data } = await getBlCompetitors(ownerId, domain);
-      const top = data.slice(0, 10);
+      // Only competitors with known totals can be placed on the map (unknown values are never plotted as 1).
+      const top = data.filter((c) => c.referringDomains > 0 && c.authorityScore > 0).slice(0, 10);
       return (
         <>
           {top.length > 0 && (
@@ -256,7 +282,7 @@ async function TabContent({ tab, ownerId, domain, totals, summary }: { tab: Tab;
               <CardHeader
                 title="Backlink competitors map"
                 description="Referring domains vs. Authority Score; bubble size is the number of common referring domains"
-                actions={<CompareButton initial={[domain, ...top.slice(0, 3).map((c) => c.domain)]} label="Compare top 3" />}
+                actions={<CompareButton initial={[domain, ...data.slice(0, 3).map((c) => c.domain)]} label="Compare top 3" />}
               />
               <CardBody>
                 <BubbleChart
@@ -264,8 +290,8 @@ async function TabContent({ tab, ownerId, domain, totals, summary }: { tab: Tab;
                   yLabel="Authority Score"
                   zLabel="Common referring domains"
                   points={[
-                    { label: domain, x: Math.max(1, summary.referringDomains), y: Math.max(1, summary.authorityScore), z: Math.max(...top.map((c) => c.common), 1), highlight: true },
-                    ...top.map((c) => ({ label: c.domain, x: Math.max(1, c.referringDomains), y: Math.max(1, c.authorityScore), z: Math.max(1, c.common) })),
+                    ...(summary.referringDomains > 0 && summary.authorityScore > 0 ? [{ label: domain, x: summary.referringDomains, y: summary.authorityScore, z: Math.max(...top.map((c) => c.common), 1), highlight: true }] : []),
+                    ...top.map((c) => ({ label: c.domain, x: c.referringDomains, y: c.authorityScore, z: Math.max(1, c.common) })),
                   ]}
                   height={300}
                 />

@@ -15,8 +15,9 @@ import { Field, Input, Textarea } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
 import { DataSourceBadge } from "@/components/seo/source-badge";
 
-export type TargetRow = { id: string; url: string; keyword: string; origin: string; volume: number };
-const ORIGIN: Record<string, string> = { manual: "Manual", csv: "CSV import", ranking: "Ranking data", live: "Live site" };
+export type TargetRow = { id: string; url: string; keyword: string; origin: string };
+export type GscSuggestions = { status: "ok"; rows: Suggestion[]; fetchedAt: string } | { status: "unavailable"; reason: string };
+const ORIGIN: Record<string, string> = { manual: "Manual", csv: "CSV import", ranking: "Ranking data", gsc: "Search Console", live: "Live site" };
 
 type AddResult = { added: number; skipped: { input: string; reason: string }[] } | { error: string } | null;
 
@@ -40,7 +41,7 @@ function ResultNote({ result }: { result: AddResult }) {
 }
 
 /** Suggestion table with editable keywords and bulk add. */
-function SuggestionTable({ rows, onAdd, pending, origin, existing }: { rows: Suggestion[]; onAdd: (pairs: { url: string; keyword: string; origin: "ranking" | "live" }[]) => void; pending: boolean; origin: "ranking" | "live"; existing: Set<string> }) {
+function SuggestionTable({ rows, onAdd, pending, origin, existing }: { rows: Suggestion[]; onAdd: (pairs: { url: string; keyword: string; origin: "gsc" | "live" }[]) => void; pending: boolean; origin: "gsc" | "live"; existing: Set<string> }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const kw = (r: Suggestion) => edits[r.url] ?? r.keyword;
   const columns: Column<Suggestion>[] = [
@@ -62,11 +63,10 @@ function SuggestionTable({ rows, onAdd, pending, origin, existing }: { rows: Sug
       ),
       csv: (r) => kw(r),
     },
-    { key: "volume", header: "Volume", align: "right", render: (r) => compact(r.volume), info: "Monthly searches (demo data)." },
-    { key: "position", header: "Pos.", align: "right", render: (r) => r.position ?? <span className="text-text-3">–</span>, sortValue: (r) => r.position ?? 999 },
-    ...(origin === "live"
-      ? [{ key: "note", header: "Keyword source", render: (r: Suggestion) => <span className="text-[12px] text-text-3">{r.note}</span> } as Column<Suggestion>]
-      : [{ key: "traffic", header: "Traffic", align: "right", render: (r: Suggestion) => compact(r.traffic) } as Column<Suggestion>]),
+    { key: "clicks", header: "Clicks", align: "right", info: "Search Console clicks for this page and query (28 days).", render: (r) => (r.clicks == null ? <span className="text-text-3">n/a</span> : compact(r.clicks)), sortValue: (r) => r.clicks ?? -1 },
+    { key: "impressions", header: "Impr.", align: "right", info: "Search Console impressions for this page and query (28 days).", render: (r) => (r.impressions == null ? <span className="text-text-3">n/a</span> : compact(r.impressions)), sortValue: (r) => r.impressions ?? -1 },
+    { key: "position", header: "Pos.", align: "right", render: (r) => r.position ?? <span className="text-text-3">n/a</span>, sortValue: (r) => r.position ?? 999 },
+    ...(origin === "live" ? [{ key: "note", header: "Keyword source", render: (r: Suggestion) => <span className="text-[12px] text-text-3">{r.note}</span> } as Column<Suggestion>] : []),
     {
       key: "state",
       header: "",
@@ -114,7 +114,7 @@ function parseCsv(text: string) {
   return out;
 }
 
-export function TargetsManager({ projectId, domain, targets, ranking, max }: { projectId: string; domain: string; targets: TargetRow[]; ranking: Suggestion[]; max: number }) {
+export function TargetsManager({ projectId, domain, targets, gsc, max }: { projectId: string; domain: string; targets: TargetRow[]; gsc: GscSuggestions; max: number }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [result, setResult] = useState<AddResult>(null);
@@ -126,7 +126,7 @@ export function TargetsManager({ projectId, domain, targets, ranking, max }: { p
   const fileRef = useRef<HTMLInputElement>(null);
   const existing = useMemo(() => new Set(targets.map((t) => `${t.url}|${t.keyword}`)), [targets]);
 
-  const add = (pairs: { url: string; keyword: string; origin: "manual" | "csv" | "ranking" | "live" }[], after?: () => void) =>
+  const add = (pairs: { url: string; keyword: string; origin: "manual" | "csv" | "gsc" | "live" }[], after?: () => void) =>
     start(async () => {
       const clean = pairs.filter((p) => p.url.trim() || p.keyword.trim());
       if (!clean.length) return setResult({ error: "Enter at least one URL and keyword." });
@@ -160,14 +160,13 @@ export function TargetsManager({ projectId, domain, targets, ranking, max }: { p
       ),
     },
     { key: "keyword", header: "Target keyword", render: (r) => <span className="font-medium text-text">{r.keyword}</span> },
-    { key: "volume", header: "Volume", align: "right", render: (r) => compact(r.volume) },
     { key: "origin", header: "Added from", render: (r) => <Badge>{ORIGIN[r.origin] ?? r.origin}</Badge>, csv: (r) => ORIGIN[r.origin] ?? r.origin },
   ];
 
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title="Pages and target keywords" description={`${targets.length} of ${max} pairs. Each page is fetched live and compared with the top 10 for its keyword.`} />
+        <CardHeader title="Pages and target keywords" description={`${targets.length} of ${max} pairs. Each page is fetched live and checked against its target keyword.`} />
         <DataTable
           rows={targets}
           columns={targetColumns}
@@ -225,7 +224,7 @@ export function TargetsManager({ projectId, domain, targets, ranking, max }: { p
                       <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-[12.5px] text-text-2">
                         <DataSourceBadge source="crawler" fetchedAt={new Date().toISOString()} />
                         <span>
-                          {live.suggestions.length} pages found on {displayUrl(live.fetchedUrl)} · volumes are demo data
+                          {live.suggestions.length} pages found on {displayUrl(live.fetchedUrl)}{live.suggestions.some((x) => x.impressions != null) ? " · keywords matched to Search Console queries where available" : ""}
                         </span>
                       </div>
                       <SuggestionTable rows={live.suggestions} origin="live" existing={existing} pending={pending} onAdd={(p) => add(p)} />
@@ -235,15 +234,21 @@ export function TargetsManager({ projectId, domain, targets, ranking, max }: { p
               ),
             },
             {
-              id: "ranking",
-              label: "From ranking data",
+              id: "gsc",
+              label: "From Search Console",
               content: (
                 <div className="pt-3">
-                  <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-[12.5px] text-text-2">
-                    <DataSourceBadge source="demo" />
-                    <span>Top pages and their best keyword from Organic Research. Demo URLs may not exist on your live site.</span>
-                  </div>
-                  <SuggestionTable rows={ranking} origin="ranking" existing={existing} pending={pending} onAdd={(p) => add(p)} />
+                  {gsc.status === "ok" ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-[12.5px] text-text-2">
+                        <DataSourceBadge source="search-console" fetchedAt={gsc.fetchedAt} />
+                        <span>Your pages with the most clicks and each page&apos;s top query (last 28 days).</span>
+                      </div>
+                      <SuggestionTable rows={gsc.rows} origin="gsc" existing={existing} pending={pending} onAdd={(p) => add(p)} />
+                    </>
+                  ) : (
+                    <p className="px-4 pb-4 text-[13px] text-text-2">{gsc.reason}</p>
+                  )}
                 </div>
               ),
             },

@@ -315,8 +315,8 @@ function GroupPanel({ group, detail }: { group: PpcGroup; detail: CampaignDetail
       { key: "volume", header: "Volume", align: "right", sortValue: (r) => r.volume, render: (r) => (r.volume == null ? na : r.volume.toLocaleString()) },
       { key: "cpc", header: "CPC", align: "right", sortValue: (r) => r.cpc, render: (r) => (r.cpc == null ? na : money(r.cpc)) },
       { key: "competition", header: "Com.", align: "right", sortValue: (r) => r.competition, render: (r) => (r.competition == null ? na : r.competition.toFixed(2)) },
-      { key: "clicks", header: "Est. clicks", align: "right", sortValue: (r) => estimate(r, campaign.ctr).clicks, render: (r) => compact(estimate(r, campaign.ctr).clicks), csv: (r) => Math.round(estimate(r, campaign.ctr).clicks ?? 0) },
-      { key: "cost", header: "Est. cost", align: "right", sortValue: (r) => estimate(r, campaign.ctr).cost, render: (r) => money(estimate(r, campaign.ctr).cost), csv: (r) => (estimate(r, campaign.ctr).cost ?? 0).toFixed(2) },
+      { key: "clicks", header: "Est. clicks", align: "right", sortValue: (r) => estimate(r, campaign.ctr).clicks, render: (r) => compact(estimate(r, campaign.ctr).clicks), csv: (r) => { const c = estimate(r, campaign.ctr).clicks; return c == null ? "" : Math.round(c); } },
+      { key: "cost", header: "Est. cost", align: "right", sortValue: (r) => estimate(r, campaign.ctr).cost, render: (r) => money(estimate(r, campaign.ctr).cost), csv: (r) => { const c = estimate(r, campaign.ctr).cost; return c == null ? "" : c.toFixed(2); } },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [campaign.id, campaign.ctr, campaign.db],

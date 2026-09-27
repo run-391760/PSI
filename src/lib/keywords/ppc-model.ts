@@ -12,7 +12,7 @@ export type PpcKeyword = { id: string; groupId: string; keyword: string; match: 
 export type PpcNegative = { id: string; groupId: string | null; keyword: string; match: AdMatch; origin: "manual" | "cross-group" };
 export type PpcGroup = { id: string; name: string; keywords: PpcKeyword[]; negatives: PpcNegative[] };
 export type PpcCampaign = { id: string; name: string; db: string; ctr: number; created_at: string; updated_at: string };
-export type PpcCampaignSummary = PpcCampaign & { groups: number; keywords: number; volume: number };
+export type PpcCampaignSummary = PpcCampaign & { groups: number; keywords: number; volume: number | null };
 export type CampaignDetail = { campaign: PpcCampaign; groups: PpcGroup[]; campaignNegatives: PpcNegative[] };
 
 const reach = (m: AdMatch) => AD_MATCHES.find((x) => x.id === m)?.reach ?? 1;
@@ -24,23 +24,39 @@ export function estimate(k: Pick<PpcKeyword, "volume" | "cpc" | "match">, ctr: n
   return { clicks, cost };
 }
 
+/**
+ * Totals of an ad group / campaign. Volume, clicks and cost are null ("n/a") when no keyword has the
+ * metric: without a keyword data provider nothing is estimated.
+ */
 export function groupTotals(keywords: PpcKeyword[], ctr: number) {
   let volume = 0,
     clicks = 0,
     cost = 0,
     cpcSum = 0,
-    cpcN = 0;
+    cpcN = 0,
+    volN = 0,
+    costN = 0;
   for (const k of keywords) {
+    if (k.volume != null) volN++;
     volume += k.volume ?? 0;
     const e = estimate(k, ctr);
     clicks += e.clicks ?? 0;
+    if (e.cost != null) costN++;
     cost += e.cost ?? 0;
     if (k.cpc != null) {
       cpcSum += k.cpc;
       cpcN++;
     }
   }
-  return { keywords: keywords.length, volume, clicks: Math.round(clicks), cost: Math.round(cost * 100) / 100, avgCpc: cpcN ? cpcSum / cpcN : null };
+  return {
+    keywords: keywords.length,
+    volume: volN ? volume : null,
+    clicks: volN ? Math.round(clicks) : null,
+    cost: costN ? Math.round(cost * 100) / 100 : null,
+    avgCpc: cpcN ? cpcSum / cpcN : null,
+    /** Keywords with a measured volume (the rest are n/a). */
+    measured: volN,
+  };
 }
 
 const meaningful = (k: string) => [...new Set(kwTokens(k).filter((t) => !STOPWORDS.has(t) && t.length > 1).map(stem))];

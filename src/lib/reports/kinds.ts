@@ -11,6 +11,7 @@ export const JOB_MODULES: Record<string, { label: string; href: string }> = {
   monitoring: { label: "Monitoring", href: "/brand-monitoring" },
   "ai-visibility": { label: "AI Visibility", href: "/ai-visibility" },
   reports: { label: "Reports", href: "/reports" },
+  sensor: { label: "SERP Sensor", href: "/sensor" },
   core: { label: "System", href: "/activity" },
 };
 

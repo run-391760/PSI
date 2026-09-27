@@ -15,7 +15,7 @@ const fmtSize = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1
 type State = { phase: "idle" } | { phase: "uploading"; name: string; size: number; pct: number } | { phase: "analyzing"; name: string; size: number } | { phase: "error"; message: string };
 
 /** Drag-and-drop uploader: streams the raw file to the route handler with upload progress. */
-export function LogUploader() {
+export function LogUploader({ allowSample = false }: { allowSample?: boolean }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<State>({ phase: "idle" });
@@ -85,6 +85,8 @@ export function LogUploader() {
               <Button variant="primary" onClick={() => input.current?.click()}>
                 <FileUp className="h-4 w-4" /> Choose file
               </Button>
+              {allowSample && (
+                <>
               <Button
                 loading={sampling}
                 onClick={() =>
@@ -100,6 +102,8 @@ export function LogUploader() {
               <a href="/api/content/logs/sample" className={buttonClass("ghost")} download>
                 <Download className="h-4 w-4" /> Download sample file
               </a>
+                </>
+              )}
             </div>
           </>
         )}

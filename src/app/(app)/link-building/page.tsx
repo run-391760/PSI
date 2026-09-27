@@ -3,14 +3,20 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { requirePageUser } from "@/lib/auth";
-import { getLbSettings, listLinks, listPipeline, projectProspects, VERIFY_JOB, verifySchedule } from "@/lib/backlinks/link-building";
+import { getLbSettings, listLinks, listPipeline, projectProspects, prospectsAvailable, VERIFY_JOB, verifySchedule } from "@/lib/backlinks/link-building";
+import { getBlCompetitors } from "@/lib/backlinks/report";
+import { gscPairs } from "@/lib/content/real";
+import { getProjectGoogle } from "@/lib/google/data";
+import { googleConfigured } from "@/lib/google/oauth";
+import { liveEnabled } from "@/lib/providers/source";
+import type { LbProspect } from "@/lib/backlinks/types";
+import { NeedsData } from "@/components/seo/needs-data";
 import { DEFAULT_TEMPLATE, OUTREACH_LABELS, OUTREACH_STATUSES } from "@/lib/backlinks/types";
 import { query } from "@/lib/db";
 import { database } from "@/lib/domain";
 import { compact, displayUrl, timeAgo } from "@/lib/format";
 import { latestJob } from "@/lib/jobs/queue";
 import { findProject, listProjects } from "@/lib/projects";
-import { domainCompetitors, domainKeywords } from "@/lib/seo/engine";
 import { BarChart } from "@/components/charts/bar-chart";
 import { ProjectGate } from "@/components/projects/project-gate";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
@@ -20,7 +26,7 @@ import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/feedback";
+import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Metric, MetricStrip } from "@/components/ui/metric";
 import { MiniTable } from "@/components/ui/mini-table";
 import { DistributionBar } from "@/components/ui/progress";
@@ -77,15 +83,17 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
   const settings = await getLbSettings(project.id);
   const switcher = <ProjectSwitcher projects={projects.map((p) => ({ id: p.id, name: p.name, domain: p.domain }))} current={project.id} />;
 
-  const suggested = domainCompetitors(project.domain, db, 8).map((c) => c.domain);
+  // Suggestions from real sources only: DataForSEO backlink competitors and Search Console queries.
+  const suggested = liveEnabled() ? (await getBlCompetitors(user.id, project.domain).then((r) => r.data.slice(0, 8).map((c) => c.domain)).catch(() => [] as string[])) : [];
   const competitorOptions = [
     ...project.competitors.map((d) => ({ domain: d, note: "Project competitor" })),
-    ...suggested.filter((d) => !project.competitors.includes(d)).map((d) => ({ domain: d, note: "Organic competitor" })),
+    ...suggested.filter((d) => !project.competitors.includes(d)).map((d) => ({ domain: d, note: "Backlink competitor" })),
   ];
-  const keywordSuggestions = domainKeywords(project.domain, db)
-    .filter((k) => !k.branded)
-    .slice(0, 12)
-    .map((k) => k.keyword);
+  const link = googleConfigured() ? await getProjectGoogle(project.id) : null;
+  const brand = project.domain.split(".")[0];
+  const keywordSuggestions = link?.gscSite
+    ? [...new Set((await gscPairs(user.id, link.gscSite, 60).then((r) => r.data).catch(() => [])).map((p) => p.keyword).filter((k) => !k.includes(brand)))].slice(0, 12)
+    : [];
   const setupProps = {
     projectId: project.id,
     initialKeywords: settings?.keywords ?? [],
@@ -97,7 +105,12 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
   if (!settings)
     return (
       <Page className="overflow-x-clip">
-        <PageHeader breadcrumbs={BREADCRUMBS} title="Link Building Tool:" subject={project.domain} meta={<DataSourceBadge source="demo" />} actions={switcher} />
+        <PageHeader breadcrumbs={BREADCRUMBS} title="Link Building Tool:" subject={project.domain} meta={prospectsAvailable() ? <DataSourceBadge source={liveEnabled() ? "dataforseo" : "demo"} /> : undefined} actions={switcher} />
+        {!prospectsAvailable() && (
+          <NeedsData compact className="mb-4" providers={["dataforseo"]} title="Prospects need DataForSEO" shows={["Sites linking to your competitors but not to you (real backlink index)", "Sites ranking in the live top 30 for your keywords"]}>
+            <p className="mt-2 text-[12.5px] text-text-2">You can still set up the tool, run outreach and monitor links you earn — those work without it.</p>
+          </NeedsData>
+        )}
         <Grid cols={2} className="lg:grid-cols-[1.6fr_1fr]">
           <Card>
             <CardHeader title="Set up link building" description="Tell us what you want to rank for and who you compete with. We'll find sites likely to link to you." />
@@ -116,14 +129,31 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
             </CardBody>
           </Card>
         </Grid>
-        <DemoNotice className="mt-6" />
+        {!liveEnabled() && prospectsAvailable() && <DemoNotice className="mt-6" />}
       </Page>
     );
 
   const [pipeline, links, job, schedule] = await Promise.all([listPipeline(project.id), listLinks(project.id), latestJob(project.id, VERIFY_JOB), verifySchedule(project.id)]);
   const acted = new Set(pipeline.map((p) => p.domain));
-  const allProspects = projectProspects(project, settings);
-  const prospects = allProspects.filter((p) => !acted.has(p.domain));
+  let found: Awaited<ReturnType<typeof projectProspects>> = null;
+  let prospectError: string | null = null;
+  try {
+    found = await projectProspects(user.id, project, settings);
+  } catch (e) {
+    prospectError = e instanceof Error ? e.message : "Prospects could not be loaded.";
+  }
+  const prospects: LbProspect[] = (found?.prospects ?? []).filter((p) => !acted.has(p.domain));
+  const hasProspects = !!found;
+  const prospectsNeeds = (
+    <NeedsData
+      compact
+      providers={["dataforseo"]}
+      title="Connect DataForSEO to find link prospects"
+      shows={["Sites linking to your competitors but not to you", "Sites ranking in the live top 30 for your keywords", "1–5 star rating from authority, overlap and relevance"]}
+    >
+      <p className="mt-2 text-[12.5px] text-text-2">Outreach and link monitoring keep working without it.</p>
+    </NeedsData>
+  );
   const inProgress = pipeline.filter((p) => p.state === "in_progress");
   const rejected = pipeline.filter((p) => p.state === "rejected");
   const running = !!job && (job.status === "queued" || job.status === "running");
@@ -140,7 +170,13 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
         subject={project.domain}
         meta={
           <>
-            {tab === "monitor" ? <DataSourceBadge source="crawler" fetchedAt={lastCheck ?? undefined} note="Links verified by crawling the source pages" /> : <DataSourceBadge source="demo" />}
+            {tab === "monitor" ? (
+              <DataSourceBadge source="crawler" fetchedAt={lastCheck ?? undefined} note="Links verified by crawling the source pages" />
+            ) : tab === "in-progress" || !found ? (
+              <DataSourceBadge source="user" note="your outreach pipeline" />
+            ) : (
+              <DataSourceBadge source={found.source} fetchedAt={found.fetchedAt} />
+            )}
             <Badge>
               {settings.keywords.length} keyword{settings.keywords.length === 1 ? "" : "s"}
             </Badge>
@@ -160,7 +196,7 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
 
       <Card className="mb-4">
         <MetricStrip className="sm:grid-flow-row sm:grid-cols-3 lg:grid-flow-col lg:grid-cols-none">
-          <Metric label="Prospects" value={compact(prospects.length)} sub={`${prospects.filter((p) => p.rating >= 4).length} rated 4★ or more`} href={`${base}&tab=prospects`} />
+          <Metric label="Prospects" value={hasProspects ? compact(prospects.length) : "n/a"} sub={hasProspects ? `${prospects.filter((p) => p.rating >= 4).length} rated 4★ or more` : "Needs DataForSEO"} href={`${base}&tab=prospects`} />
           <Metric label="In progress" value={inProgress.length} sub={`${byStatus.to_contact} to contact`} href={`${base}&tab=in-progress`} />
           <Metric label="Emails sent" value={byStatus.sent + byStatus.replied + byStatus.acquired} sub={`${byStatus.replied + byStatus.acquired} replied`} />
           <Metric label="Links acquired" value={<span className="text-good-ink">{byStatus.acquired}</span>} sub={`${byStatus.rejected} declined`} />
@@ -173,12 +209,13 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
         className="mb-4"
         items={[
           { href: "/link-building", label: "Overview" },
-          { href: "/link-building?tab=prospects", label: "Prospects", count: prospects.length },
+          { href: "/link-building?tab=prospects", label: "Prospects", count: hasProspects ? prospects.length : undefined },
           { href: "/link-building?tab=in-progress", label: "In progress", count: inProgress.length },
           { href: "/link-building?tab=monitor", label: "Monitor", count: links.length },
         ]}
       />
 
+      {prospectError && <Callout tone="warning" className="mb-4">Prospects could not be loaded: {prospectError}</Callout>}
       {tab === "overview" && (
         <>
           <Grid cols={2} className="mb-4">
@@ -192,13 +229,18 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
                 )}
               </CardBody>
             </Card>
+            {!hasProspects ? (
+              prospectsNeeds
+            ) : (
             <Card>
               <CardHeader title="Prospects by rating" description={`${compact(prospects.length)} prospects not yet reviewed`} href={`${base}&tab=prospects`} />
               <CardBody>
                 <BarChart data={[5, 4, 3, 2, 1].map((r) => ({ rating: `${r}★`, prospects: prospects.filter((p) => p.rating === r).length }))} xKey="rating" valueLabels series={[{ key: "prospects", label: "Prospects", color: "var(--series-4)" }]} height={210} />
               </CardBody>
             </Card>
+            )}
           </Grid>
+          {hasProspects && (
           <Grid cols={2} className="mb-4 lg:grid-cols-[1.5fr_1fr]">
             <Card>
               <CardHeader title="Top prospects" description="Highest rated sites to contact next" href={`${base}&tab=prospects`} />
@@ -249,6 +291,7 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
               </CardBody>
             </Card>
           </Grid>
+          )}
           <Card>
             <CardHeader title="Monitored links" description="Latest verification results (live crawl)" href={`${base}&tab=monitor`} actions={<ButtonLink href={`${base}&tab=monitor`} size="sm" variant="ghost">Monitor <ArrowRight className="h-3.5 w-3.5" /></ButtonLink>} />
             <CardBody>
@@ -271,9 +314,10 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
         </>
       )}
 
-      {tab === "prospects" && (
+      {tab === "prospects" && !hasProspects && prospectsNeeds}
+      {tab === "prospects" && hasProspects && (
         <Card>
-          <CardHeader title="Prospects" description={`From ${settings.competitors.length} competitors' referring domains and the top 30 results for ${settings.keywords.length} keywords; excludes sites already linking to ${project.domain}.`} />
+          <CardHeader title="Prospects" description={`From ${settings.competitors.length} competitors' referring domains and the live top 30 results for ${settings.keywords.length} keywords; excludes sites already linking to ${project.domain}.`} />
           <ProspectsTable projectId={project.id} prospects={prospects} rejected={rejected} competitorCount={settings.competitors.length} db={db} domain={project.domain} />
         </Card>
       )}
@@ -301,7 +345,7 @@ export default async function LinkBuildingPage({ searchParams }: PageProps<"/lin
           </Card>
         </>
       )}
-      {tab !== "monitor" && <DemoNotice className="mt-6" />}
+      {tab !== "monitor" && found?.source === "demo" && <DemoNotice className="mt-6" />}
     </Page>
   );
 }

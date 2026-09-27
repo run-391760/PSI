@@ -1,30 +1,20 @@
 import { query } from "@/lib/db";
+import { demoAllowed } from "@/lib/data-mode";
 import { listProjects } from "@/lib/projects";
 import { clamp, hash, positionOn, round } from "@/lib/seo/engine";
-import { lastDays } from "./engine";
+import { lastDays } from "./days";
+import { personalFromRows, type PersonalScore, type RankRow } from "./volatility";
 
 /**
  * "Personal score": volatility of the user's own tracked keywords (Position Tracking), on the same
  * 0–10 scale as the SERP Sensor. Preferred basis: Position Tracking's stored daily rankings
- * (pt_rankings). Fallback when no rankings are stored yet: the tracked keywords (discovered by
- * columns) with daily positions from the demo engine's positionOn(), which Position Tracking also
- * uses in demo mode.
+ * (pt_rankings) from any real source; rows with source "demo" are ignored unless DEMO_DATA=true.
+ * The demo-engine fallback (tracked keywords with positionOn() positions) runs only when DEMO_DATA=true.
  */
 
 const state = globalThis as unknown as { synapsePersonal?: Map<string, PersonalScore | null> };
 
-export type PersonalScore = {
-  /** Where positions came from: Position Tracking's stored daily rankings, or the demo engine. */
-  basis: "rankings" | "engine";
-  source: "demo" | "dataforseo";
-  keywords: number;
-  projects: { id: string; name: string; domain: string; keywords: number }[];
-  series: { date: string; score: number }[];
-  today: number;
-  change: number;
-  avg30: number;
-  movers: { keyword: string; domain: string; from: number | null; to: number | null }[];
-};
+export type { PersonalScore };
 
 async function trackedKeywordTable() {
   const rows = await query<{ table_name: string }>(
@@ -37,9 +27,7 @@ async function trackedKeywordTable() {
   return name && /^[a-z_][a-z0-9_]*$/.test(name) ? name : null;
 }
 
-type RankRow = { project_id: string; keyword: string; device: string; day: string; pos: string | null; source: string };
-
-/** Personal score from Position Tracking's stored daily rankings (pt_rankings), when present. */
+/** Personal score from Position Tracking's stored daily rankings (pt_rankings); demo rows only when DEMO_DATA=true. */
 async function fromRankings(ownerId: string, projects: Awaited<ReturnType<typeof listProjects>>, days: number): Promise<PersonalScore | null> {
   const dates = lastDays(days + 1);
   let rows: RankRow[] = [];
@@ -49,69 +37,21 @@ async function fromRankings(ownerId: string, projects: Awaited<ReturnType<typeof
     rows = await query<RankRow>(
       `SELECT r.project_id, k.keyword, r.device, r.day, r.positions->>p.domain AS pos, r.source
          FROM pt_rankings r JOIN projects p ON p.id=r.project_id JOIN pt_keywords k ON k.id=r.keyword_id
-        WHERE p.owner_id=$1 AND r.day >= $2 ORDER BY r.day LIMIT 60000`,
-      [ownerId, dates[0]],
+        WHERE p.owner_id=$1 AND r.day >= $2 AND ($3::boolean OR r.source <> 'demo') ORDER BY r.day LIMIT 60000`,
+      [ownerId, dates[0], demoAllowed()],
     );
   } catch {
     return null;
   }
-  if (!rows.length) return null;
-  const series_: Map<string, Map<string, number | null>> = new Map();
-  for (const r of rows) {
-    const key = `${r.project_id}|${r.device}|${r.keyword}`;
-    const m = series_.get(key) ?? new Map<string, number | null>();
-    const n = r.pos == null || r.pos === "" ? null : Number(r.pos);
-    m.set(r.day, Number.isFinite(n as number) ? (n as number) : null);
-    series_.set(key, m);
-  }
-  const series = dates.slice(1).map((date, i) => {
-    let sum = 0;
-    let n = 0;
-    for (const m of series_.values()) {
-      if (!m.has(date) || !m.has(dates[i])) continue;
-      const a = m.get(dates[i]) ?? null;
-      const b = m.get(date) ?? null;
-      if (a == null && b == null) continue;
-      sum += a == null || b == null ? 12 : Math.min(20, Math.abs(a - b));
-      n++;
-    }
-    return { date, score: n ? round(clamp((sum / n) * 2.4, 0, 10), 1) : (null as unknown as number) };
-  });
-  const measured = series.filter((x) => x.score != null);
-  if (measured.length < 2) return null;
-  const today = measured[measured.length - 1];
-  const prev = measured[measured.length - 2];
-  const byProject = new Map<string, Set<string>>();
-  for (const r of rows) byProject.set(r.project_id, (byProject.get(r.project_id) ?? new Set()).add(r.keyword));
-  const lastDay = today.date;
-  const prevDay = prev.date;
-  const movers: PersonalScore["movers"] = [];
-  for (const [key, m] of series_) {
-    const [projectId, , keyword] = key.split("|");
-    const from = m.get(prevDay) ?? null;
-    const to = m.get(lastDay) ?? null;
-    if (!m.has(prevDay) || !m.has(lastDay) || from === to) continue;
-    movers.push({ keyword, domain: projects.find((p) => p.id === projectId)?.domain ?? "", from, to });
-  }
-  const size = (x: { from: number | null; to: number | null }) => (x.from == null || x.to == null ? 15 : Math.abs(x.from - x.to));
-  return {
-    basis: "rankings",
-    source: rows.every((r) => r.source === "demo") ? "demo" : "dataforseo",
-    keywords: new Set(rows.map((r) => `${r.project_id}|${r.keyword}`)).size,
-    projects: projects.filter((p) => byProject.has(p.id)).map((p) => ({ id: p.id, name: p.name, domain: p.domain, keywords: byProject.get(p.id)!.size })),
-    series: measured,
-    today: today.score,
-    change: round(today.score - prev.score, 1),
-    avg30: round(measured.reduce((s, x) => s + x.score, 0) / measured.length, 1),
-    movers: movers.sort((a, b) => size(b) - size(a)).slice(0, 5),
-  };
+  return personalFromRows(rows, dates, projects);
 }
 
 export async function personalVolatility(ownerId: string, days = 30): Promise<PersonalScore | null> {
   const projects = await listProjects(ownerId);
   if (!projects.length) return null;
   const stored = await fromRankings(ownerId, projects, days);
-  if (stored) return stored;
+  if (stored || !demoAllowed()) return stored;
+  // DEMO_DATA=true only: tracked keywords with demo-engine positions.
   let table: string | null = null;
   try {
     table = await trackedKeywordTable();

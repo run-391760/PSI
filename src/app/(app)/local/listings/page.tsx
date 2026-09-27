@@ -11,6 +11,11 @@ import { formatAddress, formatHours } from "@/lib/local/profile-schema";
 import { projectContext } from "@/lib/local/project-context";
 import { timeAgo } from "@/lib/format";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
+import { napCheck } from "@/lib/local/dfs-map";
+import { getGoogleListing, profileNap } from "@/lib/local/live";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { ProjectGate } from "@/components/projects/project-gate";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
@@ -20,7 +25,7 @@ import { Callout } from "@/components/ui/feedback";
 import { Metric, MetricStrip } from "@/components/ui/metric";
 import { Bar, DistributionBar, ScoreRing } from "@/components/ui/progress";
 import { JobProgress } from "@/components/local/job-progress";
-import { DistributeButton, EditProfileButton, ListingsTable } from "@/components/local/listings-ui";
+import { DistributeButton, EditProfileButton, GoogleListingButton, ListingsTable } from "@/components/local/listings-ui";
 import { ProfileForm } from "@/components/local/profile-form";
 
 export const metadata: Metadata = { title: "Listing Management" };
@@ -50,7 +55,7 @@ export default async function ListingsPage({ searchParams }: PageProps<"/local/l
       subject={subject}
       meta={
         <>
-          <DataSourceBadge source="demo" />
+          {demoAllowed() && <DataSourceBadge source="demo" />}
           {stored && <DataSourceBadge source="user" fetchedAt={stored.updatedAt} note="Business profile" />}
           <Badge>
             {database(project.country).flag} {database(project.country).name}
@@ -99,15 +104,134 @@ export default async function ListingsPage({ searchParams }: PageProps<"/local/l
                 </ol>
               </CardBody>
             </Card>
-            <Callout tone="warning" title="Demo data">
-              Directory APIs are not connected in this environment. Listing statuses are simulated deterministically from your profile so you can explore the workflow.
-            </Callout>
+            {demoAllowed() ? (
+              <Callout tone="warning" title="Demo data">
+                Directory APIs are not connected in this environment. Listing statuses are simulated deterministically from your profile so you can explore the workflow.
+              </Callout>
+            ) : (
+              <Callout tone="info" title="What is checked for real">
+                {liveEnabled() ? "Your Google Business Profile listing is looked up on Google (DataForSEO) and compared field by field with this profile." : "Connect DataForSEO to compare your Google listing with this profile."} Other directories need a listings partner API.
+              </Callout>
+            )}
           </div>
         </Grid>
       </Page>
     );
 
   const profile = stored.profile;
+  if (!demoAllowed()) {
+    const g = await getGoogleListing(project.id);
+    const checks = g?.listing ? napCheck(profileNap(profile), g.listing) : [];
+    const matched = checks.filter((c) => c.match === true).length;
+    const live = liveEnabled();
+    return (
+      <Page>
+        <PageHeader
+          breadcrumbs={BREADCRUMBS}
+          title="Listing Management:"
+          subject={profile.name}
+          meta={
+            <>
+              <DataSourceBadge source="user" fetchedAt={stored.updatedAt} note="Business profile" />
+              {g && <DataSourceBadge source="dataforseo" fetchedAt={g.fetchedAt} note="Google listing" />}
+              <Badge>
+                {database(project.country).flag} {database(project.country).name}
+              </Badge>
+            </>
+          }
+          actions={
+            <>
+              <ProjectSwitcher projects={switcher} current={project.id} />
+              <EditProfileButton projectId={project.id} initial={profile} />
+              {live && <GoogleListingButton projectId={project.id} label={g ? "Re-check Google" : "Check Google listing"} />}
+            </>
+          }
+        />
+        <Grid cols={2} className="mb-4 lg:grid-cols-[1fr_1.4fr]">
+          <Card>
+            <CardHeader title="Business profile" description={`Your source of truth · updated ${timeAgo(stored.updatedAt)}`} />
+            <CardBody className="space-y-2.5 text-[13px]">
+              <ProfileLine icon={<Building2 className="h-3.5 w-3.5" />} label={profile.name} />
+              <ProfileLine icon={<MapPin className="h-3.5 w-3.5" />} label={formatAddress(profile)} />
+              <ProfileLine icon={<Phone className="h-3.5 w-3.5" />} label={profile.phone || "No phone"} muted={!profile.phone} />
+              <ProfileLine icon={<Globe className="h-3.5 w-3.5" />} label={profile.website || "No website"} muted={!profile.website} />
+              <ProfileLine icon={<Tag className="h-3.5 w-3.5" />} label={[profile.primaryCategory, ...profile.categories].filter(Boolean).join(" · ") || "No category"} />
+              <ProfileLine icon={<Clock className="h-3.5 w-3.5" />} label={formatHours(profile.hours)} />
+            </CardBody>
+          </Card>
+          {!live ? (
+            <NeedsData
+              compact
+              providers={["dataforseo", "business-profile"]}
+              title="Checking your Google listing needs DataForSEO"
+              shows={["Your live Google Business Profile listing", "Name, address, phone, website and category compared with your profile", "Google rating, review count and photos"]}
+            />
+          ) : !g ? (
+            <Card>
+              <CardHeader title="Google Business Profile" description="Not checked yet" />
+              <CardBody className="text-[13px] text-text-2">
+                <p>Look up “{[profile.name, profile.city].filter(Boolean).join(" ")}” on Google and compare the listing with your profile (about $0.005 of your DataForSEO budget).</p>
+                <div className="mt-3 flex justify-start">
+                  <GoogleListingButton projectId={project.id} />
+                </div>
+              </CardBody>
+            </Card>
+          ) : !g.listing ? (
+            <Card>
+              <CardHeader title="Google Business Profile" description={`Checked ${timeAgo(g.fetchedAt)}`} />
+              <CardBody>
+                <Callout tone="warning" title="No Google listing found">
+                  Google returned no business for “{g.query}”. Check the business name and city in your profile, or create a Google Business Profile.
+                </Callout>
+              </CardBody>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader title="Google Business Profile" description={`${matched} of ${checks.filter((c) => c.match != null).length} fields match your profile · checked ${timeAgo(g.fetchedAt)}`} />
+              <CardBody>
+                <MetricStrip className="mb-3 rounded-md border border-border">
+                  <Metric label="Rating" value={g.listing.rating == null ? "n/a" : `${g.listing.rating.toFixed(1)} ★`} size="sm" />
+                  <Metric label="Reviews" value={g.listing.reviews == null ? "n/a" : g.listing.reviews.toLocaleString()} size="sm" />
+                  <Metric label="Photos" value={g.listing.photos == null ? "n/a" : g.listing.photos.toLocaleString()} size="sm" />
+                  <Metric label="Claimed" value={g.listing.claimed == null ? "n/a" : g.listing.claimed ? "Yes" : "No"} size="sm" />
+                </MetricStrip>
+                <ul className="divide-y divide-border text-[13px]">
+                  {checks.map((c) => (
+                    <li key={c.field} className="grid grid-cols-[88px_1fr_auto] items-start gap-2 py-2">
+                      <span className="text-text-3 capitalize">{c.field}</span>
+                      <span className="min-w-0 break-words">
+                        <span className="block text-text">{c.google || <span className="text-text-3">Not shown on Google</span>}</span>
+                        {c.match === false && <span className="block text-[12px] text-text-3">Profile: {c.profile || "—"}</span>}
+                      </span>
+                      <Badge tone={c.match == null ? "neutral" : c.match ? "good" : "warning"}>{c.match == null ? "Missing" : c.match ? "Match" : "Differs"}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
+        </Grid>
+        <NeedsData
+          compact
+          providers={["business-profile"]}
+          title="Other directories need a listings partner"
+          shows={["Listing status on Apple, Bing, Facebook, Yelp and local directories", "NAP consistency across the directory network", "Pushing profile updates and suppressing duplicates"]}
+          className="mb-4"
+        />
+        <p className="text-[12px] text-text-3">
+          The business profile is your own data. The Google listing is looked up live via DataForSEO; no directory statuses are simulated. See{" "}
+          <Link href={`/local/map-rank-tracker?project=${project.id}`} className="text-link hover:underline">
+            Map Rank Tracker
+          </Link>{" "}
+          and{" "}
+          <Link href={`/local/reviews?project=${project.id}`} className="text-link hover:underline">
+            Review Management
+          </Link>
+          .
+        </p>
+      </Page>
+    );
+  }
   const job = await latestJob(project.id, "local.distribute");
   const busy = !!job && (job.status === "queued" || job.status === "running");
   const view = buildListings(project, profile, await listingRows(project.id));

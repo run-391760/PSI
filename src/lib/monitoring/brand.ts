@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db";
+import { demoAllowed } from "@/lib/data-mode";
 import { tryRootDomain } from "@/lib/domain";
 import type { Project } from "@/lib/projects";
 import { searchNews } from "@/lib/providers/news";
@@ -34,7 +35,7 @@ export async function getBrandSettings(projectId: string): Promise<BrandSettings
   if (!row) return null;
   return {
     competitorTerms: row.competitor_terms,
-    demoSocial: row.demo_social,
+    demoSocial: row.demo_social && demoAllowed(),
     createdAt: new Date(row.created_at).toISOString(),
     lastRunAt: row.last_run_at ? new Date(row.last_run_at).toISOString() : null,
     lastError: row.last_error,
@@ -110,7 +111,8 @@ async function newsRows(term: string, subject: string, db: string): Promise<Row[
         publishedAt: n.publishedAt,
         sentiment: s.label,
         sentimentScore: s.score,
-        reach: reachEstimate(domain, "news"),
+        // Audience reach is not measured by any connected source: stored as 0 and shown as "n/a".
+        reach: demoAllowed() ? reachEstimate(domain, "news") : 0,
         tags: autoTags(n.title),
         dedupeKey: `${subject}|${n.link.split("?")[0]}`,
       };
@@ -181,7 +183,8 @@ export function demoSocialMentions(project: Pick<Project, "domain" | "competitor
 export async function ingestMentions(project: Project, settings: BrandSettings, onStep?: (done: number, total: number, message: string) => Promise<void>) {
   const terms = trackedTerms(project);
   const rivals = settings.competitorTerms;
-  const total = terms.length + rivals.length + (settings.demoSocial ? 1 : 0);
+  const demoSocial = settings.demoSocial && demoAllowed();
+  const total = terms.length + rivals.length + (demoSocial ? 1 : 0);
   const errors: string[] = [];
   const insertedOwn: { sentiment: Sentiment; published_at: Date | string; title: string }[] = [];
   let step = 0;
@@ -203,7 +206,7 @@ export async function ingestMentions(project: Project, settings: BrandSettings, 
     }
     step++;
   }
-  if (settings.demoSocial) {
+  if (demoSocial) {
     await onStep?.(step, total, "Adding demo social & forum mentions");
     insertedOwn.push(...(await insertMentions(project.id, demoSocialMentions(project))));
     step++;
@@ -246,7 +249,7 @@ const toMention = (r: DbMention): Mention => ({
   publishedAt: new Date(r.published_at).toISOString(),
   sentiment: r.sentiment,
   sentimentScore: Number(r.sentiment_score),
-  reach: Number(r.reach),
+  reach: demoAllowed() ? Number(r.reach) : 0,
   status: r.status,
   tags: r.tags,
 });
@@ -254,7 +257,7 @@ const toMention = (r: DbMention): Mention => ({
 export async function ownMentions(projectId: string, includeDemo: boolean, limit = 2000) {
   const rows = await query<DbMention>(
     `SELECT * FROM bm_mentions WHERE project_id=$1 AND subject='' AND ($2::boolean OR source<>'demo') ORDER BY published_at DESC LIMIT $3`,
-    [projectId, includeDemo, limit],
+    [projectId, includeDemo && demoAllowed(), limit],
   );
   return rows.map(toMention);
 }

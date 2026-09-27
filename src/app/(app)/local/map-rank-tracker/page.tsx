@@ -7,7 +7,10 @@ import { listScans, scanResults, suggestedKeywords, type KeywordResult } from "@
 import { businessLocation, getProfile } from "@/lib/local/profile";
 import { param, projectContext } from "@/lib/local/project-context";
 import { dateLabel, dateTimeLabel, timeAgo } from "@/lib/format";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DataSourceBadge } from "@/components/seo/source-badge";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { ProjectGate } from "@/components/projects/project-gate";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
@@ -51,7 +54,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
   if (!stored)
     return (
       <Page>
-        <PageHeader breadcrumbs={BREADCRUMBS} title="Map Rank Tracker:" subject={project.domain} meta={<DataSourceBadge source="demo" />} actions={<ProjectSwitcher projects={switcher} current={project.id} />} />
+        <PageHeader breadcrumbs={BREADCRUMBS} title="Map Rank Tracker:" subject={project.domain} actions={<ProjectSwitcher projects={switcher} current={project.id} />} />
         <Card>
           <EmptyState
             icon={<MapPinned className="h-5 w-5" />}
@@ -68,6 +71,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
     );
 
   const profile = stored.profile;
+  const canScan = liveEnabled() || demoAllowed();
   const location = businessLocation(profile, project.country);
   const scans = await listScans(project.id, 40);
   const running = scans.find((s) => s.status === "queued" || s.status === "running");
@@ -117,7 +121,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
         subject={profile.name}
         meta={
           <>
-            <DataSourceBadge source="demo" />
+            {current && <DataSourceBadge source={current.source === "demo" ? "demo" : "dataforseo"} fetchedAt={current.finished_at ?? undefined} note="Google Maps results" />}
             <Badge title={`${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}>
               📍 {location.basis}
               {location.approximate ? " · approx." : ""}
@@ -129,8 +133,8 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
         actions={
           <>
             <ProjectSwitcher projects={switcher} current={project.id} />
-            <ScheduleToggle projectId={project.id} enabled={!!schedule?.enabled} settings={lastSettings} />
-            <NewScanButton projectId={project.id} suggestions={suggestions} defaults={lastSettings ?? undefined} disabled={!!running} />
+            {canScan && <ScheduleToggle projectId={project.id} enabled={!!schedule?.enabled} settings={lastSettings} />}
+            {canScan && <NewScanButton projectId={project.id} suggestions={suggestions} defaults={lastSettings ?? undefined} disabled={!!running} />}
           </>
         }
       />
@@ -142,7 +146,13 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
         </Callout>
       )}
 
-      {!current ? (
+      {!current && !canScan ? (
+        <NeedsData
+          providers={["dataforseo", "business-profile"]}
+          title="Map rankings need Google Maps data (DataForSEO)"
+          shows={["Your Google Maps local-pack rank at every point of a geo-grid", "Share of local voice and average rank per keyword", "Competitors that take the 3-pack where you don't", "Weekly rescans and scan-to-scan comparison"]}
+        />
+      ) : !current ? (
         !running && (
           <Grid cols={2} className="lg:grid-cols-[1.4fr_1fr]">
             <Card>
@@ -159,9 +169,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
                   <span className="font-medium text-text">Share of local voice</span> — your weighted share of the 3-pack across the grid — and the competitors who take the pack where you don&apos;t.
                 </p>
                 <p>Rescan weekly to compare grids over time.</p>
-                <Callout tone="warning" className="mt-3">
-                  Demo simulation: this environment has no Google Maps data provider, so rankings are generated deterministically from distance, prominence and relevance.
-                </Callout>
+                <p className="mt-3 text-[12.5px] text-text-3">Each grid point is one Google Maps query via DataForSEO (about $0.002). A 5×5 grid with 3 keywords costs about $0.15.</p>
               </CardBody>
             </Card>
           </Grid>
@@ -187,7 +195,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
 
               <Grid cols={2} className="mb-4 lg:grid-cols-[1.35fr_1fr]">
                 <Card>
-                  <CardHeader title="Geo-grid heatmap" description={`Your local-pack rank for “${result.keyword}” at each point`} info="Stylised map for orientation only; points are spaced evenly around your business." />
+                  <CardHeader title="Geo-grid heatmap" description={`Your local-pack rank for “${result.keyword}” at each point`} info="Stylised map for orientation; points are spaced evenly around your business location." />
                   <CardBody>
                     <HeatmapPanel key={`${current.id}:${result.keyword}`} cells={result.cells} grid={current.grid_size} seed={seed} businessName={profile.name} />
                   </CardBody>
@@ -208,7 +216,7 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
                         </div>,
                         c.avgRank == null ? "20+" : c.avgRank.toFixed(1),
                         `${c.top3}/${m.cells}`,
-                        `${c.rating.toFixed(1)} ★`,
+                        c.rating == null ? <span key="r" className="text-text-3">n/a</span> : `${c.rating.toFixed(1)} ★`,
                       ])}
                     />
                   </CardBody>
@@ -299,9 +307,9 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
       )}
 
       <p className="text-[12px] text-text-3">
-        Rankings are <span className="font-medium text-warning-ink">Demo data</span> simulated from distance, prominence and relevance of nearby businesses; no Google Maps provider is connected. Keep your{" "}
+        Rankings are Google Maps results fetched from DataForSEO at each grid point{current?.source === "demo" ? " (this scan is a demo simulation)" : ""}. Grid points that failed are shown as not found. Keep your{" "}
         <Link href={`/local/listings?project=${project.id}`} className="text-link hover:underline">
-          listings
+          listing
         </Link>{" "}
         and{" "}
         <Link href={`/local/reviews?project=${project.id}`} className="text-link hover:underline">
@@ -309,7 +317,6 @@ export default async function MapRankTrackerPage({ searchParams }: PageProps<"/l
         </Link>{" "}
         healthy to improve prominence.
       </p>
-      <DemoNotice className="mt-2" />
     </Page>
   );
 }

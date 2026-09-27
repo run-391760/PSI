@@ -5,12 +5,17 @@ import { query } from "@/lib/db";
 import { notify } from "@/lib/jobs/queue";
 import type { JobHandler } from "@/lib/jobs/types";
 import type { Project } from "@/lib/projects";
-import { benchmark, ownPageRefDomains, ownPosition } from "./benchmark";
+import { googleConfigured } from "@/lib/google/oauth";
+import { getProjectGoogle } from "@/lib/google/data";
 import { extractPage } from "./extract";
 import { generateIdeas, keywordUse, priorityScore, type IdeaType, type StoredBenchmark } from "./ideas";
+import { gscPageData, realBenchmark, serpAvailable } from "./real";
 import { listTargets, pruneRuns, type RunSummary } from "./onpage";
 
-/** Fetch every target page for real, benchmark it against the (demo) top 10 and store ideas. */
+/**
+ * Fetch every target page for real and store ideas. Benchmarks come from real sources only: the live
+ * Google top 10 crawled for comparison (DataForSEO) and/or the project's Search Console data.
+ */
 const onpage: JobHandler = async (job, ctx) => {
   const [project] = await query<Project>("SELECT * FROM projects WHERE id=$1", [job.project_id]);
   if (!project) throw new Error("Project no longer exists.");
@@ -27,7 +32,10 @@ const onpage: JobHandler = async (job, ctx) => {
   const db = run.db;
   try {
     const targets = await listTargets(project.id);
-    const summary: RunSummary = { byType: {}, bySource: { live: 0, demo: 0 }, high: 0, fetched: 0, failed: 0 };
+    const useSerp = serpAvailable();
+    const link = googleConfigured() ? await getProjectGoogle(project.id) : null;
+    const gscSite = link?.gscSite ?? null;
+    const summary: RunSummary = { mode: [useSerp ? "serp" : null, gscSite ? "gsc" : null, "live"].filter(Boolean).join("+"), byType: {}, bySource: { live: 0, serp: 0, gsc: 0 }, high: 0, fetched: 0, failed: 0 };
     let totalIdeas = 0;
     await ctx.progress(0, targets.length, "Starting");
     for (const [i, t] of targets.entries()) {
@@ -49,26 +57,39 @@ const onpage: JobHandler = async (job, ctx) => {
       } catch (e) {
         error = e instanceof Error ? e.message : "Request failed.";
       }
-      const bench = benchmark(t.keyword, db, project.domain);
-      const own = ownPosition(t.keyword, db, project.domain);
-      const stored: StoredBenchmark = {
-        metrics: bench.metrics,
-        position: own?.position ?? null,
-        rankingUrl: own?.url ?? null,
-        ownRefDomains: ownPageRefDomains(t.url, project.domain, db),
-        avg: bench.avg,
-        rivals: bench.rivals.map(({ position, domain, url, title, words, mentions, readability, refDomains }) => ({ position, domain, url, title, words, mentions, readability, refDomains })),
-        semantic: bench.semantic,
-        related: bench.related.slice(0, 8),
-        questions: bench.questions.slice(0, 6),
-        backlinkSources: bench.backlinkSources.slice(0, 12),
-      };
-      const use = extracted ? keywordUse(extracted.facts, extracted.text, extracted.alts, t.url, t.keyword, bench.semantic) : null;
+      const stored: StoredBenchmark = { v: 2, serp: null, serpError: null, gsc: null, gscError: null };
+      if (useSerp) {
+        await ctx.progress(i, targets.length, `Benchmarking the top 10 for “${t.keyword}”`);
+        try {
+          const b = await realBenchmark(project.owner_id, t.keyword, db, project.domain);
+          stored.serp = {
+            features: b.features,
+            position: b.ownPosition,
+            rankingUrl: b.ownUrl,
+            depth: b.depth,
+            avg: b.avg,
+            rivals: b.rivals.map(({ position, domain, url, title, fetched, words, mentions, readability }) => ({ position, domain, url, title, fetched, words, mentions, readability })),
+            semantic: b.semantic,
+            related: b.related,
+            questions: b.questions,
+          };
+        } catch (e) {
+          stored.serpError = e instanceof Error ? e.message : "SERP benchmark failed.";
+        }
+      }
+      if (gscSite) {
+        try {
+          stored.gsc = await gscPageData(project.owner_id, gscSite, extracted?.facts.finalUrl ?? t.url, t.keyword);
+        } catch (e) {
+          stored.gscError = e instanceof Error ? e.message : "Search Console request failed.";
+        }
+      }
+      const use = extracted ? keywordUse(extracted.facts, extracted.text, extracted.alts, t.url, t.keyword, stored.serp?.semantic ?? []) : null;
       const ideas = generateIdeas({ url: t.url, keyword: t.keyword, domain: project.domain, facts: extracted?.facts ?? null, use, fetchError: error, fetchStatus: status, bench: stored });
-      const priority = priorityScore(bench.metrics.volume, stored.position, ideas, bench.metrics.serpFeatures);
+      const priority = priorityScore(stored, ideas);
       for (const idea of ideas) {
         summary.byType![idea.type as IdeaType] = (summary.byType![idea.type as IdeaType] ?? 0) + 1;
-        summary.bySource![idea.source]++;
+        if (idea.source !== "demo") summary.bySource![idea.source] = (summary.bySource![idea.source] ?? 0) + 1;
         if (idea.priority === "high") summary.high!++;
       }
       if (extracted) summary.fetched!++;

@@ -10,7 +10,8 @@ import { KdBadge } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
 
-export type Suggestion = { keyword: string; position: number; volume: number; kd: number };
+/** Setup suggestion: Search Console queries carry clicks/impressions (volume/KD unknown); DataForSEO/demo carry volume/KD. */
+export type Suggestion = { keyword: string; position: number | null; volume: number | null; kd: number | null; clicks?: number; impressions?: number };
 
 const norm = (s: string) => s.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 const splitTags = (s: string) =>
@@ -74,6 +75,7 @@ export function KeywordInput({
   onChange: (result: ReturnType<typeof parseKeywords>) => void;
   tagNames?: string[];
 }) {
+  const gsc = suggestions.some((s) => s.impressions != null);
   const [text, setText] = useState(initial);
   const [tags, setTags] = useState("");
   const [csvNote, setCsvNote] = useState<string | null>(null);
@@ -175,7 +177,7 @@ export function KeywordInput({
           <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
             <Sparkles className="h-3.5 w-3.5 text-brand" />
             <span className="text-[13px] font-semibold">Suggestions</span>
-            <span className="text-[11.5px] text-text-3">keywords your domain ranks for</span>
+            <span className="text-[11.5px] text-text-3">{gsc ? "your top Search Console queries · last 28 days" : "keywords your domain ranks for"}</span>
             <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter" className="ml-auto h-7 w-32 text-[12px]" aria-label="Filter suggestions" />
           </div>
           <div className="scroll-thin max-h-72 overflow-y-auto">
@@ -185,8 +187,8 @@ export function KeywordInput({
                   <th className="w-8 px-3 py-1.5" />
                   <th className="py-1.5 font-medium">Keyword</th>
                   <th className="px-2 py-1.5 text-right font-medium">Pos.</th>
-                  <th className="px-2 py-1.5 text-right font-medium">Volume</th>
-                  <th className="px-3 py-1.5 text-right font-medium">KD</th>
+                  <th className="px-2 py-1.5 text-right font-medium">{gsc ? "Clicks" : "Volume"}</th>
+                  <th className="px-3 py-1.5 text-right font-medium">{gsc ? "Impr." : "KD"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -213,11 +215,9 @@ export function KeywordInput({
                         {s.keyword}
                         {tracked.has(s.keyword) && <span className="ml-1 text-[11px] text-text-3">(tracked)</span>}
                       </td>
-                      <td className="tabular px-2 py-1.5 text-right">{s.position}</td>
-                      <td className="tabular px-2 py-1.5 text-right">{compact(s.volume)}</td>
-                      <td className="px-3 py-1.5 text-right">
-                        <KdBadge kd={s.kd} />
-                      </td>
+                      <td className="tabular px-2 py-1.5 text-right">{s.position ?? "–"}</td>
+                      <td className="tabular px-2 py-1.5 text-right">{gsc ? compact(s.clicks ?? 0) : s.volume == null ? "n/a" : compact(s.volume)}</td>
+                      <td className="tabular px-3 py-1.5 text-right">{gsc ? compact(s.impressions ?? 0) : s.kd == null ? "n/a" : <KdBadge kd={s.kd} />}</td>
                     </tr>
                   );
                 })}

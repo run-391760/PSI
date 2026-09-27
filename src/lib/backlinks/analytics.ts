@@ -351,7 +351,7 @@ export function demoCompare(domains: string[]): CompareData {
   const rdHistory = months.map((month, i) => Object.fromEntries([["month", month], ...histories.map((h, j) => [`d${j}`, h[i]?.referringDomains ?? 0])]));
   const blHistory = months.map((month, i) => Object.fromEntries([["month", month], ...histories.map((h, j) => [`d${j}`, h[i]?.backlinks ?? 0])]));
   const asBuckets = AS_BUCKETS.map((b, i) => Object.fromEntries([["label", b.label], ...entries.map((e, j) => [`d${j}`, e.asShares[i]])]));
-  const newLost = entries.map((e) => ({ label: e.domain, new: e.last30.newRd, lost: e.last30.lostRd }));
+  const newLost = entries.map((e) => ({ label: e.domain, new: e.last30?.newRd ?? 0, lost: e.last30?.lostRd ?? 0 }));
   let shared = 0;
   if (sets.length > 1) for (const d of sets[0]) if (sets.slice(1).every((s) => s.has(d))) shared++;
   return {

@@ -81,7 +81,8 @@ export type KeywordList = {
   name: string;
   db: string;
   keywords: number;
-  volume: number;
+  /** null when no keyword has a measured volume. */
+  volume: number | null;
   avgKd: number | null;
   created_at: string;
   updated_at: string;

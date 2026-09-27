@@ -20,7 +20,7 @@ export async function PagesTab({ ctx, domain: requested }: { ctx: Ctx; domain: s
         <Card>
           <div className="grid h-full grid-cols-2">
             <Metric className="border-r border-b border-border p-4" label="Ranking pages" value={ranking.length} sub={`on ${domain}${rows.length > ranking.length ? ` · ${rows.length - ranking.length} dropped out` : ""}`} />
-            <Metric className="border-b border-border p-4" label="Est. traffic" value={compact(total)} sub="visits / month" />
+            <Metric className="border-b border-border p-4" label={ctx.measured ? "Clicks" : "Est. traffic"} value={compact(total)} sub={ctx.measured ? `Search Console · last ${ctx.days.length} days` : "visits / month"} />
             <Metric className="border-r border-border p-4" label="Top page visibility" value={rows[0] ? pct(rows[0].visibility, 2) : "n/a"} sub={<span className="block truncate">{rows[0] ? displayUrl(rows[0].url).replace(/^www\./, "") : "–"}</span>} />
             <Metric className="p-4" label="Pages gaining" value={rows.filter((r) => r.visibilityDelta > 0.001).length} sub={`${rows.filter((r) => r.visibilityDelta < -0.001).length} losing visibility`} />
           </div>
@@ -34,7 +34,7 @@ export async function PagesTab({ ctx, domain: requested }: { ctx: Ctx; domain: s
       </Grid>
       <Card>
         <CardHeader title="Landing pages" description="Pages ranking for your tracked keywords on the end date, with change vs the start of the range" />
-        <PagesTable rows={rows} domains={ctx.domains} domain={domain} exportName={`pages-${domain}`} kwBase={own ? `/position-tracking?${params.toString()}` : null} />
+        <PagesTable trafficLabel={ctx.measured ? "Clicks" : "Est. traffic"} rows={rows} domains={ctx.domains} domain={domain} exportName={`pages-${domain}`} kwBase={own ? `/position-tracking?${params.toString()}` : null} />
       </Card>
     </>
   );

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requirePageUser } from "@/lib/auth";
 import { listProjects } from "@/lib/projects";
-import { findReport } from "@/lib/reports";
+import { findReport, reportAvailability } from "@/lib/reports";
 import { ReportBuilder } from "@/components/reports/report-builder";
 import { Page, PageHeader } from "@/components/shell/page";
 
@@ -16,7 +16,8 @@ export default async function EditReportPage({ params }: PageProps<"/reports/[id
   return (
     <Page>
       <PageHeader breadcrumbs={[{ label: "My Reports", href: "/reports" }, { label: report.title, href: `/reports/${report.id}` }, { label: "Edit" }]} title="Edit report" subject={report.title} />
-      <ReportBuilder projects={projects.map((p) => ({ id: p.id, name: p.name, domain: p.domain, country: p.country, competitors: p.competitors }))} initial={report} />
+      <ReportBuilder
+        available={reportAvailability()} projects={projects.map((p) => ({ id: p.id, name: p.name, domain: p.domain, country: p.country, competitors: p.competitors }))} initial={report} />
     </Page>
   );
 }

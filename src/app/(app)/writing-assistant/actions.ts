@@ -71,11 +71,11 @@ export async function duplicateDocumentAction(id: string): Promise<ActionResult<
   }
 }
 
-/** Recompute recommended keywords and targets from the top-10 benchmark (demo) for new keywords. */
+/** Recompute recommended keywords and targets from the live top 10 (DataForSEO) or Google Autocomplete. */
 export async function recommendTargetsAction(keywords: string[], db: string): Promise<ActionResult<DocSettings>> {
   try {
-    await requireUser();
-    return { ok: true, data: targetsFor(z.array(z.string().trim().min(1).max(100)).max(10).parse(keywords), db) };
+    const user = await requireUser();
+    return { ok: true, data: await targetsFor(user.id, z.array(z.string().trim().min(1).max(100)).max(10).parse(keywords), db) };
   } catch (e) {
     return fail(e);
   }

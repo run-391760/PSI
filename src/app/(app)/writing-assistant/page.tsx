@@ -85,7 +85,7 @@ export default async function WritingAssistantPage() {
             <DocList rows={docs.map((d) => ({ ...d, updated_at: new Date(d.updated_at).toISOString(), created_at: new Date(d.created_at).toISOString() }))} />
           </Card>
           <p className="mt-4 text-[12px] text-text-3">
-            Scores are computed from your text in the browser. Target lengths and recommended keywords come from the top-10 benchmark (demo data) — see the{" "}
+            Scores are computed from your text in the browser. Target lengths and recommended keywords come from the live top 10 (DataForSEO) when connected, otherwise recommended words come from Google Autocomplete — see the{" "}
             <Link href="/seo-content-template" className="text-link hover:underline">
               SEO Content Template
             </Link>

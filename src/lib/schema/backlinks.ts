@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS bl_lb_prospects (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(project_id, domain)
 );
+ALTER TABLE bl_lb_prospects ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'demo';
 CREATE TABLE IF NOT EXISTS bl_lb_links (
   id text PRIMARY KEY,
   project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

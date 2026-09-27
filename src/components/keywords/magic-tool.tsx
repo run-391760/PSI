@@ -4,6 +4,8 @@ import { Copy, ListFilter, ListPlus, Megaphone, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { compact, money } from "@/lib/format";
+import type { GscCell } from "@/lib/keywords/gsc-map";
+import { TEXT_INTENT_NOTE } from "@/lib/keywords/intent";
 import { decodeFeatures, decodeIntents, featureBit, type IdeaRow, type MatchType } from "@/lib/keywords/types";
 import { kwTokens, rowHasWord, stem, wordGroups } from "@/lib/keywords/text";
 import { INTENTS, SERP_FEATURES, type Intent, type SerpFeature } from "@/lib/seo/types";
@@ -62,6 +64,8 @@ export function MagicTool({
   total,
   truncated,
   hasAutocomplete,
+  metrics = true,
+  gsc,
 }: {
   seed: string;
   db: string;
@@ -70,6 +74,10 @@ export function MagicTool({
   total: number;
   truncated: boolean;
   hasAutocomplete: boolean;
+  /** False: no metrics provider (Autocomplete ideas only): metric filters hidden, metrics n/a, intent text-based. */
+  metrics?: boolean;
+  /** Your Search Console impressions/clicks/position per keyword (only keywords found there). */
+  gsc?: Record<string, GscCell>;
 }) {
   const router = useRouter();
   const [f, setF] = useState<Filters>(EMPTY);
@@ -131,8 +139,27 @@ export function MagicTool({
     ];
     if (match === "related")
       cols.push({ key: "rel", header: "Related %", align: "right", info: "Share of the seed keyword's Google top-10 domains that also rank for this keyword.", sortValue: (r) => r.rel ?? null, render: (r) => (r.rel == null ? <span className="text-text-3">n/a</span> : `${r.rel}%`) });
+    const na = <span className="text-text-3">n/a</span>;
+    const gscCols: Column<IdeaRow>[] = gsc
+      ? [
+          { key: "gscImpr", header: "Your impr.", align: "right", info: "Impressions of your linked sites for this query (Search Console, last 3 months).", sortValue: (r) => gsc[r.keyword]?.im ?? null, render: (r) => (gsc[r.keyword] ? compact(gsc[r.keyword].im) : na), csv: (r) => gsc[r.keyword]?.im ?? "" },
+          { key: "gscPos", header: "Your pos.", align: "right", info: "Your average position in Search Console.", sortValue: (r) => gsc[r.keyword]?.po ?? null, render: (r) => (gsc[r.keyword] ? gsc[r.keyword].po.toFixed(1) : na), csv: (r) => gsc[r.keyword]?.po ?? "" },
+        ]
+      : [];
+    if (!metrics) {
+      cols.push(
+        { key: "intent", header: "Intent (text)", info: TEXT_INTENT_NOTE, sortValue: (r) => r.i, render: (r) => (r.i ? <IntentBadges intents={decodeIntents(r.i)} /> : <span className="text-text-3">–</span>), csv: (r) => decodeIntents(r.i).map((i) => INTENT_META[i].label).join("; ") },
+        { key: "words", header: "Words", align: "right", sortValue: (r) => r.words },
+        ...gscCols,
+        { key: "volume", header: "Volume", align: "right", sortable: false, render: () => na, csv: () => "" },
+        { key: "kd", header: "KD %", align: "right", sortable: false, render: () => na, csv: () => "" },
+        { key: "cpc", header: "CPC (USD)", align: "right", sortable: false, render: () => na, csv: () => "" },
+      );
+      return cols;
+    }
+    cols.push(...gscCols);
     cols.push(
-      { key: "intent", header: "Intent", sortValue: (r) => r.i, render: (r) => <IntentBadges intents={decodeIntents(r.i)} />, csv: (r) => decodeIntents(r.i).map((i) => INTENT_META[i].label).join("; ") },
+      { key: "intent", header: metrics ? "Intent" : "Intent (text)", info: metrics ? undefined : TEXT_INTENT_NOTE, sortValue: (r) => r.i, render: (r) => <IntentBadges intents={decodeIntents(r.i)} />, csv: (r) => decodeIntents(r.i).map((i) => INTENT_META[i].label).join("; ") },
       { key: "volume", header: "Volume", align: "right", sortValue: (r) => r.volume, render: (r) => (r.volume == null ? <span className="text-text-3">n/a</span> : r.volume.toLocaleString()) },
       { key: "trend", header: "Trend", sortable: false, csvHeader: "Trend (relative, 12 months)", render: (r) => (r.t.length ? <TrendBars values={r.t} width={56} height={16} /> : <span className="text-text-3">n/a</span>), csv: (r) => r.t.join(" ") },
       { key: "kd", header: "KD %", align: "right", sortValue: (r) => r.kd, render: (r) => <KdBadge kd={r.kd} /> },
@@ -142,7 +169,7 @@ export function MagicTool({
       { key: "results", header: "Results", align: "right", sortValue: (r) => r.results, render: (r) => compact(r.results) },
     );
     return cols;
-  }, [db, match]);
+  }, [db, match, metrics, gsc]);
 
   const copy = useCallback(async (list: string[]) => {
     try {
@@ -160,14 +187,16 @@ export function MagicTool({
     <div>
       <div className="flex items-center justify-between gap-2 px-3 pb-2">
         <span className="text-[12px] font-semibold tracking-wide text-text-3 uppercase">Groups</span>
-        <Segmented
-          options={[
-            { value: "count", label: "Count" },
-            { value: "volume", label: "Volume" },
-          ]}
-          value={groupSort}
-          onChange={setGroupSort}
-        />
+        {metrics && (
+          <Segmented
+            options={[
+              { value: "count", label: "Count" },
+              { value: "volume", label: "Volume" },
+            ]}
+            value={groupSort}
+            onChange={setGroupSort}
+          />
+        )}
       </div>
       <ul className="scroll-thin max-h-[640px] overflow-y-auto px-1.5 pb-2">
         <li>
@@ -214,6 +243,7 @@ export function MagicTool({
 
       <section className="min-w-0 rounded-lg border border-border bg-surface shadow-card">
         <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3.5 pb-3">
+          {metrics && (<>
           <FilterMenu label="Volume" summary={rangeSummary(f.volume)} onClear={() => set("volume", emptyRange)}>
             {(close) => <RangePicker value={f.volume} onChange={(v) => set("volume", v)} presets={VOLUME_PRESETS} close={close} />}
           </FilterMenu>
@@ -228,6 +258,7 @@ export function MagicTool({
               />
             )}
           </FilterMenu>
+          </>)}
           <FilterMenu label="Intent" summary={f.intents.length ? f.intents.map((i) => INTENT_META[i].label).join(", ") : null} onClear={() => set("intents", [])} width="w-60">
             {() => (
               <ul className="space-y-1">
@@ -245,12 +276,15 @@ export function MagicTool({
               </ul>
             )}
           </FilterMenu>
+          {metrics && (
           <FilterMenu label="CPC (USD)" summary={rangeSummary(f.cpc, (n) => `$${n}`)} onClear={() => set("cpc", emptyRange)}>
             {(close) => <RangePicker value={f.cpc} onChange={(v) => set("cpc", v)} presets={CPC_PRESETS} step={0.01} close={close} unit="USD" />}
           </FilterMenu>
+          )}
           <FilterMenu label="Words" summary={rangeSummary(f.words)} onClear={() => set("words", emptyRange)}>
             {(close) => <RangePicker value={f.words} onChange={(v) => set("words", v)} presets={WORD_PRESETS} close={close} />}
           </FilterMenu>
+          {metrics && (
           <FilterMenu label="SERP features" summary={f.features.length ? `${f.features.length} selected` : null} onClear={() => set("features", [])} width="w-60">
             {() => (
               <ul className="scroll-thin max-h-72 space-y-0.5 overflow-y-auto">
@@ -269,6 +303,7 @@ export function MagicTool({
               </ul>
             )}
           </FilterMenu>
+          )}
           <FilterMenu label="Include" summary={f.include.trim() ? f.include.trim() : null} onClear={() => set("include", "")} width="w-72">
             {(close) => (
               <div className="space-y-2">
@@ -333,7 +368,7 @@ export function MagicTool({
             {visible.length !== rows.length && <span className="text-text-3"> of {rows.length.toLocaleString()}</span>}
           </span>
           <span className="text-text-2">
-            Total volume: <span className="tabular font-semibold text-text">{totals.vol.toLocaleString()}</span>
+            Total volume: {metrics ? <span className="tabular font-semibold text-text">{totals.vol.toLocaleString()}</span> : <span className="text-text-3">n/a</span>}
           </span>
           <span className="inline-flex items-center gap-1 text-text-2">
             Average KD:{" "}
@@ -352,6 +387,11 @@ export function MagicTool({
               From Autocomplete: <span className="tabular font-semibold text-text">{totals.ac.toLocaleString()}</span>
             </span>
           )}
+          {gsc && (
+            <span className="text-text-2">
+              On your sites: <span className="tabular font-semibold text-text">{visible.filter((r) => gsc[r.keyword]).length.toLocaleString()}</span>
+            </span>
+          )}
           {truncated && <span className="text-[12px] text-text-3">Showing the top {rows.length.toLocaleString()} of {total.toLocaleString()} by volume.</span>}
         </div>
 
@@ -360,7 +400,7 @@ export function MagicTool({
           rows={visible}
           columns={columns}
           rowKey={(r) => r.keyword}
-          defaultSort={match === "related" ? { key: "rel", dir: "desc" } : { key: "volume", dir: "desc" }}
+          defaultSort={!metrics ? undefined : match === "related" ? { key: "rel", dir: "desc" } : { key: "volume", dir: "desc" }}
           pageSize={50}
           searchable
           searchText={(r) => r.keyword}

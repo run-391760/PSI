@@ -5,25 +5,24 @@ import { notFound } from "next/navigation";
 import { currentUser, requirePageUser } from "@/lib/auth";
 import { database } from "@/lib/domain";
 import { compact, dateLabel } from "@/lib/format";
+import { demoAllowed } from "@/lib/data-mode";
+import { projectGoogle } from "@/lib/reports/google-project";
+import { dataSources, linkedGoogleProjects } from "@/lib/reports/platform";
 import { findProject, listProjects } from "@/lib/projects";
 import { projectSummaries } from "@/lib/projects/summaries";
 import { listJobRows, projectSchedules } from "@/lib/reports/platform";
 import { jobKindLabel } from "@/lib/reports/kinds";
-import { domainCompetitors, domainFacts } from "@/lib/seo/engine";
+import { domainCompetitors } from "@/lib/seo/engine";
+import { DataSourcesCard, GoogleSnapshotCard } from "@/components/dashboard/google-snapshot";
 import { AutoRefresh } from "@/components/dashboard/auto-refresh";
 import { ProjectMeta, RecentJobsCard } from "@/components/dashboard/home-widgets";
 import { JobsTable } from "@/components/dashboard/jobs-table";
 import { ToolWidget } from "@/components/dashboard/tool-widget";
-import { MONTH_RANGES, TrendChart } from "@/components/charts/trend-chart";
-import { AsBadge, DomainAvatar, DomainLink, Sparkline } from "@/components/seo/badges";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DomainAvatar, DomainLink } from "@/components/seo/badges";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
-import { Metric, MetricStrip } from "@/components/ui/metric";
-import { MiniTable } from "@/components/ui/mini-table";
-import { Bar } from "@/components/ui/progress";
 import { TabsNav } from "@/components/ui/tabs";
 import { AddCompetitorButton } from "./add-competitor";
 import { ProjectJump } from "./project-jump";
@@ -136,11 +135,9 @@ async function Overview({
   doLink: string;
 }) {
   const db = database(project.country).code;
-  const f = domainFacts(project.domain, db);
-  const history = f.history.map((h) => ({ month: h.month, organic: h.organicTraffic, keywords: h.organicKeywords }));
-  const rivals = [project.domain, ...project.competitors].map((d) => ({ d, facts: domainFacts(d, db) }));
-  const maxTraffic = Math.max(1, ...rivals.map((r) => r.facts.organicTraffic));
-  const suggestions = project.competitors.length < 10 ? domainCompetitors(project.domain, db, 8).filter((c) => !project.competitors.includes(c.domain)).slice(0, project.competitors.length ? 3 : 5) : [];
+  const [google, linked] = await Promise.all([projectGoogle(project), linkedGoogleProjects(project.owner_id)]);
+  // Competitor suggestions come from the demo engine: only in local development (DEMO_DATA=true).
+  const suggestions = demoAllowed() && project.competitors.length < 10 ? domainCompetitors(project.domain, db, 8).filter((c) => !project.competitors.includes(c.domain)).slice(0, 3) : [];
   const ready = summaries.filter((s) => s.state !== "empty").length;
 
   return (
@@ -158,53 +155,27 @@ async function Overview({
       </div>
 
       <Grid cols={2} className="mb-4 lg:grid-cols-[1.55fr_1fr]">
-        <Card>
-          <CardHeader
-            title="Domain snapshot"
-            description={`${project.domain} in ${database(db).flag} ${database(db).name}`}
-            actions={
-              <ButtonLink href={doLink} size="sm" variant="ghost">
-                Full report →
-              </ButtonLink>
-            }
-          />
-          <div className="px-4 pb-1">
-            <DataSourceBadge source="demo" />
-          </div>
-          <MetricStrip className="border-y border-border">
-            <Metric label="Authority Score" value={f.authorityScore} size="sm" href={`/backlink-analytics?q=${project.domain}`} info="Compound 0–100 score of backlink quality, organic traffic and spam signals.">
-              <Bar value={f.authorityScore} className="mt-1.5 w-24" />
-            </Metric>
-            <Metric label="Organic traffic" value={compact(f.organicTraffic)} delta={f.trafficChangePct} size="sm" href={`/organic-research?q=${project.domain}&db=${db}`}>
-              <Sparkline values={f.history.slice(-12).map((h) => h.organicTraffic)} width={96} height={22} />
-            </Metric>
-            <Metric label="Organic keywords" value={compact(f.organicKeywords)} delta={f.keywordsChangePct} size="sm" href={`/organic-research?q=${project.domain}&db=${db}`} />
-            <Metric label="Backlinks" value={compact(f.backlinks)} size="sm" sub={`${compact(f.referringDomains)} ref. domains`} href={`/backlink-analytics?q=${project.domain}`} />
-          </MetricStrip>
-          <CardBody className="pt-3">
-            <TrendChart data={history} xKey="month" series={[{ key: "organic", label: "Organic traffic" }]} ranges={MONTH_RANGES} defaultRange="1y" type="area" height={200} />
-          </CardBody>
-        </Card>
+        <GoogleSnapshotCard state={google} projectId={project.id} domain={project.domain} />
 
         <Card>
           <CardHeader title="Competitors" description={project.competitors.length ? `${project.competitors.length} tracked competitors` : "No competitors added yet"} href={`/projects/${project.id}?tab=settings`} />
           <CardBody>
-            {project.competitors.length > 0 && (
-              <MiniTable
-                columns={[{ header: "Domain" }, { header: "AS", align: "right" }, { header: "Traffic", align: "right", className: "w-32" }, { header: "Keywords", align: "right" }]}
-                rows={rivals.map(({ d, facts }) => [
-                  <span key="d" className="inline-flex max-w-[170px] items-center gap-1.5">
-                    <DomainLink domain={d} db={db} className={d === project.domain ? "font-semibold" : ""} />
-                    {d === project.domain && <Badge tone="brand" className="h-4 px-1 text-[10px]">You</Badge>}
-                  </span>,
-                  <AsBadge key="as" score={facts.authorityScore} />,
-                  <div key="t" className="flex items-center justify-end gap-2">
-                    <Bar value={facts.organicTraffic} max={maxTraffic} className="w-12" color={d === project.domain ? "var(--series-1)" : "var(--series-2)"} />
-                    <span className="tabular">{compact(facts.organicTraffic)}</span>
-                  </div>,
-                  compact(facts.organicKeywords),
-                ])}
-              />
+            {project.competitors.length > 0 ? (
+              <ul className="divide-y divide-border">
+                {[project.domain, ...project.competitors].map((d) => (
+                  <li key={d} className="flex items-center justify-between gap-2 py-1.5 text-[13px]">
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <DomainLink domain={d} db={db} className={d === project.domain ? "font-semibold" : ""} />
+                      {d === project.domain && <Badge tone="brand" className="h-4 px-1 text-[10px]">You</Badge>}
+                    </span>
+                    <Link href={`/domain-overview?q=${encodeURIComponent(d)}&db=${db}`} className="shrink-0 text-[12px] text-link hover:underline">
+                      Overview
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="py-3 text-[12.5px] text-text-3">Add the domains you compete with in the project settings. They are used by Position Tracking, Keyword Gap, AI Visibility and reports.</p>
             )}
             {suggestions.length > 0 && (
               <div className={project.competitors.length ? "mt-4 border-t border-border pt-3" : ""}>
@@ -214,9 +185,7 @@ async function Overview({
                     <li key={c.domain} className="flex items-center justify-between gap-2 text-[13px]">
                       <div className="min-w-0">
                         <DomainLink domain={c.domain} db={db} />
-                        <div className="text-[11.5px] text-text-3">
-                          {compact(c.commonKeywords)} common keywords · {Math.round(c.competitionLevel * 100)}% competition
-                        </div>
+                        <div className="text-[11.5px] text-text-3">{compact(c.commonKeywords)} common keywords · demo engine</div>
                       </div>
                       <AddCompetitorButton projectId={project.id} domain={c.domain} />
                     </li>
@@ -233,7 +202,8 @@ async function Overview({
         </Card>
       </Grid>
 
-      <Grid cols={2} className="mb-4">
+      <Grid cols={3} className="mb-4">
+        <DataSourcesCard rows={dataSources(linked)} />
         <RecentJobsCard jobs={jobs} title="Recent jobs" showProject={false} />
         <Card>
           <CardHeader title="Schedules" description="Recurring checks for this project" href={`/projects/${project.id}?tab=schedules`} />
@@ -266,7 +236,6 @@ async function Overview({
           </CardFooter>
         </Card>
       </Grid>
-      <DemoNotice className="mt-6" />
     </>
   );
 }

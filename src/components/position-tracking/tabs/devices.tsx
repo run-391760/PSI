@@ -10,7 +10,9 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { DevicesTable, TrackBothButton } from "../devices-table";
 import { Delta } from "../ui";
 
-function DeviceCard({ device, daily }: { device: Device; daily: DayAggregate[] }) {
+function DeviceCard({ device, daily, measured }: { device: Device; daily: DayAggregate[]; measured: boolean }) {
+  const clicks = daily.reduce((sum, a) => sum + (a.clicks ?? 0), 0);
+  const impressions = daily.reduce((sum, a) => sum + (a.impressions ?? 0), 0);
   const s = daily[0];
   const e = daily[daily.length - 1];
   const Icon = device === "mobile" ? Smartphone : Monitor;
@@ -37,11 +39,16 @@ function DeviceCard({ device, daily }: { device: Device; daily: DayAggregate[] }
         {e ? (
           <>
             {row("Visibility", pct(e.visibility, 2), <Delta value={s ? e.visibility - s.visibility : null} digits={2} />)}
-            {row("Estimated traffic", compact(e.traffic), <Delta value={s && s.traffic ? ((e.traffic - s.traffic) / s.traffic) * 100 : null} suffix="%" />)}
+            {measured
+              ? <>
+                  {row("Clicks (range)", compact(clicks), null)}
+                  {row("Impressions (range)", compact(impressions), null)}
+                </>
+              : row("Estimated traffic", compact(e.traffic), <Delta value={s && s.traffic ? ((e.traffic - s.traffic) / s.traffic) * 100 : null} suffix="%" />)}
             {row("Average position", e.avgPosition == null ? "n/a" : num(e.avgPosition, 1), <Delta value={s?.avgPosition != null && e.avgPosition != null ? s.avgPosition - e.avgPosition : null} />)}
             {row("Top 3", String(e.top3), <Delta value={s ? e.top3 - s.top3 : null} digits={0} />)}
             {row("Top 10", String(e.top10), <Delta value={s ? e.top10 - s.top10 : null} digits={0} />)}
-            {row("Top 100", String(e.top100), <Delta value={s ? e.top100 - s.top100 : null} digits={0} />)}
+            {row(measured ? "With impressions" : "Top 100", String(e.top100), <Delta value={s ? e.top100 - s.top100 : null} digits={0} />)}
           </>
         ) : (
           <p className="py-8 text-center text-[13px] text-text-3">No data for this device yet.</p>
@@ -85,7 +92,7 @@ export async function DevicesTab({ ctx }: { ctx: Ctx }) {
           </CardBody>
         </Card>
         {ctx.devices.map((dev) => (
-          <DeviceCard key={dev} device={dev} daily={d.daily[dev] ?? []} />
+          <DeviceCard key={dev} device={dev} daily={d.daily[dev] ?? []} measured={ctx.measured} />
         ))}
         {!d.both && (
           <Card>

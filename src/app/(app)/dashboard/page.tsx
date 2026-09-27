@@ -8,12 +8,14 @@ import { listProjects } from "@/lib/projects";
 import { projectSummaries } from "@/lib/projects/summaries";
 import { monthlySpend } from "@/lib/providers/dataforseo";
 import { liveEnabled } from "@/lib/providers/source";
-import { getPrefs, listJobRows, maxMonthlyUsd, onboardingSteps } from "@/lib/reports/platform";
-import { sensorSnapshot } from "@/lib/sensor/engine";
+import { dataSources, getPrefs, linkedGoogleProjects, listJobRows, maxMonthlyUsd, onboardingSteps } from "@/lib/reports/platform";
+import { marketOverview } from "@/lib/sensor/market";
+import { personalVolatility } from "@/lib/sensor/personal";
+import { DataSourcesCard } from "@/components/dashboard/google-snapshot";
 import { AutoRefresh } from "@/components/dashboard/auto-refresh";
 import { DismissOnboarding } from "@/components/dashboard/dismiss-onboarding";
 import { HeroSearch } from "@/components/dashboard/hero-search";
-import { OnboardingCard, ProjectCard, QuickToolsGrid, RecentJobsCard, SensorMiniCard, WelcomeBanner } from "@/components/dashboard/home-widgets";
+import { OnboardingCard, ProjectCard, QuickToolsGrid, RecentJobsCard, SensorMiniCard, type SensorMini, WelcomeBanner } from "@/components/dashboard/home-widgets";
 import { NewProjectButton } from "@/components/projects/project-form";
 import { Page } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
@@ -32,13 +34,29 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   const welcome = sp.welcome === "1";
   const projects = await listProjects(user.id);
   const shown = projects.slice(0, HOME_PROJECTS);
-  const [summaries, jobs, prefs, spend] = await Promise.all([Promise.all(projects.map((p) => projectSummaries(p))), listJobRows(user.id, { limit: 6 }), getPrefs(user.id), monthlySpend(user.id)]);
+  const primary = projects[0];
+  const sensorDb = primary ? database(primary.country).code : "US";
+  const sensorDevice = primary?.device === "mobile" ? "mobile" : "desktop";
+  const [summaries, jobs, prefs, spend, linked, personal, market] = await Promise.all([
+    Promise.all(projects.map((p) => projectSummaries(p))),
+    listJobRows(user.id, { limit: 6 }),
+    getPrefs(user.id),
+    monthlySpend(user.id),
+    linkedGoogleProjects(user.id),
+    personalVolatility(user.id).catch(() => null),
+    liveEnabled() ? marketOverview(sensorDb, sensorDevice).catch(() => null) : Promise.resolve(null),
+  ]);
+  const sensor: SensorMini = {
+    db: sensorDb,
+    device: sensorDevice,
+    marketAvailable: liveEnabled(),
+    market: market?.today ? { score: market.today.score, change: market.yesterday ? Math.round((market.today.score - market.yesterday.score) * 10) / 10 : null, series: market.series.slice(-30).map((d) => d.score), fetchedAt: market.fetchedAt } : null,
+    personal: personal ? { score: personal.today, change: personal.change, series: personal.series.slice(-30).map((d) => d.score), keywords: personal.keywords, source: personal.source } : null,
+    ptHref: primary ? `/position-tracking?project=${primary.id}` : "/position-tracking",
+  };
   const steps = await onboardingSteps(user.id, projects, summaries);
   const allDone = steps.every((s) => s.done);
   const hidden = prefs.onboardingHidden === true;
-  const primary = projects[0];
-  const sensorDb = primary ? database(primary.country).code : "US";
-  const snapshot = sensorSnapshot(sensorDb, primary?.device ?? "desktop");
   const budget = Math.min(Number(user.monthly_budget_micros) / 1e6, maxMonthlyUsd());
   const active = jobs.some((j) => j.status === "queued" || j.status === "running") || summaries.flat().some((s) => s.state === "running");
   const first = user.name.trim().split(/\s+/)[0];
@@ -113,7 +131,8 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         </section>
 
         <aside className="min-w-0 space-y-4">
-          <SensorMiniCard snapshot={snapshot} />
+          <DataSourcesCard rows={dataSources(linked)} />
+          <SensorMiniCard data={sensor} />
           <RecentJobsCard jobs={jobs} />
           <Card>
             <CardHeader title="Data usage" description="Paid API spend this month" href="/activity?tab=usage" />
@@ -128,7 +147,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
                 </>
               ) : (
                 <p className="text-[12.5px] text-text-2">
-                  No paid provider connected — every index metric is <span className="font-medium text-warning-ink">Demo data</span>.{" "}
+                  No paid provider connected, so nothing is charged. Reports that need web-scale index data show what to connect.{" "}
                   <Link href="/settings?tab=integrations" className="text-link hover:underline">
                     Connect DataForSEO
                   </Link>

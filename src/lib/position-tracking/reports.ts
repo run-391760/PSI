@@ -23,6 +23,8 @@ export type Ctx = {
   /** Keywords matching the tag filter (all when no filter). */
   selected: TrackedKeyword[];
   filtered: boolean;
+  /** Search Console campaign: real clicks/impressions, average positions of the own site only (no competitors/SERPs). */
+  measured: boolean;
 };
 
 export function parseRange(v: string | null | undefined): RangeDays {
@@ -40,7 +42,8 @@ export async function loadContext(
   const devices: Device[] = campaign.device === "both" ? ["desktop", "mobile"] : [campaign.device];
   const device = devices.includes(opts.device as Device) ? (opts.device as Device) : devices[0];
   const range = parseRange(opts.range);
-  const domains = [project.domain, ...campaign.competitors];
+  const measured = campaign.source === "search-console";
+  const domains = measured ? [project.domain] : [project.domain, ...campaign.competitors];
   const tagIds = (opts.tags ?? []).filter((t) => tags.some((x) => x.id === t));
   const selected = tagIds.length ? keywords.filter((k) => k.tags.some((t) => tagIds.includes(t.id))) : keywords;
   let days: string[] = [];
@@ -53,7 +56,7 @@ export async function loadContext(
     ]);
     days = rows.map((r) => r.day);
   }
-  return { project, campaign, keywords, tags, device, devices, range, domains, days, startDay: days[0] ?? null, endDay: days[days.length - 1] ?? null, tagIds, selected, filtered: tagIds.length > 0 };
+  return { project, campaign, keywords, tags, device, devices, range, domains, days, startDay: days[0] ?? null, endDay: days[days.length - 1] ?? null, tagIds, selected, filtered: tagIds.length > 0, measured };
 }
 
 const inDays = (days: string[]) => JSON.stringify(days);
@@ -63,7 +66,7 @@ export async function loadRows(ctx: Ctx, days: string[], device: Device = ctx.de
   if (!days.length) return [];
   const ids = new Set(ctx.selected.map((k) => k.id));
   const rows = await query<RankRow>(
-    `SELECT keyword_id, day, positions, urls, own_urls, features, owned, fs_owner FROM pt_rankings
+    `SELECT keyword_id, day, positions, urls, own_urls, features, owned, fs_owner, clicks, impressions FROM pt_rankings
      WHERE project_id=$1 AND device=$2 AND day IN (SELECT jsonb_array_elements_text($3::jsonb))`,
     [ctx.project.id, device, inDays([...new Set(days)])],
   );
@@ -72,21 +75,26 @@ export async function loadRows(ctx: Ctx, days: string[], device: Device = ctx.de
 
 /** Own-domain position per keyword per day over the range (light query for sparklines/timelines). */
 async function loadOwnSeries(ctx: Ctx, device: Device = ctx.device) {
-  if (!ctx.startDay) return new Map<string, Map<string, number | null>>();
-  const rows = await query<{ keyword_id: string; day: string; pos: number | null }>(
-    `SELECT keyword_id, day, (positions->>$4)::int AS pos FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day>=$3 ORDER BY day`,
+  const totals = new Map<string, { clicks: number; impressions: number }>();
+  if (!ctx.startDay) return { series: new Map<string, Map<string, number | null>>(), totals };
+  const rows = await query<{ keyword_id: string; day: string; pos: number | null; clicks: number | null; impressions: number | null }>(
+    `SELECT keyword_id, day, (positions->>$4)::real AS pos, clicks, impressions FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day>=$3 ORDER BY day`,
     [ctx.project.id, device, ctx.startDay, ctx.project.domain],
   );
   const out = new Map<string, Map<string, number | null>>();
   for (const r of rows) {
     const m = out.get(r.keyword_id) ?? new Map<string, number | null>();
-    m.set(r.day, r.pos);
+    m.set(r.day, r.pos == null ? null : Math.round(Number(r.pos) * 10) / 10);
     out.set(r.keyword_id, m);
+    const t = totals.get(r.keyword_id) ?? { clicks: 0, impressions: 0 };
+    t.clicks += Number(r.clicks ?? 0);
+    t.impressions += Number(r.impressions ?? 0);
+    totals.set(r.keyword_id, t);
   }
-  return out;
+  return { series: out, totals };
 }
 
-type DailyRow = { day: string; domain: string; keywords: number; ranked: number; top3: number; top10: number; top20: number; top100: number; visibility: number; traffic: number; avg_position: number | null };
+type DailyRow = { day: string; domain: string; keywords: number; ranked: number; top3: number; top10: number; top20: number; top100: number; visibility: number; traffic: number; avg_position: number | null; clicks: number | null; impressions: number | null };
 
 /** Per-domain daily aggregates over the range: precomputed unless a tag filter is active. */
 export async function loadDaily(ctx: Ctx, device: Device = ctx.device): Promise<DayAggregate[]> {
@@ -95,10 +103,10 @@ export async function loadDaily(ctx: Ctx, device: Device = ctx.device): Promise<
     const rows = await query<DailyRow>("SELECT * FROM pt_daily WHERE project_id=$1 AND device=$2 AND day>=$3 ORDER BY day", [ctx.project.id, device, ctx.startDay]);
     return rows
       .filter((r) => ctx.domains.includes(r.domain))
-      .map((r) => ({ day: r.day, domain: r.domain, keywords: r.keywords, ranked: r.ranked, top3: r.top3, top10: r.top10, top20: r.top20, top100: r.top100, visibility: Number(r.visibility), traffic: Number(r.traffic), avgPosition: r.avg_position == null ? null : Number(r.avg_position) }));
+      .map((r) => ({ day: r.day, domain: r.domain, keywords: r.keywords, ranked: r.ranked, top3: r.top3, top10: r.top10, top20: r.top20, top100: r.top100, visibility: Number(r.visibility), traffic: Number(r.traffic), avgPosition: r.avg_position == null ? null : Number(r.avg_position), clicks: r.clicks == null ? null : Number(r.clicks), impressions: r.impressions == null ? null : Number(r.impressions) }));
   }
   const ids = new Set(ctx.selected.map((k) => k.id));
-  const rows = await query<RankRow>("SELECT keyword_id, day, positions, features FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day>=$3", [ctx.project.id, device, ctx.startDay]);
+  const rows = await query<RankRow>("SELECT keyword_id, day, positions, features, clicks, impressions FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day>=$3", [ctx.project.id, device, ctx.startDay]);
   const byDay = new Map<string, RankRow[]>();
   for (const r of rows) {
     if (!ids.has(r.keyword_id)) continue;
@@ -107,14 +115,15 @@ export async function loadDaily(ctx: Ctx, device: Device = ctx.device): Promise<
     byDay.set(r.day, l);
   }
   const volumes = new Map(ctx.selected.map((k) => [k.id, k.volume]));
-  return [...byDay.keys()].sort().flatMap((day) => aggregateDay(day, byDay.get(day)!, ctx.domains, volumes));
+  return [...byDay.keys()].sort().flatMap((day) => aggregateDay(day, byDay.get(day)!, ctx.domains, volumes, { measured: ctx.measured }));
 }
 
 // ------------------------------------------------------------------------------------ Landscape
 
 export async function landscape(ctx: Ctx) {
   const daily = await loadDaily(ctx);
-  const [startRows, endRows] = await Promise.all([loadRows(ctx, ctx.startDay ? [ctx.startDay] : []), loadRows(ctx, ctx.endDay ? [ctx.endDay] : [])]);
+  const [startRows, endRows, own_] = await Promise.all([loadRows(ctx, ctx.startDay ? [ctx.startDay] : []), loadRows(ctx, ctx.endDay ? [ctx.endDay] : []), ctx.measured ? loadOwnSeries(ctx) : null]);
+  const totals = own_?.totals;
   const own = ctx.project.domain;
   const at = (domain: string, day: string | null) => (day ? (daily.find((d) => d.domain === domain && d.day === day) ?? null) : null);
   const perDomain = ctx.domains.map((domain) => ({ domain, start: at(domain, ctx.startDay), end: at(domain, ctx.endDay) }));
@@ -136,7 +145,7 @@ export async function landscape(ctx: Ctx) {
       const k = kw.get(r.keyword_id)!;
       const p = r.positions[own]!;
       const a = start.get(r.keyword_id)?.positions[own] ?? null;
-      return { id: r.keyword_id, keyword: k?.keyword ?? "", position: p, start: a, traffic: keywordTraffic(p, k?.volume, r.features), volume: k?.volume ?? null, url: r.urls[own] ?? null };
+      return { id: r.keyword_id, keyword: k?.keyword ?? "", position: p, start: a, traffic: totals ? (totals.get(r.keyword_id)?.clicks ?? 0) : keywordTraffic(p, k?.volume, r.features), volume: k?.volume ?? null, url: r.urls[own] ?? null };
     })
     .sort((a, b) => b.traffic - a.traffic || a.position - b.position)
     .slice(0, 8);
@@ -172,7 +181,7 @@ export async function landscape(ctx: Ctx) {
 
 export async function overview(ctx: Ctx): Promise<OverviewRow[]> {
   const own = ctx.project.domain;
-  const [startRows, endRows, series] = await Promise.all([loadRows(ctx, ctx.startDay ? [ctx.startDay] : []), loadRows(ctx, ctx.endDay ? [ctx.endDay] : []), loadOwnSeries(ctx)]);
+  const [startRows, endRows, { series, totals }] = await Promise.all([loadRows(ctx, ctx.startDay ? [ctx.startDay] : []), loadRows(ctx, ctx.endDay ? [ctx.endDay] : []), loadOwnSeries(ctx)]);
   const start = new Map(startRows.map((r) => [r.keyword_id, r]));
   const end = new Map(endRows.map((r) => [r.keyword_id, r]));
   return ctx.selected.map((k) => {
@@ -184,7 +193,8 @@ export async function overview(ctx: Ctx): Promise<OverviewRow[]> {
     const spark = ctx.days.map((d) => daysMap?.get(d) ?? null);
     const known = spark.filter((x): x is number => x != null);
     const competitors: OverviewRow["competitors"] = {};
-    for (const c of ctx.campaign.competitors) competitors[c] = { start: s?.positions[c] ?? null, end: e?.positions[c] ?? null };
+    if (!ctx.measured) for (const c of ctx.campaign.competitors) competitors[c] = { start: s?.positions[c] ?? null, end: e?.positions[c] ?? null };
+    const t = ctx.measured ? (totals.get(k.id) ?? { clicks: 0, impressions: 0 }) : null;
     return {
       id: k.id,
       keyword: k.keyword,
@@ -195,9 +205,12 @@ export async function overview(ctx: Ctx): Promise<OverviewRow[]> {
       kd: k.kd,
       start: a,
       end: b,
-      change: a != null && b != null ? a - b : null,
+      change: a != null && b != null ? Math.round((a - b) * 10) / 10 : null,
       visibility: keywordVisibility(b),
-      traffic: k.volume == null ? null : Math.round(keywordTraffic(b, k.volume, e?.features ?? [])),
+      traffic: t ? t.clicks : k.volume == null ? null : Math.round(keywordTraffic(b, k.volume, e?.features ?? [])),
+      clicks: t ? Math.round(t.clicks) : null,
+      impressions: t ? Math.round(t.impressions) : null,
+      ctr: t && t.impressions > 0 ? (t.clicks / t.impressions) * 100 : null,
       url: e?.urls[own] ?? null,
       features: (e?.features ?? []).filter((f) => f !== "related_searches"),
       owned: e?.owned ?? [],
@@ -211,7 +224,7 @@ export async function overview(ctx: Ctx): Promise<OverviewRow[]> {
 /** Detail for the keyword drawer: position history of every tracked domain, URLs and SERP. */
 export async function keywordDetail(projectId: string, keywordId: string, device: Device, fromDay: string) {
   const rows = await query<RankRow>(
-    "SELECT keyword_id, day, positions, urls, own_urls, features, owned, fs_owner FROM pt_rankings WHERE project_id=$1 AND keyword_id=$2 AND device=$3 AND day>=$4 ORDER BY day",
+    "SELECT keyword_id, day, positions, urls, own_urls, features, owned, fs_owner, clicks, impressions FROM pt_rankings WHERE project_id=$1 AND keyword_id=$2 AND device=$3 AND day>=$4 ORDER BY day",
     [projectId, keywordId, device, fromDay],
   );
   const [serp] = await query<{ day: string; results: { d: string; p: number; u: string }[] }>("SELECT day, results FROM pt_serps WHERE keyword_id=$1 AND device=$2", [keywordId, device]);
@@ -306,6 +319,13 @@ export async function pages(ctx: Ctx, domain: string) {
     const p = get(url);
     p.keywordsStart++;
     p.visStart += keywordVisibility(pos);
+  }
+  if (ctx.measured && ctx.startDay) {
+    // Real Search Console clicks per page over the range (from each keyword's ranking pages).
+    for (const p of map.values()) p.traffic = 0;
+    const ids = new Set(ctx.selected.map((k) => k.id));
+    const rows = await query<{ keyword_id: string; own_urls: { url: string; clicks?: number }[] }>("SELECT keyword_id, own_urls FROM pt_rankings WHERE project_id=$1 AND device=$2 AND day>=$3", [ctx.project.id, ctx.device, ctx.startDay]);
+    for (const r of rows) if (ids.has(r.keyword_id)) for (const u of r.own_urls ?? []) if (map.has(u.url)) map.get(u.url)!.traffic += Number(u.clicks ?? 0);
   }
   return [...map.values()]
     .map((p) => ({
@@ -473,10 +493,12 @@ export async function tagsReport(ctx: Ctx) {
   const all = { ...ctx, selected: ctx.keywords, filtered: false };
   const [startRows, endRows] = await Promise.all([loadRows(all, ctx.startDay ? [ctx.startDay] : []), loadRows(all, ctx.endDay ? [ctx.endDay] : [])]);
   const volumes = new Map(ctx.keywords.map((k) => [k.id, k.volume]));
+  const totals = ctx.measured ? (await loadOwnSeries(all)).totals : null;
   return ctx.tags.map((t) => {
     const ids = new Set(ctx.keywords.filter((k) => k.tags.some((x) => x.id === t.id)).map((k) => k.id));
-    const [e] = aggregateDay(ctx.endDay ?? "", endRows.filter((r) => ids.has(r.keyword_id)), [own], volumes);
-    const [s] = aggregateDay(ctx.startDay ?? "", startRows.filter((r) => ids.has(r.keyword_id)), [own], volumes);
+    const [e] = aggregateDay(ctx.endDay ?? "", endRows.filter((r) => ids.has(r.keyword_id)), [own], volumes, { measured: ctx.measured });
+    const [s] = aggregateDay(ctx.startDay ?? "", startRows.filter((r) => ids.has(r.keyword_id)), [own], volumes, { measured: ctx.measured });
+    const clicks = totals ? [...ids].reduce((sum, id) => sum + (totals.get(id)?.clicks ?? 0), 0) : null;
     return {
       id: t.id,
       name: t.name,
@@ -484,7 +506,7 @@ export async function tagsReport(ctx: Ctx) {
       visibility: e.keywords ? e.visibility : null,
       visibilityDelta: e.keywords && s.keywords ? e.visibility - s.visibility : null,
       avgPosition: e.keywords ? e.avgPosition : null,
-      traffic: e.keywords ? Math.round(e.traffic) : null,
+      traffic: clicks != null ? Math.round(clicks) : e.keywords ? Math.round(e.traffic) : null,
       top3: e.top3,
       top10: e.top10,
       createdAt: t.createdAt,

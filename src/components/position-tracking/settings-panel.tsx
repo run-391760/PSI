@@ -3,10 +3,10 @@
 import { AlertTriangle, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { deleteCampaignAction, setScheduleAction, switchToLiveAction, updateCampaignAction } from "@/app/(app)/position-tracking/actions";
+import { deleteCampaignAction, setScheduleAction, switchSourceAction, updateCampaignAction } from "@/app/(app)/position-tracking/actions";
 import { DATABASES, tryRootDomain } from "@/lib/domain";
 import { dateTimeLabel } from "@/lib/format";
-import { MAX_COMPETITORS, type DeviceMode } from "@/lib/position-tracking/types";
+import { MAX_COMPETITORS, SOURCE_INFO, type CampaignSource, type DeviceMode } from "@/lib/position-tracking/types";
 import { DomainAvatar } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -14,7 +14,7 @@ import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
 
-type CampaignProps = { db: string; location: string; device: DeviceMode; competitors: string[]; source: "demo" | "dataforseo" };
+type CampaignProps = { db: string; location: string; device: DeviceMode; competitors: string[]; source: CampaignSource };
 
 export function CampaignSettings({ projectId, domain, campaign }: { projectId: string; domain: string; campaign: CampaignProps }) {
   const router = useRouter();
@@ -165,37 +165,39 @@ export function ScheduleSettings({ projectId, schedule }: { projectId: string; s
   );
 }
 
-export function DataSourceSettings({ projectId, source, live }: { projectId: string; source: "demo" | "dataforseo"; live: boolean }) {
+const SOURCE_TEXT: Record<CampaignSource, string> = {
+  "search-console":
+    "Google Search Console: the daily average position of your own site for each exact keyword, per device, with real clicks and impressions. Days without impressions show as “no data”. Competitors and SERP features need DataForSEO.",
+  dataforseo: "Live Google SERPs (top 100) from DataForSEO, one request per keyword and device per check. Search volume and CPC come from Google Ads data.",
+  demo: "Demo data from SynapseSEO's deterministic engine (local development only).",
+};
+
+export function DataSourceSettings({ projectId, source, available }: { projectId: string; source: CampaignSource; available: CampaignSource[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const others = available.filter((s) => s !== source && s !== "demo");
+  const switchTo = (target: CampaignSource) =>
+    confirm(`Switch this campaign to ${SOURCE_INFO[target].label}? The stored history will be replaced${target === "search-console" ? " with the last 90 days from Search Console" : ""}${target === "dataforseo" ? "; each check uses paid API requests" : ""}.`) &&
+    start(async () => {
+      setError(null);
+      const res = await switchSourceAction(projectId, target);
+      if (!res.ok) setError(res.error);
+      router.refresh();
+    });
   return (
     <Card>
-      <CardHeader title="Data source" />
+      <CardHeader title="Data source" description={SOURCE_INFO[source].label} />
       <CardBody className="space-y-2 text-[13px] text-text-2">
-        {source === "dataforseo" ? (
-          <p>Live Google SERPs (top 100) from DataForSEO, one request per keyword and device per check. Search volume and CPC come from Google Ads data.</p>
-        ) : live ? (
-          <>
-            <p>This campaign uses demo data, but DataForSEO is now connected. Switching clears the demo history and starts live tracking from today.</p>
-            <Button
-              variant="primary"
-              loading={pending}
-              onClick={() =>
-                confirm("Switch to live DataForSEO data? Demo history will be deleted and each check will use paid API requests.") &&
-                start(async () => {
-                  const res = await switchToLiveAction(projectId);
-                  if (!res.ok) setError(res.error);
-                  router.refresh();
-                })
-              }
-            >
-              Switch to live data
-            </Button>
-          </>
-        ) : (
-          <p>
-            Demo data from SynapseSEO&apos;s deterministic engine. <a href="/settings" className="text-link hover:underline">Connect DataForSEO</a> to track live Google rankings.
+        <p>{SOURCE_TEXT[source]}</p>
+        {others.map((t) => (
+          <Button key={t} variant={source === "demo" ? "primary" : "secondary"} size="sm" loading={pending} onClick={() => switchTo(t)}>
+            Switch to {SOURCE_INFO[t].short} data
+          </Button>
+        ))}
+        {!others.length && source !== "dataforseo" && (
+          <p className="text-[12.5px] text-text-3">
+            <a href="/settings?tab=integrations" className="text-link hover:underline">Connect DataForSEO</a> to also track competitors and SERP features.
           </p>
         )}
         {error && <p className="text-[12px] text-critical-ink">{error}</p>}
@@ -230,5 +232,37 @@ export function DangerZone({ projectId, domain }: { projectId: string; domain: s
         {error && <p className="mt-2 text-[12px] text-critical-ink">{error}</p>}
       </CardBody>
     </Card>
+  );
+}
+
+/** Buttons that move a campaign to a real data source (used on hidden demo campaigns). */
+export function SwitchSourceButtons({ projectId, targets }: { projectId: string; targets: CampaignSource[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap gap-2">
+        {targets.map((t, i) => (
+          <Button
+            key={t}
+            size="sm"
+            variant={i === 0 ? "primary" : "secondary"}
+            loading={pending}
+            onClick={() =>
+              start(async () => {
+                setError(null);
+                const res = await switchSourceAction(projectId, t);
+                if (!res.ok) return setError(res.error);
+                router.refresh();
+              })
+            }
+          >
+            Switch to {SOURCE_INFO[t].short} data
+          </Button>
+        ))}
+      </div>
+      {error && <p className="mt-2 text-[12px] text-critical-ink">{error}</p>}
+    </div>
   );
 }

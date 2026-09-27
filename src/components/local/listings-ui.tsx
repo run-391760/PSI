@@ -3,7 +3,7 @@
 import { Check, Pencil, RefreshCw, Send, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { distributeAction } from "@/app/(app)/local/actions";
+import { distributeAction, fetchReviewsAction, refreshGoogleListingAction } from "@/app/(app)/local/actions";
 import { KIND_LABELS } from "@/lib/local/directories";
 import { FIELD_LABELS, STATUS_META, type FieldKey, type FoundListing, type ListingRow, type ListingStatus } from "@/lib/local/listing-meta";
 import type { ProfileInput } from "@/lib/local/profile-schema";
@@ -264,6 +264,59 @@ function ListingDetail({ row, expected }: { row: ListingRow; expected: FoundList
         </div>
       )}
       <p className="text-[12px] text-text-3">Demo data: SynapseSEO does not connect to directory APIs; found listings are simulated from your profile.</p>
+    </div>
+  );
+}
+
+/** Look up (or refresh) the business on Google via DataForSEO. */
+export function GoogleListingButton({ projectId, label = "Check Google listing", variant = "primary" }: { projectId: string; label?: string; variant?: "primary" | "secondary" }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant={variant}
+        loading={pending}
+        onClick={() =>
+          start(async () => {
+            setError(null);
+            const res = await refreshGoogleListingAction(projectId);
+            if (!res.ok) setError(res.error);
+            router.refresh();
+          })
+        }
+      >
+        <RefreshCw className="h-3.5 w-3.5" /> {label}
+      </Button>
+      {error && <span className="max-w-xs text-right text-[12px] text-critical-ink">{error}</span>}
+    </div>
+  );
+}
+
+/** Queue a Google reviews fetch (DataForSEO, task-based). */
+export function FetchReviewsButton({ projectId, label = "Fetch Google reviews", disabled, variant = "primary" }: { projectId: string; label?: string; disabled?: boolean; variant?: "primary" | "secondary" }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant={variant}
+        loading={pending}
+        disabled={disabled}
+        onClick={() =>
+          start(async () => {
+            setError(null);
+            const res = await fetchReviewsAction(projectId);
+            if (!res.ok) setError(res.error);
+            router.refresh();
+          })
+        }
+      >
+        <RefreshCw className="h-3.5 w-3.5" /> {label}
+      </Button>
+      {error && <span className="max-w-xs text-right text-[12px] text-critical-ink">{error}</span>}
     </div>
   );
 }

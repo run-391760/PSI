@@ -3,7 +3,14 @@ import type { Intent, SerpFeature } from "@/lib/seo/types";
 
 export type Device = "desktop" | "mobile";
 export type DeviceMode = Device | "both";
-export type CampaignSource = "demo" | "dataforseo";
+export type CampaignSource = "demo" | "dataforseo" | "search-console";
+export const SOURCE_INFO: Record<CampaignSource, { label: string; short: string }> = {
+  "search-console": { label: "Google Search Console", short: "Search Console" },
+  dataforseo: { label: "Live Google SERPs (DataForSEO)", short: "DataForSEO" },
+  demo: { label: "Demo engine", short: "Demo data" },
+};
+/** Search Console only reports the user's own site: no competitors, SERP features or live SERPs. */
+export const measuresCompetitors = (source: CampaignSource) => source !== "search-console";
 
 /** Job kind of the rank check (registered in jobs.ts). */
 export const CHECK_JOB = "position-tracking.check";
@@ -58,8 +65,12 @@ export type DayAggregate = {
   top20: number;
   top100: number;
   visibility: number;
+  /** Estimated monthly visits (volume × CTR model) — or real daily clicks for Search Console campaigns. */
   traffic: number;
   avgPosition: number | null;
+  /** Real Search Console clicks / impressions that day (null for SERP-based sources). */
+  clicks: number | null;
+  impressions: number | null;
 };
 
 // ------------------------------------------------------------------------------------ Alerts
@@ -125,6 +136,10 @@ export type OverviewRow = {
   /** Keyword visibility 0..100 on the end day (CTR(pos)/CTR(1)). */
   visibility: number;
   traffic: number | null;
+  /** Search Console totals over the range (null for SERP-based sources). */
+  clicks: number | null;
+  impressions: number | null;
+  ctr: number | null;
   url: string | null;
   features: SerpFeature[];
   owned: SerpFeature[];

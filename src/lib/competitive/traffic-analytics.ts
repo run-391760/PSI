@@ -1,5 +1,7 @@
 import { CHANNEL_LABELS, domainEntity, domainFacts, domainSubdomains, memo, round, trafficFacts, type TrafficChannel, type TrafficFacts } from "@/lib/seo/engine";
 import { demo, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
+import { AppError } from "@/lib/domain";
 import { changePct, demoDelta } from "./shared";
 
 export const CHANNEL_ORDER: TrafficChannel[] = ["direct", "organic", "paid", "referral", "social", "email", "ai"];
@@ -59,10 +61,12 @@ const build = memo((domain: string): TrafficReport => {
 }, 100);
 
 export async function getTrafficReport(domain: string): Promise<Sourced<TrafficReport>> {
+  if (!demoAllowed()) throw new AppError("Third-party traffic needs a clickstream provider.", 409);
   return demo(build(domain), NOTE);
 }
 
 export async function getTrafficCompare(domains: string[]): Promise<Sourced<TrafficReport[]>> {
+  if (!demoAllowed()) throw new AppError("Third-party traffic needs a clickstream provider.", 409);
   return demo(domains.map((d) => build(d)), NOTE);
 }
 

@@ -4,12 +4,17 @@ import { requirePageUser } from "@/lib/auth";
 import { database } from "@/lib/domain";
 import { timeAgo } from "@/lib/format";
 import { findProject, listProjects } from "@/lib/projects";
-import { liveEnabled } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
 import { domainCompetitors, domainKeywords } from "@/lib/seo/engine";
+import { gscSuggestions, linkedGscSite } from "@/lib/position-tracking/gsc";
 import { loadContext } from "@/lib/position-tracking/reports";
 import { activeCheck, checkSchedule, lastCheck } from "@/lib/position-tracking/run";
-import { campaignsByOwner, getCampaign, listKeywords, listTags } from "@/lib/position-tracking/store";
-import { MAX_KEYWORDS } from "@/lib/position-tracking/types";
+import { availableSources, campaignsByOwner, getCampaign, listKeywords, listTags } from "@/lib/position-tracking/store";
+import { MAX_KEYWORDS, type CampaignSource } from "@/lib/position-tracking/types";
+import type { Suggestion } from "@/components/position-tracking/keyword-input";
+import { SwitchSourceButtons } from "@/components/position-tracking/settings-panel";
+import { NeedsData } from "@/components/seo/needs-data";
+import { ButtonLink } from "@/components/ui/button";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
 import { Page, PageHeader } from "@/components/shell/page";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
@@ -66,7 +71,6 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
   const project = await findProject(user.id, str("project"));
   const imported = parseImport(str("import"));
   const crumbs = [{ label: "Keyword research" }, { label: "Position Tracking", href: "/position-tracking" }];
-  const live = liveEnabled();
 
   if (!project) {
     const status = await campaignsByOwner(user.id);
@@ -90,12 +94,33 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
   const campaign = await getCampaign(project.id);
 
   if (!campaign) {
-    const suggestions = live
-      ? []
-      : domainKeywords(project.domain, project.country)
-          .slice(0, 150)
-          .map((k) => ({ keyword: k.keyword, position: k.position, volume: k.metrics.volume, kd: k.metrics.kd }));
-    const suggestedCompetitors = live ? [] : domainCompetitors(project.domain, project.country, 8).map((c) => c.domain);
+    const sources = await availableSources(project.id);
+    if (!sources.length)
+      return (
+        <Page>
+          <PageHeader breadcrumbs={[...crumbs, { label: project.name }]} title="Set up Position Tracking:" subject={project.domain} description="Track daily Google rankings for your keywords." actions={switcher} />
+          <NeedsData
+            providers={["google", "dataforseo"]}
+            title="Link Search Console or connect DataForSEO to track rankings"
+            shows={["Daily position of every tracked keyword, per device", "Real clicks, impressions and CTR (Search Console)", "Ranking pages and cannibalization", "Competitors, SERP features and search volume (DataForSEO)", "Alerts when positions change"]}
+          >
+            <div className="mt-3">
+              <ButtonLink href={`/organic-traffic-insights?project=${project.id}`} size="sm" variant="primary">
+                Link Search Console for {project.domain}
+              </ButtonLink>
+            </div>
+          </NeedsData>
+        </Page>
+      );
+    const site = sources[0] === "search-console" ? await linkedGscSite(project.id) : null;
+    const suggestions: Suggestion[] = site
+      ? await gscSuggestions(user.id, site, project.country).catch(() => [])
+      : sources[0] === "demo"
+        ? domainKeywords(project.domain, project.country)
+            .slice(0, 150)
+            .map((k) => ({ keyword: k.keyword, position: k.position, volume: k.metrics.volume, kd: k.metrics.kd }))
+        : [];
+    const suggestedCompetitors = sources[0] === "demo" ? domainCompetitors(project.domain, project.country, 8).map((c) => c.domain) : [];
     return (
       <Page>
         <PageHeader
@@ -103,7 +128,7 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
           title="Set up Position Tracking:"
           subject={project.domain}
           description="Choose where to track, who to compare against and which keywords matter. Rankings are then checked every day."
-          meta={<DataSourceBadge source={live ? "dataforseo" : "demo"} />}
+          meta={<DataSourceBadge source={sources[0]} />}
           actions={switcher}
         />
         <SetupWizard
@@ -112,9 +137,37 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
           suggestedCompetitors={suggestedCompetitors}
           suggestions={suggestions}
           prefill={imported}
-          live={live}
+          sources={sources}
         />
-        {!live && <DemoNotice className="mt-6" />}
+        {sources[0] === "demo" && <DemoNotice className="mt-6" />}
+      </Page>
+    );
+  }
+
+  // Demo campaigns are hidden unless DEMO_DATA=true: offer to re-collect from a real source instead.
+  if (campaign.source === "demo" && !demoAllowed()) {
+    const targets = (await availableSources(project.id)).filter((s): s is Exclude<CampaignSource, "demo"> => s !== "demo");
+    return (
+      <Page>
+        <PageHeader breadcrumbs={[...crumbs, { label: project.name }]} title="Position Tracking:" subject={project.domain} actions={switcher} />
+        {targets.length ? (
+          <Card className="p-5">
+            <h2 className="text-[15px] font-semibold text-text">This campaign contains demo data</h2>
+            <p className="mt-1 max-w-2xl text-[13px] text-text-2">
+              It was created with synthetic rankings, which are no longer shown. Your keywords, tags and alert rules are kept. Switch to a real source to re-collect the history
+              {targets[0] === "search-console" ? " (the last 90 days from Search Console)" : ""}.
+            </p>
+            <SwitchSourceButtons projectId={project.id} targets={targets} />
+          </Card>
+        ) : (
+          <NeedsData providers={["google", "dataforseo"]} title="This campaign contains demo data — link a real source to see rankings" shows={["Your keywords, tags and alert rules are kept", "Search Console backfills 90 days of real positions, clicks and impressions", "DataForSEO tracks live SERPs, competitors and SERP features"]}>
+            <div className="mt-3">
+              <ButtonLink href={`/organic-traffic-insights?project=${project.id}`} size="sm" variant="primary">
+                Link Search Console for {project.domain}
+              </ButtonLink>
+            </div>
+          </NeedsData>
+        )}
       </Page>
     );
   }
@@ -133,8 +186,10 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
   if (str("device")) params.set("device", str("device")!);
   if (str("tags")) params.set("tags", str("tags")!);
   const base = `/position-tracking?${params.toString()}`;
-  const addSuggestions =
-    campaign.source === "demo"
+  const gscSite = campaign.source === "search-console" ? await linkedGscSite(project.id) : null;
+  const addSuggestions: Suggestion[] = gscSite
+    ? await gscSuggestions(user.id, gscSite, campaign.db).catch(() => [])
+    : campaign.source === "demo"
       ? domainKeywords(project.domain, campaign.db)
           .slice(0, 150)
           .map((k) => ({ keyword: k.keyword, position: k.position, volume: k.metrics.volume, kd: k.metrics.kd }))
@@ -150,7 +205,7 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
         subject={project.domain}
         meta={
           <>
-            <DataSourceBadge source={campaign.source} fetchedAt={campaign.lastCheckAt ?? undefined} />
+            <DataSourceBadge source={campaign.source} fetchedAt={campaign.lastCheckAt ?? undefined} note={ctx.measured ? "average positions of your own site" : undefined} />
             <Badge>
               {db.flag} {db.name} · Google
             </Badge>
@@ -188,6 +243,11 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
         }
       />
 
+      {ctx.measured && (
+        <p className="-mt-2 mb-3 text-[12.5px] text-text-3">
+          Positions are Search Console daily averages for {project.domain}{gscSite ? ` (${gscSite})` : ""}, {database(campaign.db).name} searches only; “–” means no impressions that day. Latest data: {campaign.lastDay ?? "pending"} (Search Console lags 2–3 days).
+        </p>
+      )}
       {job && <CheckProgress projectId={project.id} job={{ id: job.id, status: job.status, progress: job.progress, total: job.total, message: job.message }} />}
       {!job && last?.status === "failed" && (
         <Callout tone="critical" className="mb-4" title="The last rank check failed" action={<UpdateNowButton projectId={project.id} />}>
@@ -230,7 +290,7 @@ export default async function PositionTrackingPage({ searchParams }: PageProps<"
           {tab === "features" && <FeaturesTab ctx={ctx} base={base} />}
           {tab === "devices" && <DevicesTab ctx={ctx} />}
           {tab === "tags" && <TagsTab ctx={ctx} base={base} />}
-          {tab === "settings" && <SettingsTab ctx={ctx} ownerId={user.id} schedule={schedule ? { cadence: schedule.cadence, enabled: schedule.enabled, nextRunAt: new Date(schedule.next_run_at).toISOString() } : null} live={live} />}
+          {tab === "settings" && <SettingsTab ctx={ctx} ownerId={user.id} schedule={schedule ? { cadence: schedule.cadence, enabled: schedule.enabled, nextRunAt: new Date(schedule.next_run_at).toISOString() } : null} />}
         </>
       )}
       {campaign.source === "demo" && <DemoNotice className="mt-6" />}

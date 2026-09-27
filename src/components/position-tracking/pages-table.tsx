@@ -44,7 +44,7 @@ export function DomainSelect({ domains, value, param = "domain" }: { domains: st
   );
 }
 
-export function PagesTable({ rows, domains, domain, exportName, kwBase }: { rows: PageRow[]; domains: string[]; domain: string; exportName: string; kwBase: string | null }) {
+export function PagesTable({ rows, domains, domain, exportName, kwBase, trafficLabel = "Est. traffic" }: { rows: PageRow[]; domains: string[]; domain: string; exportName: string; kwBase: string | null; trafficLabel?: string }) {
   return (
     <DataTable
       rows={rows}
@@ -71,7 +71,7 @@ export function PagesTable({ rows, domains, domain, exportName, kwBase }: { rows
         { key: "keywordsDelta", header: "Change", align: "right", render: (r) => <Delta value={r.keywordsDelta} digits={0} /> },
         { key: "visibility", header: "Visibility", align: "right", info: "Share of the campaign's visibility contributed by this page.", render: (r) => pct(r.visibility, 2), csv: (r) => r.visibility.toFixed(2) },
         { key: "visibilityDelta", header: "Vis. change", align: "right", render: (r) => <Delta value={r.visibilityDelta} digits={2} />, csv: (r) => r.visibilityDelta.toFixed(2) },
-        { key: "traffic", header: "Est. traffic", align: "right", render: (r) => compact(r.traffic) },
+        { key: "traffic", header: trafficLabel, align: "right", render: (r) => compact(r.traffic) },
         { key: "avgPosition", header: "Avg. position", align: "right", render: (r) => (r.avgPosition == null ? "n/a" : num(r.avgPosition, 1)), csv: (r) => r.avgPosition?.toFixed(1) },
         { key: "top10", header: "Top 10", align: "right" },
         {

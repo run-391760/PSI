@@ -24,9 +24,11 @@ const rdColumns: Column<RefDomainRow>[] = [
     render: (r) => (
       <div className="min-w-[200px]">
         <BlDomainLink domain={r.domain} />
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-text-3">
-          <span className="truncate">{r.category || "Uncategorized"}</span>
-        </div>
+        {r.category && (
+          <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-text-3">
+            <span className="truncate">{r.category}</span>
+          </div>
+        )}
       </div>
     ),
   },

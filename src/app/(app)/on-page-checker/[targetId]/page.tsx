@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { requirePageUser } from "@/lib/auth";
-import { IDEA_TYPES, priorityScore } from "@/lib/content/ideas";
+import { IDEA_TYPES, benchDemand, isRealBenchmark, priorityScore } from "@/lib/content/ideas";
 import { doneIdeas, latestRun, listTargets, resultFor } from "@/lib/content/onpage";
 import { fleschLabel } from "@/lib/content/text";
 import { database } from "@/lib/domain";
@@ -11,8 +11,8 @@ import { compact, dateTimeLabel, displayUrl, num } from "@/lib/format";
 import { findProject } from "@/lib/projects";
 import { IdeaList } from "@/components/content/onpage/idea-list";
 import { RunButton } from "@/components/content/onpage/run-button";
-import { DomainLink, IntentBadges, KdBadge, KeywordLink, SerpFeatureIcons } from "@/components/seo/badges";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DomainLink, KeywordLink, SerpFeatureIcons } from "@/components/seo/badges";
+import { DataSourceBadge } from "@/components/seo/source-badge";
 import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -64,7 +64,8 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
         <>
           <Badge tone="brand">Keyword: {target.keyword}</Badge>
           {result?.page && <DataSourceBadge source="crawler" fetchedAt={run?.finished_at ?? undefined} note="page facts" />}
-          <DataSourceBadge source="demo" />
+          {isRealBenchmark(result?.benchmark) && result.benchmark.serp && <DataSourceBadge source="dataforseo" note="live top 10" />}
+          {isRealBenchmark(result?.benchmark) && result.benchmark.gsc && <DataSourceBadge source="search-console" note="last 28 days" />}
           <Badge>
             {database(db).flag} {database(db).name}
           </Badge>
@@ -83,7 +84,7 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
     />
   );
 
-  if (!result)
+  if (!result || !isRealBenchmark(result.benchmark))
     return (
       <Page>
         {header}
@@ -94,25 +95,31 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
     );
 
   const b = result.benchmark;
+  const serp = b.serp;
+  const avg = serp?.avg ?? null;
+  const gsc = b.gsc;
   const f = result.page;
   const kw = f?.kw ?? null;
   const doneSet = done.get(targetId) ?? new Set<string>();
   const open = result.ideas.filter((i) => !doneSet.has(i.id));
-  const priority = priorityScore(b.metrics.volume, b.position, open, b.metrics.serpFeatures);
+  const priority = priorityScore(b, open);
+  const demand = benchDemand(b);
   const types = IDEA_TYPES.filter((t) => result.ideas.some((i) => i.type === t.id));
+  const kwQuery = gsc?.queries.find((q) => q.query.toLowerCase() === target.keyword.toLowerCase()) ?? null;
 
-  const compare: { label: string; you: ReactNode; rivals: ReactNode; ok: boolean | null; demoYou?: boolean }[] = [
-    { label: "Words (main content)", you: f ? num(f.words) : "n/a", rivals: `${num(b.avg.words)} (${num(b.avg.wordsRange[0])}–${num(b.avg.wordsRange[1])})`, ok: f ? f.words >= b.avg.words * 0.8 : null },
-    { label: "Keyword mentions", you: kw ? kw.mentions : "n/a", rivals: b.avg.mentions, ok: kw ? kw.mentions >= b.avg.mentions * 0.5 && kw.density <= 3 : null },
-    { label: "Readability (Flesch)", you: f?.flesch != null ? Math.round(f.flesch) : "n/a", rivals: b.avg.readability, ok: f?.flesch != null ? f.flesch >= b.avg.readability - 10 : null },
-    { label: "H2 sections", you: f ? f.h2s.length : "n/a", rivals: b.avg.h2, ok: f ? f.h2s.length >= Math.max(2, b.avg.h2 - 2) : null },
-    { label: "Images", you: f ? f.images : "n/a", rivals: b.avg.images, ok: f ? f.images >= b.avg.images * 0.4 || b.avg.images < 3 : null },
-    { label: "Referring domains", you: compact(b.ownRefDomains), rivals: compact(b.avg.refDomains), ok: b.ownRefDomains >= b.avg.refDomains * 0.5, demoYou: true },
-    { label: "Keyword in title", you: <YesNo value={kw?.inTitle} />, rivals: `${b.avg.titleKw}% of rivals`, ok: kw ? kw.inTitle : null },
-    { label: "Keyword in H1", you: <YesNo value={kw?.inH1} />, rivals: `${b.avg.h1Kw}% of rivals`, ok: kw ? kw.inH1 : null },
-    { label: "Keyword in meta description", you: <YesNo value={kw?.inMeta} />, rivals: `${b.avg.metaKw}% of rivals`, ok: kw ? kw.inMeta : null },
-    { label: "Video", you: <YesNo value={f?.hasVideo} />, rivals: `${b.avg.video}% of rivals`, ok: f ? f.hasVideo || b.avg.video < 40 : null },
-  ];
+  const compare: { label: string; you: ReactNode; rivals: ReactNode; ok: boolean | null }[] = avg
+    ? [
+        { label: "Words (main content)", you: f ? num(f.words) : "n/a", rivals: `${num(avg.words)} (${num(avg.wordsRange[0])}–${num(avg.wordsRange[1])})`, ok: f ? f.words >= avg.words * 0.8 : null },
+        { label: "Keyword mentions", you: kw ? kw.mentions : "n/a", rivals: avg.mentions, ok: kw ? kw.mentions >= avg.mentions * 0.5 && kw.density <= 3 : null },
+        { label: "Readability (Flesch)", you: f?.flesch != null ? Math.round(f.flesch) : "n/a", rivals: avg.readability ?? "n/a", ok: f?.flesch != null && avg.readability != null ? f.flesch >= avg.readability - 10 : null },
+        { label: "H2 sections", you: f ? f.h2s.length : "n/a", rivals: avg.h2, ok: f ? f.h2s.length >= Math.max(2, avg.h2 - 2) : null },
+        { label: "Images", you: f ? f.images : "n/a", rivals: avg.images, ok: f ? f.images >= avg.images * 0.4 || avg.images < 3 : null },
+        { label: "Keyword in title", you: <YesNo value={kw?.inTitle} />, rivals: `${avg.titleKw}% of pages`, ok: kw ? kw.inTitle : null },
+        { label: "Keyword in H1", you: <YesNo value={kw?.inH1} />, rivals: `${avg.h1Kw}% of pages`, ok: kw ? kw.inH1 : null },
+        { label: "Keyword in meta description", you: <YesNo value={kw?.inMeta} />, rivals: `${avg.metaKw}% of pages`, ok: kw ? kw.inMeta : null },
+        { label: "Video", you: <YesNo value={f?.hasVideo} />, rivals: `${avg.video}% of pages`, ok: f ? f.hasVideo || avg.video < 40 : null },
+      ]
+    : [];
   const semUsed = new Set(kw?.semanticUsed ?? []);
 
   return (
@@ -120,16 +127,20 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
       {header}
       {!f && (
         <Callout tone="critical" className="mb-4" title={result.fetch_status ? `The page returned HTTP ${result.fetch_status}` : "The page could not be fetched"}>
-          {result.fetch_error && !/^HTTP \d+$/.test(result.fetch_error) ? `${result.fetch_error.replace(/\.?$/, ".")} ` : ""}Content, technical and user-experience ideas need a reachable HTML page; strategy, SERP, semantic and backlink ideas are still shown.
+          {result.fetch_error && !/^HTTP \d+$/.test(result.fetch_error) ? `${result.fetch_error.replace(/\.?$/, ".")} ` : ""}Content, technical and user-experience ideas need a reachable HTML page; Search Console and top-10 ideas are still shown.
         </Callout>
       )}
       <Card className="mb-4">
         <MetricStrip>
           <Metric label="Priority" value={priority} info="0–100: traffic you could gain by reaching the top 3, plus the weight of open high-priority ideas." sub={<Bar value={priority} className="mt-1 w-24" color={priority >= 70 ? "var(--critical)" : priority >= 45 ? "var(--serious)" : priority >= 25 ? "var(--warning)" : "var(--good)"} />} />
           <Metric label="Open ideas" value={open.length} sub={`${open.filter((i) => i.priority === "high").length} high priority · ${result.ideas.length - open.length} done`} />
-          <Metric label="Search volume" value={compact(b.metrics.volume)} sub={<span className="inline-flex items-center gap-2">KD <KdBadge kd={b.metrics.kd} /> <IntentBadges intents={b.metrics.intents} /></span>} />
-          <Metric label="Your position" value={b.position ? `#${b.position}` : ">100"} sub={b.rankingUrl ? <span className="block max-w-56 truncate" title={b.rankingUrl}>{displayUrl(b.rankingUrl)}</span> : "Not ranking"} />
-          <Metric label="Readability" value={f?.flesch != null ? Math.round(f.flesch) : "n/a"} sub={f?.flesch != null ? `${fleschLabel(f.flesch).label} · rivals ${b.avg.readability}` : "Page not fetched"} />
+          <Metric label="Impressions (28d)" value={demand.impressions == null ? "n/a" : compact(demand.impressions)} sub={gsc ? (kwQuery ? `${compact(kwQuery.impressions)} for “${target.keyword}”` : `None for “${target.keyword}”`) : "Link Search Console"} info="Search Console impressions of this page in the last 28 days." />
+          <Metric
+            label={gsc ? "Avg. position (page)" : "Your position"}
+            value={gsc ? (gsc.page ? gsc.page.position : "n/a") : serp ? (serp.position ? `#${serp.position}` : `>${serp.depth}`) : "n/a"}
+            sub={gsc ? (kwQuery ? `#${kwQuery.position} for the keyword` : "Keyword not in its queries") : serp?.rankingUrl ? <span className="block max-w-56 truncate" title={serp.rankingUrl}>{displayUrl(serp.rankingUrl)}</span> : serp ? "Not in the live results" : "Needs Search Console or DataForSEO"}
+          />
+          <Metric label="Readability" value={f?.flesch != null ? Math.round(f.flesch) : "n/a"} sub={f?.flesch != null ? `${fleschLabel(f.flesch).label}${avg?.readability != null ? ` · top pages ${avg.readability}` : ""}` : "Page not fetched"} />
         </MetricStrip>
       </Card>
 
@@ -138,45 +149,70 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
           <IdeaList ideas={result.ideas} done={[...doneSet]} projectId={project.id} targetId={targetId} types={types} />
         </div>
         <div className="min-w-0 space-y-4">
-          <Card>
-            <CardHeader title="Your page vs top-10 average" info="Your values are measured from the live page (referring domains are a demo estimate). Rival averages are demo data." />
-            <CardBody>
-              <MiniTable
-                columns={[{ header: "" }, { header: "Your page", align: "right" }, { header: "Top-10 avg.", align: "right" }, { header: "", align: "center", className: "w-6" }]}
-                rows={compare.map((c) => [
-                  <span key="l" className="text-text-2">
-                    {c.label}
-                    {c.demoYou && <span className="ml-1 text-[11px] text-warning-ink">demo</span>}
-                  </span>,
-                  <span key="y" className="font-medium text-text">
-                    {c.you}
-                  </span>,
-                  <span key="r" className="text-text-2">
-                    {c.rivals}
-                  </span>,
-                  <Verdict key="v" ok={c.ok} />,
-                ])}
-              />
-            </CardBody>
-          </Card>
+          {avg && (
+            <Card>
+              <CardHeader title="Your page vs the top 10" info={`Your values are measured from the live page. Averages come from the ${avg.crawled} top-10 pages we could crawl for this keyword.`} />
+              <CardBody>
+                <MiniTable
+                  columns={[{ header: "" }, { header: "Your page", align: "right" }, { header: "Top-10 avg.", align: "right" }, { header: "", align: "center", className: "w-6" }]}
+                  rows={compare.map((c) => [
+                    <span key="l" className="text-text-2">
+                      {c.label}
+                    </span>,
+                    <span key="y" className="font-medium text-text">
+                      {c.you}
+                    </span>,
+                    <span key="r" className="text-text-2">
+                      {c.rivals}
+                    </span>,
+                    <Verdict key="v" ok={c.ok} />,
+                  ])}
+                />
+              </CardBody>
+            </Card>
+          )}
 
-          <Card>
-            <CardHeader title="Semantically related words" description={kw ? `${semUsed.size} of ${b.semantic.length} used on your page` : "Usage not checked (page not fetched)"} info="Words commonly used by the top-10 pages (demo data). Usage on your page is checked in the live text." />
-            <CardBody>
-              <ul className="flex flex-wrap gap-1.5">
-                {b.semantic.map((s) => {
-                  const used = semUsed.has(s.term);
-                  return (
-                    <li key={s.term} className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12.5px]", used ? "border-good/40 bg-good-soft text-good-ink" : "border-border bg-surface-2 text-text-2")} title={`Used by ${s.rivals} of 10 rivals`}>
-                      {used && <Check className="h-3 w-3" />}
-                      {s.term}
-                      <span className="text-[11px] opacity-70">{s.rivals}/10</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </CardBody>
-          </Card>
+          {gsc && (
+            <Card>
+              <CardHeader title="Search Console queries for this page" description={`${gsc.start} – ${gsc.end}${gsc.page ? ` · ${compact(gsc.page.clicks)} clicks · CTR ${(gsc.page.ctr * 100).toFixed(1)}%` : ""}`} />
+              <CardBody>
+                <MiniTable
+                  empty="Search Console has no queries for this URL in the last 28 days."
+                  columns={[{ header: "Query" }, { header: "Clicks", align: "right" }, { header: "Impr.", align: "right" }, { header: "Pos.", align: "right" }]}
+                  rows={gsc.queries.slice(0, 10).map((q) => [
+                    <span key="q" className="block max-w-[220px] truncate" title={q.query}>
+                      {q.query}
+                    </span>,
+                    compact(q.clicks),
+                    compact(q.impressions),
+                    q.position,
+                  ])}
+                />
+              </CardBody>
+            </Card>
+          )}
+
+          {serp && serp.semantic.length > 0 && (
+            <Card>
+              <CardHeader title="Words the top pages use" description={kw ? `${semUsed.size} of ${serp.semantic.length} used on your page` : "Usage not checked (page not fetched)"} info="Words and phrases used by several of the crawled top-10 pages. Usage on your page is checked in the live text." />
+              <CardBody>
+                <ul className="flex flex-wrap gap-1.5">
+                  {serp.semantic.map((s) => {
+                    const used = semUsed.has(s.term);
+                    return (
+                      <li key={s.term} className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12.5px]", used ? "border-good/40 bg-good-soft text-good-ink" : "border-border bg-surface-2 text-text-2")} title={`Used by ${s.rivals} of ${s.of} crawled pages`}>
+                        {used && <Check className="h-3 w-3" />}
+                        {s.term}
+                        <span className="text-[11px] opacity-70">
+                          {s.rivals}/{s.of}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
 
           {f && (
             <Card>
@@ -202,43 +238,34 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
             </Card>
           )}
 
-          <Card>
-            <CardHeader title="Top 10 for this keyword" description={<span className="inline-flex items-center gap-2">SERP features <SerpFeatureIcons features={b.metrics.serpFeatures} /></span>} href={`/keyword-overview?q=${encodeURIComponent(target.keyword)}&db=${db}`} />
-            <CardBody>
-              <MiniTable
-                columns={[{ header: "#" }, { header: "Page" }, { header: "Words", align: "right" }, { header: "Ref. domains", align: "right" }]}
-                rows={b.rivals.map((r) => [
-                  r.position,
-                  <div key="d" className="max-w-[210px] min-w-0">
-                    <DomainLink domain={r.domain} db={db} />
-                    <a href={r.url} target="_blank" rel="noopener noreferrer" className="block truncate text-[11.5px] text-text-3 hover:underline" title={r.title}>
-                      {r.title}
-                    </a>
-                  </div>,
-                  num(r.words),
-                  compact(r.refDomains),
-                ])}
-              />
-            </CardBody>
-          </Card>
-
-          {b.backlinkSources.length > 0 && (
+          {serp && (
             <Card>
-              <CardHeader title="Backlink prospects" description="Link to several rivals, not to you" href={`/backlink-gap?q=${project.domain}&db=${db}`} />
+              <CardHeader title="Top 10 for this keyword" description={serp.features.length ? <span className="inline-flex items-center gap-2">SERP features <SerpFeatureIcons features={serp.features} /></span> : "Live Google results"} href={`/keyword-overview?q=${encodeURIComponent(target.keyword)}&db=${db}`} />
               <CardBody>
                 <MiniTable
-                  columns={[{ header: "Domain" }, { header: "AS", align: "right" }, { header: "Rivals", align: "right" }]}
-                  rows={b.backlinkSources.slice(0, 8).map((s) => [<DomainLink key="d" domain={s.domain} />, s.authorityScore, `${s.rivals}/10`])}
+                  columns={[{ header: "#" }, { header: "Page" }, { header: "Words", align: "right" }, { header: "Flesch", align: "right" }]}
+                  rows={serp.rivals.map((r) => [
+                    r.position,
+                    <div key="d" className="max-w-[210px] min-w-0">
+                      <DomainLink domain={r.domain} db={db} />
+                      <a href={r.url} target="_blank" rel="noopener noreferrer" className="block truncate text-[11.5px] text-text-3 hover:underline" title={r.title}>
+                        {r.title}
+                      </a>
+                    </div>,
+                    r.words == null ? <span key="w" className="text-text-3" title="Could not be crawled">n/a</span> : num(r.words),
+                    r.readability ?? <span key="r" className="text-text-3">n/a</span>,
+                  ])}
                 />
               </CardBody>
             </Card>
           )}
+          {b.serpError && <Callout tone="warning">Top-10 benchmark failed: {b.serpError}</Callout>}
+          {b.gscError && <Callout tone="warning">Search Console data failed: {b.gscError}</Callout>}
           <div className="text-[12.5px] text-text-3">
             Research this keyword further in <KeywordLink keyword={target.keyword} db={db} />.
           </div>
         </div>
       </div>
-      <DemoNotice className="mt-6" />
     </Page>
   );
 }

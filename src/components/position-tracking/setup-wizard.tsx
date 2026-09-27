@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { keywordSuggestionsAction, setupCampaignAction } from "@/app/(app)/position-tracking/actions";
 import { DATABASES, tryRootDomain } from "@/lib/domain";
-import { BACKFILL_DAYS, MAX_COMPETITORS, MAX_KEYWORDS, type DeviceMode } from "@/lib/position-tracking/types";
+import { BACKFILL_DAYS, MAX_COMPETITORS, MAX_KEYWORDS, SOURCE_INFO, type CampaignSource, type DeviceMode } from "@/lib/position-tracking/types";
 import { cn } from "@/lib/utils";
 import { DomainAvatar } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
@@ -27,17 +27,21 @@ export function SetupWizard({
   suggestedCompetitors,
   suggestions: initialSuggestions,
   prefill,
-  live,
+  sources,
 }: {
   project: { id: string; name: string; domain: string; country: string; device: "desktop" | "mobile"; location: string };
   projectCompetitors: string[];
   suggestedCompetitors: string[];
   suggestions: Suggestion[];
   prefill: string[];
-  live: boolean;
+  /** Available data sources, best first. */
+  sources: CampaignSource[];
 }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const [source, setSource] = useState<CampaignSource>(sources[0]);
+  const live = source === "dataforseo";
+  const gsc = source === "search-console";
   const [db, setDb] = useState(project.country);
   const [location, setLocation] = useState(project.location);
   const [device, setDevice] = useState<DeviceMode>(project.device);
@@ -84,7 +88,7 @@ export function SetupWizard({
   const submit = () =>
     start(async () => {
       setError(null);
-      const res = await setupCampaignAction(project.id, { db, location, device, competitors, keywords: kw.entries });
+      const res = await setupCampaignAction(project.id, { db, location, device, competitors, keywords: kw.entries, source });
       if (!res.ok) return setError(res.error);
       router.replace(`/position-tracking?project=${project.id}`);
       router.refresh();
@@ -115,12 +119,16 @@ export function SetupWizard({
         {step === 0 && (
           <div className="grid gap-5 lg:grid-cols-2">
             <div className="space-y-4">
-              <Field label="Search engine" htmlFor="pt-engine">
-                <Select id="pt-engine" value="google" disabled>
-                  <option value="google">Google</option>
+              <Field label="Data source" htmlFor="pt-source" hint={gsc ? "Average positions, clicks and impressions of your own site from its linked Search Console property." : live ? "Live Google SERPs incl. competitors and SERP features." : "Synthetic data (local development)."}>
+                <Select id="pt-source" value={source} onChange={(e) => setSource(e.target.value as CampaignSource)} disabled={sources.length < 2}>
+                  {sources.map((s) => (
+                    <option key={s} value={s}>
+                      Google · {SOURCE_INFO[s].label}
+                    </option>
+                  ))}
                 </Select>
               </Field>
-              <Field label="Regional database" htmlFor="pt-db" hint="Google market whose results are tracked.">
+              <Field label="Regional database" htmlFor="pt-db" hint={gsc ? "Only searches from this country are counted." : "Google market whose results are tracked."}>
                 <Select id="pt-db" value={db} onChange={(e) => setDb(e.target.value)}>
                   {DATABASES.map((d) => (
                     <option key={d.code} value={d.code}>
@@ -129,7 +137,7 @@ export function SetupWizard({
                   ))}
                 </Select>
               </Field>
-              <Field label="Location (optional)" htmlFor="pt-location" hint={live ? "City or region, e.g. “Austin,Texas”. Leave empty for country-level results." : "City or region label for this campaign. Leave empty for country-level results."} error={location.length > 120 ? "Use at most 120 characters." : undefined}>
+              <Field label="Location (optional)" htmlFor="pt-location" hint={live ? "City or region, e.g. “Austin,Texas”. Leave empty for country-level results." : gsc ? "Search Console reports country-level data; this is only a label." : "City or region label for this campaign. Leave empty for country-level results."} error={location.length > 120 ? "Use at most 120 characters." : undefined}>
                 <Input id="pt-location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Vadodara, Gujarat" />
               </Field>
             </div>
@@ -155,9 +163,11 @@ export function SetupWizard({
                 ))}
               </div>
               <p className="mt-3 text-[12px] text-text-3">
-                {live
-                  ? "Rankings come from live Google SERPs via DataForSEO (top 100). Each keyword and device is one paid SERP request per check."
-                  : `Demo mode: rankings are generated by the demo engine and ${BACKFILL_DAYS} days of history are backfilled so reports are populated immediately.`}
+                {gsc
+                  ? "Positions come from your Search Console property: the daily average position of your site for each exact keyword and device. 90 days of history are backfilled; Search Console data lags 2–3 days."
+                  : live
+                    ? "Rankings come from live Google SERPs via DataForSEO (top 100). Each keyword and device is one paid SERP request per check."
+                    : `Demo mode: rankings are generated by the demo engine and ${BACKFILL_DAYS} days of history are backfilled so reports are populated immediately.`}
               </p>
             </div>
           </div>
@@ -165,6 +175,9 @@ export function SetupWizard({
 
         {step === 1 && (
           <div className="space-y-4">
+            {gsc && (
+              <Callout tone="info">Search Console only reports your own site, so competitor positions are not collected. Competitors you add are kept and tracked once you switch the campaign to DataForSEO.</Callout>
+            )}
             <p className="text-[13px] text-text-2">
               Pick up to {MAX_COMPETITORS} competitors to compare visibility, positions and share of voice. <span className="text-text-3">{competitors.length} selected.</span>
             </p>

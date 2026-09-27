@@ -89,6 +89,7 @@ function IdeaRow({ idea, fav, subtopic, db }: { idea: TopicIdea; fav: Fav; subto
 }
 
 function EfficiencyBadge({ s }: { s: Subtopic }) {
+  if (!s.efficiencyLabel) return null;
   const tone = s.efficiencyLabel === "High" ? "good" : s.efficiencyLabel === "Medium" ? "warning" : "neutral";
   return (
     <Badge tone={tone} title="Topic efficiency: search volume relative to difficulty, compared with the other subtopics." className="shrink-0">
@@ -98,14 +99,20 @@ function EfficiencyBadge({ s }: { s: Subtopic }) {
 }
 
 /** Cards view: one card per subtopic; expanding shows headlines, questions and related searches. */
-export function TopicCards({ subtopics, topic, db, favorites }: { subtopics: Subtopic[]; topic: string; db: string; favorites: string[] }) {
+export function TopicCards({ subtopics, topic, db, favorites, metrics = true }: { subtopics: Subtopic[]; topic: string; db: string; favorites: string[]; metrics?: boolean }) {
   const fav = useFavorites(favorites, topic, db);
-  const [sort, setSort] = useState<"volume" | "difficulty" | "efficiency">("volume");
+  const [sort, setSort] = useState<"volume" | "difficulty" | "efficiency" | "keywords">(metrics ? "volume" : "keywords");
   const [open, setOpen] = useState<string | null>(null);
   const sorted = useMemo(
     () =>
       [...subtopics].sort((a, b) =>
-        sort === "volume" ? b.volume - a.volume : sort === "difficulty" ? (a.difficulty ?? 101) - (b.difficulty ?? 101) : b.efficiency - a.efficiency,
+        sort === "keywords"
+          ? b.keywords - a.keywords
+          : sort === "volume"
+            ? (b.volume ?? -1) - (a.volume ?? -1)
+            : sort === "difficulty"
+              ? (a.difficulty ?? 101) - (b.difficulty ?? 101)
+              : (b.efficiency ?? -1) - (a.efficiency ?? -1),
       ),
     [subtopics, sort],
   );
@@ -114,15 +121,19 @@ export function TopicCards({ subtopics, topic, db, favorites }: { subtopics: Sub
       {fav.error && <Callout tone="critical" className="mb-3">{fav.error}</Callout>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12.5px] text-text-2">{subtopics.length} subtopics · click “Show ideas” for headlines, questions and related searches · ★ saves an idea</p>
-        <Segmented
-          options={[
-            { value: "volume", label: "By volume" },
-            { value: "difficulty", label: "By difficulty" },
-            { value: "efficiency", label: "By efficiency" },
-          ]}
-          value={sort}
-          onChange={setSort}
-        />
+        {metrics ? (
+          <Segmented
+            options={[
+              { value: "volume", label: "By volume" },
+              { value: "difficulty", label: "By difficulty" },
+              { value: "efficiency", label: "By efficiency" },
+            ]}
+            value={sort}
+            onChange={setSort}
+          />
+        ) : (
+          <span className="text-[12px] text-text-3">By number of Autocomplete suggestions</span>
+        )}
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {sorted.map((s) => {
@@ -142,11 +153,11 @@ export function TopicCards({ subtopics, topic, db, favorites }: { subtopics: Sub
               <div className="mx-4 grid grid-cols-3 gap-2 rounded-md bg-surface-2 px-3 py-2 text-[12px]">
                 <div>
                   <div className="text-text-3">Volume</div>
-                  <div className="tabular text-[14px] font-semibold text-text">{compact(s.volume)}</div>
+                  <div className={cn("tabular text-[14px] font-semibold", s.volume == null ? "text-text-3" : "text-text")}>{compact(s.volume)}</div>
                 </div>
                 <div>
                   <div className="text-text-3">Difficulty</div>
-                  <div className="text-[14px] font-semibold">{s.difficulty == null ? "n/a" : <KdBadge kd={s.difficulty} />}</div>
+                  <div className="text-[14px] font-semibold">{s.difficulty == null ? <span className="text-text-3">n/a</span> : <KdBadge kd={s.difficulty} />}</div>
                 </div>
                 <div>
                   <div className="text-text-3">Keywords</div>
@@ -161,8 +172,8 @@ export function TopicCards({ subtopics, topic, db, favorites }: { subtopics: Sub
                 </div>
               ) : (
                 <ul className="flex-1 divide-y divide-border px-4 pt-1.5">
-                  {s.headlines.slice(0, 3).map((h) => (
-                    <IdeaRow key={h.text} idea={h} fav={fav} subtopic={s.name} db={db} />
+                  {(s.headlines.length ? s.headlines : [...s.questions, ...s.related]).slice(0, 3).map((h) => (
+                    <IdeaRow key={`${h.kind}|${h.text}`} idea={h} fav={fav} subtopic={s.name} db={db} />
                   ))}
                 </ul>
               )}
@@ -223,7 +234,7 @@ export function IdeaListCard({ ideas, topic, db, favorites, empty }: { ideas: To
   );
 }
 
-type ExplorerRow = { subtopic: string; subtopicVolume: number; difficulty: number | null; idea: TopicIdea };
+type ExplorerRow = { subtopic: string; subtopicVolume: number | null; difficulty: number | null; idea: TopicIdea };
 
 /** Explorer view: every idea in one sortable, exportable table. */
 export function TopicExplorer({ subtopics, topic, db, favorites }: { subtopics: Subtopic[]; topic: string; db: string; favorites: string[] }) {
@@ -241,7 +252,7 @@ export function TopicExplorer({ subtopics, topic, db, favorites }: { subtopics: 
     { key: "origin", header: "Source", sortValue: (r) => r.idea.origin, csv: (r) => ORIGIN[r.idea.origin], render: (r) => <span className="text-[12px] whitespace-nowrap text-text-2">{r.idea.origin === "autocomplete" ? "Google Autocomplete" : r.idea.origin === "serp" ? `Top 10: ${r.idea.domain}` : r.idea.origin === "template" ? "Idea generator" : "Keyword database"}</span> },
     { key: "volume", header: "Searches", align: "right", sortValue: (r) => r.idea.volume, render: (r) => (r.idea.volume == null || r.idea.kind === "headline" ? <span className="text-text-3">–</span> : compact(r.idea.volume)), csv: (r) => (r.idea.kind === "headline" ? "" : r.idea.volume) },
     { key: "backlinks", header: "Backlinks", align: "right", sortValue: (r) => r.idea.backlinks, render: (r) => (r.idea.backlinks == null ? <span className="text-text-3">–</span> : compact(r.idea.backlinks)), csv: (r) => r.idea.backlinks },
-    { key: "subtopicVolume", header: "Subtopic vol.", align: "right", render: (r) => compact(r.subtopicVolume) },
+    { key: "subtopicVolume", header: "Subtopic vol.", align: "right", sortValue: (r) => r.subtopicVolume, render: (r) => compact(r.subtopicVolume) },
     { key: "difficulty", header: "Difficulty", align: "right", sortValue: (r) => r.difficulty, render: (r) => <KdBadge kd={r.difficulty} /> },
   ];
   return (
@@ -251,7 +262,7 @@ export function TopicExplorer({ subtopics, topic, db, favorites }: { subtopics: 
         rows={rows}
         columns={columns}
         rowKey={(r, i) => `${r.subtopic}|${r.idea.kind}|${r.idea.text}|${i}`}
-        defaultSort={{ key: "subtopicVolume", dir: "desc" }}
+        defaultSort={rows.some((r) => r.subtopicVolume != null) ? { key: "subtopicVolume", dir: "desc" } : undefined}
         pageSize={50}
         searchable
         searchPlaceholder="Filter ideas"

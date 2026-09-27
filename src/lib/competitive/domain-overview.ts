@@ -9,9 +9,10 @@ import {
   paidKeywordRows,
   referringDomains,
 } from "@/lib/seo/engine";
-import { database } from "@/lib/domain";
+import { AppError, database } from "@/lib/domain";
 import { dfs, market } from "@/lib/providers/dataforseo";
 import { cached, demo, liveEnabled, type Sourced } from "@/lib/providers/source";
+import { demoAllowed } from "@/lib/data-mode";
 import type { CountryShare, Intent, MonthlyPoint, SerpFeature } from "@/lib/seo/types";
 
 /** Slim keyword row sent to the client. */
@@ -228,5 +229,6 @@ async function liveOverview(ownerId: string, domain: string, db: string): Promis
 export async function getDomainOverview(ownerId: string, domain: string, dbInput: string): Promise<Sourced<DomainOverview>> {
   const db = database(dbInput).code;
   if (liveEnabled()) return cached(`domain-overview:${domain}:${db}`, "dataforseo", 24 * 7, () => liveOverview(ownerId, domain, db));
+  if (!demoAllowed()) throw new AppError("Domain Overview needs DataForSEO for this domain.", 409);
   return demo(demoOverview(domain, db));
 }

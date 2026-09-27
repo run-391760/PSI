@@ -5,6 +5,11 @@ import { requirePageUser } from "@/lib/auth";
 import { getOrganicChanges, getOrganicCompetitors, getOrganicPages, getOrganicPositions, getOrganicSubdomains, getOrganicSummary } from "@/lib/competitive/organic-research";
 import type { DomainOverview } from "@/lib/competitive/domain-overview";
 import { spStr } from "@/lib/competitive/shared";
+import { getOwnSearch, ownSiteFor, settle } from "@/lib/competitive/own-site";
+import { ownRange } from "@/lib/competitive/own-site-map";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
+import { NoSearchSource, OwnOrganicResearch, RangeBar, SearchMetrics } from "@/components/competitive/own-search-view";
 import { compareHref } from "@/lib/competitive/links";
 import { database, tryRootDomain } from "@/lib/domain";
 import { compact, displayUrl, money, pct } from "@/lib/format";
@@ -71,6 +76,74 @@ export default async function OrganicResearchPage({ searchParams }: PageProps<"/
         </Card>
       </Page>
     );
+
+  if (!liveEnabled()) {
+    const own = await ownSiteFor(user.id, domain);
+    if (own?.link.gscSite) {
+      const range = ownRange(spStr(sp.range));
+      const res = await settle(getOwnSearch(user.id, own, range.id));
+      const base = `/organic-research?q=${encodeURIComponent(domain)}&db=${db}`;
+      const insights = `/organic-traffic-insights?project=${own.project.id}`;
+      return (
+        <Page>
+          <PageHeader
+            breadcrumbs={CRUMBS}
+            title="Organic Research:"
+            subject={domain}
+            meta={
+              <>
+                {res.data && <DataSourceBadge source="search-console" fetchedAt={res.data.fetchedAt} note={res.data.data.site} />}
+                <Badge tone="brand">Your site · {own.project.name}</Badge>
+              </>
+            }
+            actions={
+              <>
+                <ButtonLink href={`/domain-overview?q=${domain}&db=${db}&range=${range.id}`} variant="secondary">
+                  Domain Overview
+                </ButtonLink>
+                <PrintButton />
+              </>
+            }
+          >
+            <ToolSearch placeholder="Enter a domain" keep={["tab", "range"]} />
+          </PageHeader>
+          {res.error && <Callout tone="critical" title="Search Console data could not be loaded">{res.error} <Link href={insights} className="text-link hover:underline">Check the connection</Link></Callout>}
+          {res.data && (
+            <>
+              <RangeBar base={`${base}&tab=${tab}`} report={res.data.data} rangeId={range.id} />
+              <SearchMetrics r={res.data.data} />
+              <TabsNav
+                className="mb-4"
+                items={[
+                  { href: "/organic-research", label: "Overview" },
+                  { href: "/organic-research?tab=positions", label: "Positions", count: compact(res.data.data.queries.filter((x) => x.position != null).length) },
+                  { href: "/organic-research?tab=changes", label: "Position changes" },
+                  { href: "/organic-research?tab=competitors", label: "Competitors" },
+                  { href: "/organic-research?tab=pages", label: "Pages", count: compact(res.data.data.pages.length) },
+                  { href: "/organic-research?tab=subdomains", label: "Subdomains" },
+                ]}
+              />
+              <OwnOrganicResearch r={res.data.data} tab={tab} db={db} base={base} url={url} status={spStr(sp.status)} domain={domain} />
+            </>
+          )}
+        </Page>
+      );
+    }
+    if (!demoAllowed())
+      return (
+        <Page>
+          <PageHeader breadcrumbs={CRUMBS} title="Organic Research:" subject={domain}>
+            <ToolSearch placeholder="Enter a domain" keep={["tab"]} />
+          </PageHeader>
+          {own && !own.link.gscSite && (
+            <Callout tone="info" className="mb-4" title="Only GA4 is linked for this site">
+              Organic Research uses Search Console. <Link href={`/organic-traffic-insights?project=${own.project.id}&edit=1`} className="text-link hover:underline">Link a Search Console property</Link>.
+            </Callout>
+          )}
+          <NoSearchSource domain={domain} tool="Organic Research" />
+        </Page>
+      );
+  }
 
   const { data: s, source, fetchedAt } = await getOrganicSummary(user.id, domain, db);
   const info = database(db);
@@ -230,7 +303,7 @@ async function Overview({ ownerId, domain, db, s, history, base }: { ownerId: st
                 </Link>
               ))}
             </div>
-            <BarChart
+            {changes.trend.length > 0 && <BarChart
               className="mt-4"
               data={changes.trend.slice(-6)}
               xKey="month"
@@ -238,7 +311,7 @@ async function Overview({ ownerId, domain, db, s, history, base }: { ownerId: st
               series={(["improved", "declined", "new", "lost"] as const).map((t) => ({ key: t, label: CHANGE_META[t].label, color: CHANGE_META[t].color }))}
               height={150}
               showLegend={false}
-            />
+            />}
           </CardBody>
         </Card>
       </Grid>
@@ -384,7 +457,11 @@ async function Changes({ ownerId, domain, db }: { ownerId: string; domain: strin
         <Card>
           <CardHeader title="Position changes trend" description="Keywords per change type, last 12 months" />
           <CardBody>
-            <BarChart data={data.trend} xKey="month" xFormat="monthShort" series={kinds.map((t) => ({ key: t, label: CHANGE_META[t].label, color: CHANGE_META[t].color }))} height={250} />
+            {data.trend.length ? (
+              <BarChart data={data.trend} xKey="month" xFormat="monthShort" series={kinds.map((t) => ({ key: t, label: CHANGE_META[t].label, color: CHANGE_META[t].color }))} height={250} />
+            ) : (
+              <p className="py-10 text-center text-[13px] text-text-3">Monthly change history is not available from the connected provider.</p>
+            )}
           </CardBody>
         </Card>
       </Grid>

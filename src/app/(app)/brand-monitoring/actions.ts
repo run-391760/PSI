@@ -1,6 +1,7 @@
 "use server";
 
 import { requireUser } from "@/lib/auth";
+import { demoAllowed } from "@/lib/data-mode";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { enqueue, setSchedule } from "@/lib/jobs/queue";
@@ -31,7 +32,7 @@ export async function saveBrandSettingsAction(projectId: string, input: { terms:
     const terms = cleanTerms(input.terms, "brand terms", 1);
     const competitorTerms = cleanTerms(input.competitorTerms, "competitor names", 0);
     if (JSON.stringify(terms) !== JSON.stringify(project.brand_terms)) await updateProject(user.id, project.id, { brand_terms: terms });
-    await saveBrandSettings(project.id, { competitorTerms, demoSocial: !!input.demoSocial });
+    await saveBrandSettings(project.id, { competitorTerms, demoSocial: !!input.demoSocial && demoAllowed() });
     await setSchedule(project.id, "monitoring.brand", { cadence: "daily", enabled: !!input.daily });
     const jobId = await startRun(user.id, project.id);
     return { ok: true, data: { jobId } };

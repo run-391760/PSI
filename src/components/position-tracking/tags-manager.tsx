@@ -24,7 +24,7 @@ export type TagRow = {
   top10: number;
 };
 
-export function TagsManager({ rows, projectId, base }: { rows: TagRow[]; projectId: string; base: string }) {
+export function TagsManager({ rows, projectId, base, trafficLabel = "Est. traffic" }: { rows: TagRow[]; projectId: string; base: string; trafficLabel?: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
@@ -97,7 +97,7 @@ export function TagsManager({ rows, projectId, base }: { rows: TagRow[]; project
           { key: "visibility", header: "Visibility", align: "right", render: (r) => (r.visibility == null ? <span className="text-text-3">n/a</span> : pct(r.visibility, 2)), csv: (r) => r.visibility?.toFixed(2) },
           { key: "visibilityDelta", header: "Change", align: "right", render: (r) => <Delta value={r.visibilityDelta} digits={2} />, csv: (r) => r.visibilityDelta?.toFixed(2) },
           { key: "avgPosition", header: "Avg. position", align: "right", render: (r) => (r.avgPosition == null ? <span className="text-text-3">n/a</span> : num(r.avgPosition, 1)), csv: (r) => r.avgPosition?.toFixed(1) },
-          { key: "traffic", header: "Est. traffic", align: "right", render: (r) => (r.traffic == null ? <span className="text-text-3">n/a</span> : compact(r.traffic)) },
+          { key: "traffic", header: trafficLabel, align: "right", render: (r) => (r.traffic == null ? <span className="text-text-3">n/a</span> : compact(r.traffic)) },
           { key: "top3", header: "Top 3", align: "right" },
           { key: "top10", header: "Top 10", align: "right" },
           {

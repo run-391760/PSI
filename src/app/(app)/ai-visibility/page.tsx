@@ -9,12 +9,13 @@ import { param, projectContext } from "@/lib/local/project-context";
 import { aiCompetitorNames, loadAiContext } from "@/lib/ai-visibility/context";
 import { suggestPrompts } from "@/lib/ai-visibility/engine";
 import { AI_BOTS, ENGINES, type ReadinessResult } from "@/lib/ai-visibility/meta";
-import { visibilityReport } from "@/lib/ai-visibility/report";
+import { liveReport } from "@/lib/ai-visibility/live-report";
+import { NeedsData } from "@/components/seo/needs-data";
 import { getReadiness, listPrompts, liveResults } from "@/lib/ai-visibility/store";
 import { LIVE_ENGINES } from "@/lib/providers/ai-engines";
 import type { DataSource } from "@/lib/providers/labels";
 import { DomainAvatar } from "@/components/seo/badges";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DataSourceBadge } from "@/components/seo/source-badge";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { ProjectGate } from "@/components/projects/project-gate";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
@@ -70,25 +71,26 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
     { href: "/ai-visibility?tab=readiness", label: "AI crawler readiness" },
     { href: "/ai-visibility?tab=live", label: "Live answers", count: live.length || undefined },
   ];
-  const sourceBadge =
-    tab === "readiness" ? (
-      <DataSourceBadge source="crawler" fetchedAt={readiness?.checkedAt} />
-    ) : tab === "live" ? (
-      live.some((r) => !r.error) ? (
-        <>
-          {[...new Set(live.filter((r) => !r.error).map((r) => r.engine))].map((engine) => {
-            const latest = live.find((r) => r.engine === engine && !r.error)!;
-            return <DataSourceBadge key={engine} source={ENGINE_SOURCE[engine] ?? "anthropic"} fetchedAt={latest.createdAt} note={latest.model} />;
-          })}
-        </>
-      ) : live.length ? (
-        <Badge tone="critical">No successful live answers yet</Badge>
-      ) : (
-        <Badge>{liveOn ? `${connected.length} engine${connected.length === 1 ? "" : "s"} connected · no checks yet` : "No AI engine connected"}</Badge>
-      )
-    ) : (
-      <DataSourceBadge source="demo" />
-    );
+  const liveBadges = live.some((r) => !r.error) ? (
+    <>
+      {[...new Set(live.filter((r) => !r.error).map((r) => r.engine))].map((engine) => {
+        const latest = live.find((r) => r.engine === engine && !r.error)!;
+        return <DataSourceBadge key={engine} source={ENGINE_SOURCE[engine] ?? "anthropic"} fetchedAt={latest.createdAt} note={latest.model} />;
+      })}
+    </>
+  ) : live.length ? (
+    <Badge tone="critical">No successful live answers yet</Badge>
+  ) : (
+    <Badge>{liveOn ? `${connected.length} engine${connected.length === 1 ? "" : "s"} connected · no checks yet` : "No AI engine connected"}</Badge>
+  );
+  const sourceBadge = tab === "readiness" ? <DataSourceBadge source="crawler" fetchedAt={readiness?.checkedAt} /> : liveBadges;
+  const needsAi = (
+    <NeedsData
+      providers={["ai"]}
+      title="Connect an AI engine to measure AI visibility"
+      shows={["Mention and citation rate per engine (ChatGPT, Gemini, Perplexity, Claude, AI Overviews)", "Share of voice vs your competitors", "Sources AI engines cite for your prompts", "Prompt-level answers with your position"]}
+    />
+  );
   const header = (
     <PageHeader
       breadcrumbs={BREADCRUMBS}
@@ -103,7 +105,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
           <Badge>{ctx.category[0].toUpperCase() + ctx.category.slice(1)}</Badge>
           {prompts.length > 0 && (
             <Badge>
-              {prompts.length} prompts × {ENGINES.length} engines
+              {prompts.length} prompts{liveOn ? ` × ${connected.length} engine${connected.length === 1 ? "" : "s"}` : ""}
             </Badge>
           )}
         </>
@@ -112,7 +114,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
         <>
           <ProjectSwitcher projects={switcher} current={project.id} />
           {tab === "readiness" && <ReadinessButton projectId={project.id} label={readiness ? "Re-run check" : "Run check"} />}
-          {tab === "live" && <LiveRunButton projectId={project.id} engines={engineStatus.map(({ id, name, enabled }) => ({ id, name, enabled }))} enabled={liveOn && prompts.length > 0} running={liveRunning} />}
+          {tab !== "readiness" && prompts.length > 0 && <LiveRunButton projectId={project.id} engines={engineStatus.map(({ id, name, enabled }) => ({ id, name, enabled }))} enabled={liveOn && prompts.length > 0} running={liveRunning} />}
         </>
       }
     >
@@ -179,7 +181,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
             <EmptyState
               icon={liveOn ? <Bot className="h-5 w-5" /> : <KeyRound className="h-5 w-5" />}
               title={liveOn ? "No live checks yet" : "Connect an AI engine to see real answers"}
-              description={liveOn ? (prompts.length ? `Run a live check to ask ${connected.map((e) => e.name).join(", ")} your ${prompts.length} tracked prompts.` : "Add prompts first, then run a live check.") : "Everything else on this page is demo data; this tab only ever shows real answers from the engines you connect."}
+              description={liveOn ? (prompts.length ? `Run a live check to ask ${connected.map((e) => e.name).join(", ")} your ${prompts.length} tracked prompts.` : "Add prompts first, then run a live check.") : "Add an API key for ChatGPT, Gemini, Perplexity or Claude (or DataForSEO for AI Overviews) in the server environment. This page only ever shows real answers."}
             />
           </Card>
         ) : (
@@ -218,14 +220,14 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
     );
   }
 
-  // ------------------------------------------------------------------ demo tracking
+  // ------------------------------------------------------------------ tracking (computed from live answers only)
   if (!prompts.length)
     return (
       <Page>
         {header}
         <Grid cols={2} className="lg:grid-cols-[1.5fr_1fr]">
           <Card>
-            <CardHeader title="Choose prompts to track" description="Prompts are the questions customers ask AI assistants. We check each one across five AI engines every day." />
+            <CardHeader title="Choose prompts to track" description="Prompts are the questions customers ask AI assistants. Live checks ask each connected engine every prompt." />
             <CardBody>
               <PromptSetup projectId={project.id} suggestions={suggestPrompts(ctx, project)} />
             </CardBody>
@@ -245,22 +247,37 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
                     <span className="font-medium text-text">Share of voice</span> — your mentions vs competitors&apos;.
                   </li>
                   <li>
-                    <span className="font-medium text-text">Cited sources</span> — the sites AI engines trust for your topic.
+                    <span className="font-medium text-text">Cited sources</span> — the sites AI engines cite for your prompts.
                   </li>
                 </ul>
               </CardBody>
             </Card>
-            <Callout tone="warning" title="Demo data">
-              Answers on this tab are simulated deterministically. Real answers from ChatGPT, Gemini, Perplexity, Google AI Overviews and Claude appear on the Live answers tab for every engine you connect, and the AI crawler readiness check is real.
-            </Callout>
+            {liveOn ? (
+              <Callout tone="info" title="Real answers only">
+                Connected: {connected.map((e) => e.name).join(", ")}. Every number on this page is computed from their stored answers.
+              </Callout>
+            ) : (
+              <NeedsData compact providers={["ai"]} title="No AI engine connected" />
+            )}
           </div>
         </Grid>
       </Page>
     );
 
-  const r = visibilityReport(ctx, prompts);
+  const r = liveReport(ctx, prompts, live);
   const cur = r.current;
   const prev = r.previous;
+  const noAnswers = cur.answers === 0;
+  const runHint = (
+    <Card>
+      <EmptyState
+        icon={<Bot className="h-5 w-5" />}
+        title={r.results ? "No successful answers in the last 7 days" : "No live checks yet"}
+        description={`Run a live check to ask ${connected.map((e) => e.name).join(", ")} your ${prompts.length} tracked prompts. Overview and cited sources are computed from those answers.`}
+        action={<LiveRunButton projectId={project.id} engines={engineStatus.map(({ id, name, enabled }) => ({ id, name, enabled }))} enabled={prompts.length > 0} running={liveRunning} />}
+      />
+    </Card>
+  );
 
   if (tab === "prompts")
     return (
@@ -272,11 +289,11 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
             <PromptManager projectId={project.id} count={prompts.length} competitorNames={names.names.length ? names.names : ctx.competitors.filter((c) => c.domain && project.competitors.includes(c.domain)).map((c) => c.name)} namesSource={names.source} />
           </CardBody>
         </Card>
+        {!liveOn && !r.results && <NeedsData compact providers={["ai"]} title="Connect an AI engine to see prompt results" className="mb-4" />}
         <Card className="mb-4">
-          <CardHeader title="Prompt-level results" description="Today's answer per engine and the last 7 days. Click a prompt for the answer detail." />
+          <CardHeader title="Prompt-level results" description="Latest live answer per engine and the last 7 days. Click a prompt for the answer." />
           <PromptsTable projectId={project.id} rows={r.prompts} brand={ctx.brand} />
         </Card>
-        <DemoNotice />
       </Page>
     );
 
@@ -284,56 +301,69 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
     return (
       <Page>
         {header}
-        <Grid cols={2} className="mb-4 lg:grid-cols-[1.5fr_1fr]">
-          <Card>
-            <CardHeader title="Cited sources" description={`Domains cited in ${cur.answers} AI answers over the last 7 days`} info="Share = answers citing the domain ÷ all answers with an AI response." />
-            <CardBody>
-              <MiniTable
-                columns={[{ header: "Domain" }, { header: "Cited in", className: "w-44" }, { header: "Engines", align: "right" }, { header: "Type", align: "right" }]}
-                rows={r.sources.slice(0, 20).map((s) => [
-                  <span key="d" className="inline-flex min-w-0 items-center gap-2">
-                    <DomainAvatar domain={s.domain} />
-                    <Link href={`/domain-overview?q=${s.domain}&db=${project.country}`} className={s.type === "you" ? "font-semibold text-link hover:underline" : "text-link hover:underline"}>
-                      {s.domain}
-                    </Link>
-                  </span>,
-                  <div key="b" className="flex items-center gap-2">
-                    <Bar value={s.share} className="w-20" color={s.type === "you" ? "var(--series-1)" : "var(--text-3)"} />
-                    <span className="tabular text-[12px] text-text-2">
-                      {s.answers}/{cur.answers}
-                    </span>
-                  </div>,
-                  `${s.engines.length}/5`,
-                  s.type === "you" ? <Badge key="t" tone="brand">You</Badge> : s.type === "competitor" ? <Badge key="t" tone="warning">Competitor</Badge> : <span key="t" className="text-text-3">Other</span>,
-                ])}
-              />
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Your cited pages" description={`${cur.cited} of ${cur.answers} answers cite ${project.domain}`} />
-            <CardBody>
-              <MiniTable
-                empty="Your pages were not cited in the last 7 days."
-                columns={[{ header: "Page" }, { header: "Citations", align: "right" }]}
-                rows={r.pages.map((p) => [
-                  <a key="u" href={p.url} target="_blank" rel="noopener noreferrer" className="block max-w-[300px] truncate text-link hover:underline" title={p.url}>
-                    {displayUrl(p.url)}
-                  </a>,
-                  p.citations,
-                ])}
-              />
-              <p className="mt-3 text-[12px] text-text-3">Pages that AI engines cite tend to answer questions directly, with clear headings, facts and structured data. Check yours with the readiness tab and Site Audit.</p>
-            </CardBody>
-          </Card>
-        </Grid>
-        <DemoNotice />
+        {noAnswers ? (
+          liveOn ? runHint : needsAi
+        ) : (
+          <Grid cols={2} className="mb-4 lg:grid-cols-[1.5fr_1fr]">
+            <Card>
+              <CardHeader title="Cited sources" description={`Domains cited in ${cur.answers} live AI answers over the last 7 days`} info="Share = answers citing the domain ÷ answers with an AI response." />
+              <CardBody>
+                <MiniTable
+                  empty="The answers cited no sources."
+                  columns={[{ header: "Domain" }, { header: "Cited in", className: "w-44" }, { header: "Engines", align: "right" }, { header: "Type", align: "right" }]}
+                  rows={r.sources.slice(0, 25).map((s) => [
+                    <span key="d" className="inline-flex min-w-0 items-center gap-2">
+                      <DomainAvatar domain={s.domain} />
+                      <Link href={`/domain-overview?q=${s.domain}&db=${project.country}`} className={s.type === "you" ? "font-semibold text-link hover:underline" : "text-link hover:underline"}>
+                        {s.domain}
+                      </Link>
+                    </span>,
+                    <div key="b" className="flex items-center gap-2">
+                      <Bar value={s.share} className="w-20" color={s.type === "you" ? "var(--series-1)" : "var(--text-3)"} />
+                      <span className="tabular text-[12px] text-text-2">
+                        {s.answers}/{cur.answers}
+                      </span>
+                    </div>,
+                    `${s.engines.length}/${r.engines.length}`,
+                    s.type === "you" ? <Badge key="t" tone="brand">You</Badge> : s.type === "competitor" ? <Badge key="t" tone="warning">Competitor</Badge> : <span key="t" className="text-text-3">Other</span>,
+                  ])}
+                />
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title="Your cited pages" description={`${cur.cited} of ${cur.answers} answers cite ${project.domain}`} />
+              <CardBody>
+                <MiniTable
+                  empty="Your pages were not cited in the last 7 days."
+                  columns={[{ header: "Page" }, { header: "Citations", align: "right" }]}
+                  rows={r.pages.map((p) => [
+                    <a key="u" href={p.url} target="_blank" rel="noopener noreferrer" className="block max-w-[300px] truncate text-link hover:underline" title={p.url}>
+                      {displayUrl(p.url)}
+                    </a>,
+                    p.citations,
+                  ])}
+                />
+                <p className="mt-3 text-[12px] text-text-3">Pages that AI engines cite tend to answer questions directly, with clear headings, facts and structured data. Check yours with the readiness tab and Site Audit.</p>
+              </CardBody>
+            </Card>
+          </Grid>
+        )}
       </Page>
     );
 
   // ------------------------------------------------------------------ overview
+  if (noAnswers)
+    return (
+      <Page>
+        {header}
+        {liveOn ? runHint : needsAi}
+        {readiness && <div className="mt-4"><ReadinessStrip data={readiness.result} projectId={project.id} /></div>}
+      </Page>
+    );
   const avgPos = cur.positionN ? (cur.positionSum / cur.positionN).toFixed(1) : "n/a";
   const prevAvgPos = prev.positionN ? prev.positionSum / prev.positionN : null;
-  const lowest = [...r.prompts].sort((a, b) => a.score - b.score).slice(0, 5);
+  const lowest = [...r.prompts].filter((p) => p.answers > 0).sort((a, b) => a.score - b.score).slice(0, 5);
+  const seen = ENGINES.filter((e) => r.engines.some((x) => x.id === e.id));
   return (
     <Page>
       {header}
@@ -341,20 +371,20 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
         <MetricStrip>
           <div className="flex items-center gap-3">
             <ScoreRing value={r.score} size={64} stroke={7} label={String(r.score)} color="var(--series-1)" />
-            <Metric label="AI visibility score" value={`${r.score}/100`} delta={pctDelta(r.score, r.prevScore)} deltaLabel="vs prior 7d" info="50% mention rate + 30% citation rate + 20% prominence (1 ÷ position) across all AI answers in the last 7 days." />
+            <Metric label="AI visibility score" value={`${r.score}/100`} delta={r.prevScore != null ? pctDelta(r.score, r.prevScore) : null} deltaLabel="vs prior 7d" info="50% mention rate + 30% citation rate + 20% prominence (1 ÷ position) across live AI answers in the last 7 days." />
           </div>
-          <Metric label="Mention rate" value={`${ratePct(cur.mentioned, cur.answers)}%`} delta={pctDelta(ratePct(cur.mentioned, cur.answers), ratePct(prev.mentioned, prev.answers))} sub={`${cur.mentioned} of ${cur.answers} answers`} />
-          <Metric label="Citation rate" value={`${ratePct(cur.cited, cur.answers)}%`} delta={pctDelta(ratePct(cur.cited, cur.answers), ratePct(prev.cited, prev.answers))} sub={`${cur.cited} of ${cur.answers} answers cite your site`} />
+          <Metric label="Mention rate" value={`${ratePct(cur.mentioned, cur.answers)}%`} delta={prev.answers ? pctDelta(ratePct(cur.mentioned, cur.answers), ratePct(prev.mentioned, prev.answers)) : null} sub={`${cur.mentioned} of ${cur.answers} answers`} />
+          <Metric label="Citation rate" value={`${ratePct(cur.cited, cur.answers)}%`} delta={prev.answers ? pctDelta(ratePct(cur.cited, cur.answers), ratePct(prev.cited, prev.answers)) : null} sub={`${cur.cited} of ${cur.answers} answers cite your site`} />
           <Metric label="Avg. position" value={avgPos} delta={prevAvgPos && cur.positionN ? pctDelta(cur.positionSum / cur.positionN, prevAvgPos) : null} upIsGood={false} sub={`Across ${cur.positionN} answers naming you`} />
-          <Metric label="Share of voice" value={`${r.sov}%`} delta={pctDelta(r.sov, r.prevSov)} sub={`${cur.brandMentions[ctx.brand]} of ${Object.values(cur.brandMentions).reduce((s, v) => s + v, 0)} brand mentions`} />
+          <Metric label="Share of voice" value={`${r.sov}%`} delta={r.prevSov != null ? pctDelta(r.sov, r.prevSov) : null} sub={`${cur.brandMentions[ctx.brand] ?? 0} of ${Object.values(cur.brandMentions).reduce((s, v) => s + v, 0)} brand mentions`} />
         </MetricStrip>
       </Card>
 
       <Grid cols={2} className="mb-4 lg:grid-cols-[1.6fr_1fr]">
         <Card>
-          <CardHeader title="Mention rate by engine" description="Share of answers naming your brand, per day" />
+          <CardHeader title="Mention rate by engine" description="Share of live answers naming your brand, per day with checks" />
           <CardBody>
-            <TrendChart data={r.trend} xKey="day" xFormat="day" yFormat="percent" ranges={TREND_RANGES} defaultRange="30d" series={ENGINES.map((e) => ({ key: e.id, label: e.name }))} height={250} yDomain={[0, 100]} />
+            <TrendChart data={r.trend} xKey="day" xFormat="day" yFormat="percent" ranges={TREND_RANGES} defaultRange="30d" series={seen.map((e) => ({ key: e.id, label: e.name }))} height={250} yDomain={[0, 100]} />
           </CardBody>
         </Card>
         <Card>
@@ -366,7 +396,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
       </Grid>
 
       <Card className="mb-4">
-        <CardHeader title="Engines" description="Last 7 days · denominators are answers where the engine showed an AI response" />
+        <CardHeader title="Engines" description="Last 7 days · denominators are answers where the engine returned an AI response" />
         <CardBody>
           <MiniTable
             columns={[{ header: "Engine" }, { header: "Answers", align: "right" }, { header: "Mentioned", align: "right" }, { header: "Cited", align: "right" }, { header: "Avg. pos.", align: "right" }, { header: "Share of voice", align: "right" }, { header: "Score", align: "right" }]}
@@ -376,15 +406,14 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
               </span>,
               <span key="a" className="tabular">
                 {e.answers}
-                {e.answers < e.possible && <span className="ml-1 text-[11.5px] text-text-3">of {e.possible} checks</span>}
+                {e.answers < e.checks && <span className="ml-1 text-[11.5px] text-text-3">of {e.checks} checks</span>}
               </span>,
               <Ratio key="m" n={e.mentioned} d={e.answers} />,
               <Ratio key="c" n={e.cited} d={e.answers} />,
               e.avgPosition?.toFixed(1) ?? "n/a",
-              `${e.sov}%`,
-              <span key="s" className="tabular inline-flex items-center gap-1.5">
-                <span className="font-semibold">{e.score}</span>
-                {e.prevScore > 0 && (e.score === e.prevScore ? <span className="text-[11.5px] text-text-3">±0</span> : <span className={e.score > e.prevScore ? "text-[11.5px] text-good-ink" : "text-[11.5px] text-critical-ink"}>{e.score > e.prevScore ? "▲" : "▼"} {Math.abs(e.score - e.prevScore)}</span>)}
+              e.answers ? `${e.sov}%` : "n/a",
+              <span key="s" className="tabular font-semibold">
+                {e.answers ? e.score : "n/a"}
               </span>,
             ])}
           />
@@ -396,6 +425,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
           <CardHeader title="Top cited sources" description="Where AI engines get their answers" href={`/ai-visibility?project=${project.id}&tab=sources`} />
           <CardBody>
             <MiniTable
+              empty="The answers cited no sources."
               columns={[{ header: "Domain" }, { header: "Cited in", align: "right" }, { header: "Type", align: "right" }]}
               rows={r.sources.slice(0, 7).map((s) => [
                 <span key="d" className="inline-flex items-center gap-2">
@@ -414,6 +444,7 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
           <CardHeader title="Biggest opportunities" description="Prompts where AI engines rarely mention you" href={`/ai-visibility?project=${project.id}&tab=prompts`} />
           <CardBody>
             <MiniTable
+              empty="No answered prompts in the last 7 days."
               columns={[{ header: "Prompt" }, { header: "Mentioned", align: "right" }, { header: "Top competitor", align: "right" }]}
               rows={lowest.map((p) => [<span key="p" className="block max-w-[280px] truncate" title={p.prompt}>{p.prompt}</span>, <Ratio key="m" n={p.mentioned} d={p.answers} />, <span key="c" className="text-text-2">{p.topCompetitor ?? "—"}</span>])}
             />
@@ -422,9 +453,8 @@ export default async function AiVisibilityPage({ searchParams }: PageProps<"/ai-
       </Grid>
       {readiness && <ReadinessStrip data={readiness.result} projectId={project.id} />}
       <p className="text-[12px] text-text-3">
-        AI answers on this tab are <span className="font-medium text-warning-ink">Demo data</span> generated deterministically per prompt, engine and day. {liveOn ? `Real answers from ${connected.map((e) => e.name).join(", ")} are on the Live answers tab.` : "Connect an AI engine (API key) to add real answers on the Live answers tab."}
+        Every number is computed from real answers of {seen.map((e) => e.name).join(", ")} with web search (last live check {r.lastAt ? timeAgo(r.lastAt) : "n/a"}). API answers can differ from the consumer apps.
       </p>
-      <DemoNotice className="mt-2" />
     </Page>
   );
 }

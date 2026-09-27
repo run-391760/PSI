@@ -1,9 +1,9 @@
 import { query } from "@/lib/db";
 import { timeAgo } from "@/lib/format";
 import type { SummaryProvider } from "@/lib/projects/summary-types";
-import { AUDIT_JOB, getAuditSettings, listAuditRuns } from "./audit";
+import { AUDIT_JOB, auditAvailable, getAuditSettings, latestDomainsAreDemo, listAuditRuns } from "./audit";
 import { overallScore } from "./audit-score";
-import { getLbSettings, projectProspects, VERIFY_JOB } from "./link-building";
+import { getLbSettings, prospectsAvailable, VERIFY_JOB } from "./link-building";
 import { latestJob } from "@/lib/jobs/queue";
 import { POTENTIAL_MIN, TOXIC_MIN } from "./types";
 
@@ -14,12 +14,13 @@ export const summaries: SummaryProvider[] = [
   // Backlink Audit: overall toxic score (effective, after whitelist/disavow), toxic domains, last audit.
   async (project) => {
     const href = `/backlink-audit?project=${project.id}`;
-    const [settings, runs, job] = await Promise.all([getAuditSettings(project.id), listAuditRuns(project.id, 12), latestJob(project.id, AUDIT_JOB)]);
-    const running = !!job && (job.status === "queued" || job.status === "running");
+    const [settings, allRuns, job, domainsDemo] = await Promise.all([getAuditSettings(project.id), listAuditRuns(project.id, 12), latestJob(project.id, AUDIT_JOB), latestDomainsAreDemo(project.id)]);
+    const runs = domainsDemo ? [] : allRuns;
+    const running = auditAvailable() && !!job && (job.status === "queued" || job.status === "running");
     if (!runs.length)
       return running
         ? { tool: "backlink-audit", label: "Backlink Audit", href, state: "running", note: job?.message ?? "Auditing referring domains…" }
-        : { tool: "backlink-audit", label: "Backlink Audit", href, state: "empty", cta: settings ? "Run audit" : "Set up", note: "Find toxic backlinks and build a disavow file." };
+        : { tool: "backlink-audit", label: "Backlink Audit", href, state: "empty", cta: !auditAvailable() ? "Connect DataForSEO" : settings ? "Run audit" : "Set up", note: auditAvailable() ? "Find toxic backlinks and build a disavow file." : "Toxic-link audits need DataForSEO; your disavow lists stay available." };
     const latest = runs[0];
     const [counts] = await query<{ toxic: number; potentially: number; analyzed: number; disavowed: number; removal: number }>(
       `SELECT count(*) FILTER (WHERE d.toxicity >= $2 AND COALESCE(l.list,'') NOT IN ('whitelist','disavow'))::int AS toxic,
@@ -66,7 +67,7 @@ export const summaries: SummaryProvider[] = [
       ),
       latestJob(project.id, VERIFY_JOB),
     ]);
-    const prospects = Math.max(0, (settings.prospectCount ?? projectProspects(project, settings).length) - pipe.acted);
+    const prospects = prospectsAvailable() && settings.prospectCount != null ? Math.max(0, settings.prospectCount - pipe.acted) : null;
     const running = !!job && (job.status === "queued" || job.status === "running");
     return {
       tool: "link-building",
@@ -75,7 +76,7 @@ export const summaries: SummaryProvider[] = [
       state: running ? "running" : "ready",
       headline: { label: "Active links", value: `${links.active}${links.total ? ` / ${links.total}` : ""}` },
       stats: [
-        { label: "Prospects", value: prospects.toLocaleString() },
+        { label: "Prospects", value: prospects == null ? "n/a" : prospects.toLocaleString() },
         { label: "In progress", value: String(pipe.in_progress) },
         { label: "Acquired", value: String(pipe.acquired) },
       ],

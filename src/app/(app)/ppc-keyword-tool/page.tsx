@@ -15,6 +15,8 @@ import { MiniTable } from "@/components/ui/mini-table";
 import { PpcPlanner } from "@/components/keywords/ppc-planner";
 import { NewCampaignForm } from "@/components/keywords/ppc-new";
 import { AppError } from "@/lib/domain";
+import { metricsSource } from "@/lib/keywords/metrics";
+import { NeedsData } from "@/components/seo/needs-data";
 
 export const metadata: Metadata = { title: "PPC Keyword Tool" };
 
@@ -72,7 +74,7 @@ export default async function PpcKeywordToolPage({ searchParams }: PageProps<"/p
                 <ul className="space-y-2.5 text-[12.5px] text-text-2">
                   <li><span className="font-medium text-text">Auto-grouping</span> splits keywords into tightly themed ad groups by their most common words.</li>
                   <li><span className="font-medium text-text">Cross-group negatives</span> stop ad groups from competing for the same search.</li>
-                  <li><span className="font-medium text-text">Estimates</span> use search volume, CPC and your expected CTR per match type.</li>
+                  <li><span className="font-medium text-text">Estimates</span> use search volume, CPC and your expected CTR per match type{metricsSource() === "none" ? " (needs DataForSEO; shown as n/a until connected)" : ""}.</li>
                   <li><span className="font-medium text-text">Export</span> a CSV that Google Ads Editor imports directly (Campaign, Ad Group, Keyword, Criterion Type, Max CPC).</li>
                 </ul>
               )}
@@ -95,8 +97,9 @@ export default async function PpcKeywordToolPage({ searchParams }: PageProps<"/p
         subject={campaign.name}
         meta={
           <>
-            {(sources.length ? sources : ["demo"]).map((s) => (
-              <DataSourceBadge key={s} source={s === "dataforseo" ? "dataforseo" : "demo"} fetchedAt={campaign.updated_at} />
+            <DataSourceBadge source="user" note="your campaign plan" />
+            {sources.filter((s) => s === "dataforseo" || s === "demo").map((s) => (
+              <DataSourceBadge key={s} source={s as "dataforseo" | "demo"} fetchedAt={campaign.updated_at} />
             ))}
             <Badge>
               {info.flag} {info.name}
@@ -110,6 +113,17 @@ export default async function PpcKeywordToolPage({ searchParams }: PageProps<"/p
           </ButtonLink>
         }
       />
+      {!sources.some((s) => s === "dataforseo" || s === "demo") && (
+        <NeedsData
+          compact
+          className="mb-4"
+          providers={["dataforseo"]}
+          title="Volume, CPC and cost estimates need DataForSEO"
+          shows={["Monthly search volume and CPC per keyword", "Estimated clicks and cost per ad group and campaign", "Max CPC in the Google Ads Editor export"]}
+        >
+          <p className="mt-2 text-[12.5px] text-text-2">Ad groups, match types, negatives and the Google Ads Editor export work now. Keywords added after connecting get metrics automatically.</p>
+        </NeedsData>
+      )}
       <PpcPlanner detail={detail} selected={selected} />
       {sources.includes("demo") && <DemoNotice className="mt-6" />}
     </Page>

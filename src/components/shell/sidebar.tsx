@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { NAV } from "./nav";
 import { Logo } from "./logo";
 
-export function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => void }) {
+export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolean; onClose: () => void; available?: Partial<Record<string, boolean>> }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
@@ -75,6 +75,11 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose:
                       >
                         <Icon className={cn("h-4 w-4 shrink-0", active ? "text-[#b3a8ff]" : "text-nav-muted group-hover:text-nav-text")} />
                         <span className={cn("truncate", collapsed && "lg:hidden")}>{item.label}</span>
+                        {item.requires && available && !item.requires.some((p) => available[p]) && (
+                          <span title="Needs an API connection for data" className={cn("ml-auto rounded border border-white/10 px-1 text-[9.5px] font-semibold tracking-wide text-nav-muted", collapsed && "lg:hidden")}>
+                            API
+                          </span>
+                        )}
                         {item.badge && <span className={cn("ml-auto rounded bg-[#8b7cff]/25 px-1.5 text-[10px] font-semibold text-[#c9c1ff]", collapsed && "lg:hidden")}>{item.badge}</span>}
                       </Link>
                     </li>

@@ -10,6 +10,9 @@ import { createScan, deleteScan, GRID_SIZES, type GridSize } from "@/lib/local/m
 import { businessLocation, getProfile, saveProfile } from "@/lib/local/profile";
 import type { ProfileInput } from "@/lib/local/profile-schema";
 import { generateReviews } from "@/lib/local/reviews";
+import { getLiveReviews, refreshGoogleListing } from "@/lib/local/live";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { actionError, type ActionResult } from "@/app/(app)/projects/actions";
 
 export async function saveProfileAction(projectId: string, input: ProfileInput): Promise<ActionResult<{ saved: true }>> {
@@ -27,6 +30,7 @@ export async function distributeAction(projectId: string, directories?: string[]
   try {
     const user = await requireUser();
     const project = await getProject(user.id, projectId);
+    if (!demoAllowed()) throw new AppError("Distributing listings needs a listings partner API (Google Business Profile, Yext or BrightLocal), which is not connected.", 503);
     const stored = await getProfile(project.id);
     if (!stored) throw new AppError("Save your business profile first.");
     const running = await query<{ id: string }>("SELECT id FROM jobs WHERE project_id=$1 AND kind='local.distribute' AND status IN ('queued','running') LIMIT 1", [project.id]);
@@ -93,7 +97,8 @@ export async function saveReplyAction(projectId: string, reviewId: string, body:
     if (text.length < 5) throw new AppError("Write a reply of at least a few words.");
     if (text.length > 4000) throw new AppError("Replies are limited to 4,000 characters.");
     if (!["draft", "posted"].includes(status)) throw new AppError("Invalid status.");
-    if (!generateReviews(project, stored.profile).some((r) => r.id === reviewId)) throw new AppError("Review not found.", 404);
+    const known = demoAllowed() ? generateReviews(project, stored.profile).some((r) => r.id === reviewId) : !!(await getLiveReviews(project.id))?.reviews.some((r) => r.id === reviewId);
+    if (!known) throw new AppError("Review not found.", 404);
     await query(
       `INSERT INTO local_review_replies(project_id,review_id,body,status,updated_at) VALUES($1,$2,$3,$4,now())
        ON CONFLICT(project_id,review_id) DO UPDATE SET body=excluded.body, status=excluded.status, updated_at=now()`,
@@ -111,6 +116,33 @@ export async function deleteReplyAction(projectId: string, reviewId: string): Pr
     const project = await getProject(user.id, projectId);
     await query("DELETE FROM local_review_replies WHERE project_id=$1 AND review_id=$2", [project.id, reviewId]);
     return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function refreshGoogleListingAction(projectId: string): Promise<ActionResult<{ found: boolean }>> {
+  try {
+    const user = await requireUser();
+    const project = await getProject(user.id, projectId);
+    if (!liveEnabled()) throw new AppError("Checking the Google listing needs DataForSEO.", 503);
+    const stored = await getProfile(project.id);
+    if (!stored) throw new AppError("Save your business profile first.");
+    const listing = await refreshGoogleListing(user.id, project, stored.profile);
+    return { ok: true, data: { found: !!listing } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function fetchReviewsAction(projectId: string): Promise<ActionResult<{ jobId: string }>> {
+  try {
+    const user = await requireUser();
+    const project = await getProject(user.id, projectId);
+    if (!liveEnabled()) throw new AppError("Google reviews need DataForSEO.", 503);
+    if (!(await getProfile(project.id))) throw new AppError("Save your business profile first.");
+    const job = await enqueue({ kind: "local.reviews", ownerId: user.id, projectId: project.id, dedupeKey: `local-reviews:${project.id}:${new Date().toISOString().slice(0, 13)}` });
+    return { ok: true, data: { jobId: job.id } };
   } catch (e) {
     return actionError(e);
   }

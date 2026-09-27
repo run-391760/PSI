@@ -328,9 +328,14 @@ export function expandSeed(seedInput: string) {
 }
 
 /** Organic click-through rate by position; AI Overviews and ads reduce organic CTR. */
-export function ctrFor(position: number, features: SerpFeature[] = []) {
+export function ctrFor(positionInput: number, features: SerpFeature[] = []) {
   const curve = [0.28, 0.155, 0.11, 0.08, 0.065, 0.05, 0.04, 0.032, 0.027, 0.023];
-  let ctr = position <= 10 ? curve[position - 1] : position <= 20 ? 0.012 - (position - 11) * 0.0008 : Math.max(0.0002, 0.003 - (position - 21) * 0.00004);
+  const at = (p: number) => (p <= 10 ? curve[p - 1] : p <= 20 ? 0.012 - (p - 11) * 0.0008 : Math.max(0.0002, 0.003 - (p - 21) * 0.00004));
+  // Fractional (average) positions interpolate between the neighbouring integer positions.
+  const position = Math.min(100, Math.max(1, positionInput));
+  const lo = Math.floor(position);
+  const hi = Math.min(100, lo + 1);
+  let ctr = lo === hi ? at(lo) : at(lo) + (at(hi) - at(lo)) * (position - lo);
   if (features.includes("ai_overview")) ctr *= 0.72;
   if (features.includes("ads_top")) ctr *= 0.88;
   if (features.includes("featured_snippet") && position > 1) ctr *= 0.85;

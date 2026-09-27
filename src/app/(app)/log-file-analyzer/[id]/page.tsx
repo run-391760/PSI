@@ -13,6 +13,7 @@ import { TrendChart } from "@/components/charts/trend-chart";
 import { CrawledPagesTable, ErrorsTable } from "@/components/content/logs/log-tables";
 import { StatusBadge, frequency } from "@/components/content/logs/status";
 import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { demoAllowed } from "@/lib/data-mode";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -76,7 +77,7 @@ export default async function LogAnalysisPage({ params, searchParams }: PageProp
   const { id } = await params;
   const sp = await searchParams;
   const a = await findAnalysis(user.id, id);
-  if (!a) notFound();
+  if (!a || (a.origin === "sample" && !demoAllowed())) notFound();
   const s = a.summary;
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
   const base = `/log-file-analyzer/${id}`;

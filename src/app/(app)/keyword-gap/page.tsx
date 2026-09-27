@@ -5,6 +5,9 @@ import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { KEYWORD_GAP_CATEGORIES, keywordGapCategories, type KeywordGapCategory } from "@/lib/competitive/gap-logic";
 import { getKeywordGap, type GapKeyword, type GapType } from "@/lib/competitive/keyword-gap";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { compareHref, keywordListHref } from "@/lib/competitive/links";
 import { parseDomains, spList, spStr } from "@/lib/competitive/shared";
 import { database } from "@/lib/domain";
@@ -75,6 +78,26 @@ export default async function KeywordGapPage({ searchParams }: PageProps<"/keywo
             }
           />
         </Card>
+      </Page>
+    );
+
+  if (!liveEnabled() && !demoAllowed())
+    return (
+      <Page>
+        {header(`${domains[0]} vs ${domains.length - 1} competitor${domains.length > 2 ? "s" : ""}`)}
+        <NeedsData
+         
+          providers={["dataforseo"]}
+          title="Keyword Gap needs DataForSEO"
+          shows={[
+            "Keywords every competitor ranks for but you don't (missing)",
+            "Keywords where competitors outrank you (weak) and where you lead (strong)",
+            "Untapped and unique keywords with volume, KD and CPC",
+            "Keyword overlap between up to 5 domains, organic or paid",
+          ]}
+        >
+          <p className="mt-3 text-[12.5px] text-text-2">Search Console only covers your own site, so it cannot show which keywords competitors rank for. For your own queries, see Organic Research.</p>
+        </NeedsData>
       </Page>
     );
 

@@ -4,6 +4,7 @@ import { FeatureIcon, featureLabel } from "@/components/seo/badges";
 import { Grid } from "@/components/shell/page";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { NeedsData } from "@/components/seo/needs-data";
 import { Metric, MetricStrip } from "@/components/ui/metric";
 import { MiniTable } from "@/components/ui/mini-table";
 import { Bar } from "@/components/ui/progress";
@@ -12,6 +13,16 @@ import { SnippetsTable } from "../features-table";
 import { Delta } from "../ui";
 
 export async function FeaturesTab({ ctx }: { ctx: Ctx; base: string }) {
+  if (ctx.measured)
+    return (
+      <NeedsData
+        providers={["dataforseo"]}
+        title="SERP features need live SERPs (DataForSEO)"
+        shows={["Featured snippets, AI Overviews and other features per keyword", "Which features your domain owns", "Snippet owners among your competitors", "Owned-features trend"]}
+      >
+        <p className="mt-3 text-[12.5px] text-text-3">Search Console reports positions, clicks and impressions of your own site, but not which SERP features appear for a query.</p>
+      </NeedsData>
+    );
   const d = await serpFeatures(ctx);
   const params = new URLSearchParams({ project: ctx.project.id, tab: "overview", range: String(ctx.range), device: ctx.device });
   const fs = d.features.find((f) => f.feature === "featured_snippet");

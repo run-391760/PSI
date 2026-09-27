@@ -12,7 +12,7 @@ export type IdeaRow = {
   targetId: string;
   url: string;
   keyword: string;
-  volume: number;
+  impressions: number | null;
   position: number | null;
   priority: number;
   total: number;
@@ -59,8 +59,8 @@ export function IdeasTable({ rows, projectId, domain }: { rows: IdeaRow[]; proje
         </div>
       ),
     },
-    { key: "volume", header: "Volume", align: "right", render: (r) => compact(r.volume) },
-    { key: "position", header: "Pos.", align: "right", render: (r) => r.position ?? <span className="text-text-3">&gt;100</span>, sortValue: (r) => r.position ?? 101 },
+    { key: "impressions", header: "Impr. (28d)", align: "right", info: "Search Console impressions of the page in the last 28 days.", render: (r) => (r.impressions == null ? <span className="text-text-3">n/a</span> : compact(r.impressions)), sortValue: (r) => r.impressions ?? -1 },
+    { key: "position", header: "Pos.", align: "right", info: "Average Search Console position, or the position in the live top results.", render: (r) => r.position ?? <span className="text-text-3">n/a</span>, sortValue: (r) => r.position ?? 101 },
     {
       key: "open",
       header: "Ideas",

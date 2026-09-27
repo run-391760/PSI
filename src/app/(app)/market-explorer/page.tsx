@@ -6,6 +6,9 @@ import { getMarketByDomain, getMarketByTopic, matchTopic, QUADRANTS, type Market
 import { CHANNEL_LABELS, CHANNEL_ORDER } from "@/lib/competitive/traffic-analytics";
 import { compareHref } from "@/lib/competitive/links";
 import { spStr } from "@/lib/competitive/shared";
+import { NeedsData } from "@/components/seo/needs-data";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { classifyQuery, database, tryRootDomain } from "@/lib/domain";
 import { TOPICS } from "@/lib/seo/engine";
 import { compact, pct } from "@/lib/format";
@@ -79,6 +82,36 @@ export default async function MarketExplorerPage({ searchParams }: PageProps<"/m
             }
           />
         </Card>
+      </Page>
+    );
+
+  if (!demoAllowed())
+    return (
+      <Page>
+        <PageHeader breadcrumbs={CRUMBS} title="Market Explorer:" subject={domain ? `${domain} market` : topic!.name}>
+          <ToolSearch placeholder="Enter a domain or a category" buttonLabel="Explore" />
+        </PageHeader>
+        <NeedsData
+         
+          providers={liveEnabled() ? ["clickstream"] : ["dataforseo", "clickstream"]}
+          title="Market Explorer needs market-wide traffic data"
+          shows={[
+            "Market players and each one's share of traffic",
+            "Growth quadrant: leaders, game changers, established and niche players",
+            "Total market traffic, search demand and concentration trend",
+            "Channel strategies, devices, countries and audience of the market",
+          ]}
+        >
+          <p className="mt-3 text-[12.5px] text-text-2">
+            Market players and their organic keywords come from DataForSEO; visits, channels and audience across the market need a clickstream provider. Until then, compare competitors with{" "}
+            {domain ? (
+              <Link href={`/organic-research?q=${domain}&db=${db}&tab=competitors`} className="text-link hover:underline">Organic Research › Competitors</Link>
+            ) : (
+              "Organic Research › Competitors"
+            )}
+            .
+          </p>
+        </NeedsData>
       </Page>
     );
 

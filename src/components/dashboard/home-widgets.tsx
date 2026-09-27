@@ -7,7 +7,7 @@ import type { ToolSummary } from "@/lib/projects/summary-types";
 import { jobKindLabel, type JobListRow } from "@/lib/reports/kinds";
 import type { OnboardingStep } from "@/lib/reports/platform";
 import { bandFor } from "@/lib/sensor/bands";
-import type { sensorSnapshot } from "@/lib/sensor/engine";
+import type { DataSource } from "@/lib/providers/labels";
 import { cn } from "@/lib/utils";
 import { NAV } from "@/components/shell/nav";
 import { DomainAvatar } from "@/components/seo/badges";
@@ -113,55 +113,55 @@ export function OnboardingCard({ steps }: { steps: OnboardingStep[] }) {
 
 // ------------------------------------------------------------------------------------- sensor
 
-export function SensorMiniCard({ snapshot }: { snapshot: ReturnType<typeof sensorSnapshot> }) {
-  const band = bandFor(snapshot.today.score);
-  const info = database(snapshot.db);
-  const up = snapshot.change > 0;
+export type SensorMini = {
+  db: string;
+  device: "desktop" | "mobile";
+  market: { score: number; change: number | null; series: number[]; fetchedAt: string | null } | null;
+  marketAvailable: boolean;
+  personal: { score: number; change: number; series: number[]; keywords: number; source: DataSource } | null;
+  ptHref: string;
+};
+
+export function SensorMiniCard({ data }: { data: SensorMini }) {
+  const info = database(data.db);
+  const main = data.market ?? data.personal;
+  const band = main ? bandFor(main.score) : null;
+  const href = `/sensor?db=${data.db}&device=${data.device}`;
   return (
     <Card>
-      <CardHeader
-        title="SERP Sensor"
-        description={`Google volatility today · ${info.flag} ${info.code} · ${snapshot.device === "mobile" ? "Mobile" : "Desktop"}`}
-        href={`/sensor?db=${snapshot.db}&device=${snapshot.device}`}
-      />
+      <CardHeader title="SERP Sensor" description={`${data.market ? "Google volatility" : "Your rankings' volatility"} · ${info.flag} ${info.code} · ${data.device === "mobile" ? "Mobile" : "Desktop"}`} href={href} />
       <CardBody>
-        <div className="flex items-center gap-4">
-          <Gauge value={snapshot.today.score * 10} color={band.color} size={116} label={snapshot.today.score.toFixed(1)} sub="of 10" />
-          <div className="min-w-0 flex-1">
-            <Badge tone={band.tone}>{band.label} volatility</Badge>
-            <div className="mt-1.5 text-[12px] text-text-3">
-              <span className={cn("font-medium", snapshot.change === 0 ? "text-text-2" : up ? "text-serious-ink" : "text-good-ink")}>
-                {snapshot.change > 0 ? "+" : ""}
-                {snapshot.change.toFixed(1)}
-              </span>{" "}
-              vs yesterday
+        {main && band ? (
+          <div className="flex items-center gap-4">
+            <Gauge value={main.score * 10} color={band.color} size={116} label={main.score.toFixed(1)} sub="of 10" />
+            <div className="min-w-0 flex-1">
+              <Badge tone={band.tone}>{band.label} volatility</Badge>
+              {main.change != null && (
+                <div className="mt-1.5 text-[12px] text-text-3">
+                  <span className={cn("font-medium", main.change === 0 ? "text-text-2" : main.change > 0 ? "text-serious-ink" : "text-good-ink")}>
+                    {main.change > 0 ? "+" : ""}
+                    {main.change.toFixed(1)}
+                  </span>{" "}
+                  vs previous day
+                </div>
+              )}
+              <VolatilityStrip values={main.series} width={150} height={26} className="mt-2" />
+              <div className="text-[11px] text-text-3">{data.market ? "Market panel" : `${data.personal?.keywords ?? 0} tracked keywords`}</div>
             </div>
-            <VolatilityStrip values={snapshot.series.map((s) => s.score)} width={150} height={26} className="mt-2" />
-            <div className="text-[11px] text-text-3">Last 30 days</div>
           </div>
-        </div>
-        <div className="mt-3 border-t border-border pt-2.5">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="text-[12px] font-medium text-text-2">Most volatile categories today</span>
-          </div>
-          <ul className="space-y-1">
-            {snapshot.hot.map((h) => (
-              <li key={h.id} className="flex items-center justify-between gap-2 text-[12.5px]">
-                <Link href={`/sensor?db=${snapshot.db}&device=${snapshot.device}&category=${h.id}`} className="truncate text-link hover:underline">
-                  {h.name}
-                </Link>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full" style={{ background: bandFor(h.score).color }} aria-hidden />
-                  <span className="tabular font-medium text-text">{h.score.toFixed(1)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        ) : (
+          <p className="py-3 text-[12.5px] text-text-2">
+            {data.marketAvailable ? "The market score appears after two daily snapshots. " : "Market volatility needs DataForSEO. "}
+            <Link href={data.ptHref} className="text-link hover:underline">
+              Track keywords
+            </Link>{" "}
+            to see how your own rankings move.
+          </p>
+        )}
       </CardBody>
       <CardFooter className="flex items-center justify-between gap-2">
-        <DataSourceBadge source="demo" />
-        <Link href={`/sensor?db=${snapshot.db}&device=${snapshot.device}`} className="text-link hover:underline">
+        {data.market ? <DataSourceBadge source="dataforseo" fetchedAt={data.market.fetchedAt ?? undefined} /> : data.personal ? <DataSourceBadge source={data.personal.source} /> : <span className="text-text-3">No data yet</span>}
+        <Link href={href} className="text-link hover:underline">
           Open Sensor →
         </Link>
       </CardFooter>

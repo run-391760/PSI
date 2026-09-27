@@ -3,6 +3,7 @@ import { clamp, hash, rng, round } from "@/lib/seo/engine";
 import type { Project } from "@/lib/projects";
 import { analyzeSentiment, type Sentiment } from "@/lib/monitoring/sentiment";
 import { localCompetitors } from "./competitors";
+import type { LiveReview } from "./dfs-map";
 import type { BusinessProfile } from "./profile-schema";
 
 /**
@@ -20,7 +21,7 @@ export const PLATFORMS: Record<string, { name: string; domain: string }> = {
   trustpilot: { name: "Trustpilot", domain: "trustpilot.com" },
 };
 
-export type ReviewReply = { body: string; date: string; by: "demo" | "you"; status: "posted" | "draft" };
+export type ReviewReply = { body: string; date: string; by: "demo" | "you" | "owner"; status: "posted" | "draft" };
 export type Review = {
   id: string;
   platform: string;
@@ -275,4 +276,14 @@ export function competitorRatings(project: Project, profile: BusinessProfile, st
     { id: "you", name: profile.name, you: true, rating: stats.avg ?? 0, reviews12: stats.total, responseRate: stats.responseRate, perMonth: round(stats.total / 12, 1) },
     ...pick.map((b) => ({ id: b.id, name: b.name, you: false, rating: b.rating, reviews12: Math.round(b.reviewsPerMonth * 12), responseRate: round(b.responseRate * 100, 0), perMonth: b.reviewsPerMonth })),
   ];
+}
+
+/** Real Google reviews (DataForSEO) → review items; the owner's public reply counts as posted, your drafts overlay it. */
+export function reviewsFromLive(live: LiveReview[], saved: Map<string, { body: string; status: "draft" | "posted"; date: string; by: "you" }>): Review[] {
+  return live.map((r) => {
+    const s = analyzeSentiment(r.text, r.rating);
+    const own = saved.get(r.id);
+    const reply: ReviewReply | null = r.ownerReply ? { body: r.ownerReply.body, date: r.ownerReply.date, by: "owner", status: "posted" } : own ? own : null;
+    return { id: r.id, platform: "google", author: r.author, rating: r.rating, date: r.date, text: r.text, sentiment: s.label, sentimentScore: s.score, aspects: [], reply };
+  });
 }

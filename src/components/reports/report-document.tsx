@@ -14,6 +14,7 @@ import { DonutChart } from "@/components/charts/donut-chart";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { ToolWidget, widgetTool } from "@/components/dashboard/tool-widget";
 import { AsBadge, DomainLink, INTENT_META, IntentBadges, KdBadge, KeywordLink } from "@/components/seo/badges";
+import { NeedsData } from "@/components/seo/needs-data";
 import { DataSourceBadge } from "@/components/seo/source-badge";
 import { Badge } from "@/components/ui/badge";
 import { Metric, MetricStrip } from "@/components/ui/metric";
@@ -291,10 +292,20 @@ function ToolStatus({ summaries }: { summaries: ToolSummary[] }) {
 
 // ----------------------------------------------------------------------------- project sections
 
+function GoogleNeeds({ d }: { d: Extract<ReportData, { template: "project" }> }) {
+  if (d.google.state === "error") return <p className="text-[13px] text-critical-ink">Google data could not be loaded: {d.google.message}</p>;
+  if (d.google.state === "not-configured") return <NeedsData compact providers={["google"]} />;
+  return <p className="rounded-lg border border-dashed border-border-strong px-4 py-5 text-center text-[13px] text-text-3">Link this project to its Search Console site and GA4 property on Organic Traffic Insights to include this section.</p>;
+}
+
 function ProjectSections({ d, sections }: { d: Extract<ReportData, { template: "project" }>; sections: string[] }) {
   const o = d.overview;
   const db = database(d.project.country).code;
-  const history = last12(o.history).map((h) => ({ month: h.month, organic: h.organicTraffic, referringDomains: h.referringDomains }));
+  const g = d.google.state === "ready" ? d.google.snapshot : null;
+  const nv = (v: number | null, f: (x: number) => string = compact) => (v == null ? "n/a" : f(v));
+  const dfsNeeds = <NeedsData compact providers={["dataforseo"]} />;
+  const audit = [...d.audit].reverse();
+  const lastAudit = d.audit[0];
   const blocks: Record<string, { title: string; description?: string; body: ReactNode }> = {
     summary: {
       title: "Project summary",
@@ -316,36 +327,98 @@ function ProjectSections({ d, sections }: { d: Extract<ReportData, { template: "
               </div>
             ))}
           </dl>
-          <Panel className="p-0">
-            <MetricStrip>
-              <Metric label="Authority Score" value={o.authorityScore} size="sm" />
-              <Metric label="Organic traffic" value={compact(o.organic.traffic)} delta={o.organic.trafficChangePct} size="sm" />
-              <Metric label="Organic keywords" value={compact(o.organic.keywords)} delta={o.organic.keywordsChangePct} size="sm" />
-              <Metric label="Referring domains" value={compact(o.backlinks.referringDomains)} size="sm" sub={`${compact(o.backlinks.total)} backlinks`} />
-            </MetricStrip>
-          </Panel>
+          {g && (
+            <Panel className="p-0">
+              <MetricStrip>
+                <Metric label={`Clicks (${g.range.days} days)`} value={nv(g.clicks)} delta={g.clicksDelta} size="sm" />
+                <Metric label="Impressions" value={nv(g.impressions)} delta={g.impressionsDelta} size="sm" />
+                <Metric label="Avg. position" value={nv(g.position, (x) => x.toFixed(1))} delta={g.positionDelta} upIsGood={false} size="sm" />
+                <Metric label="Organic sessions" value={nv(g.sessions)} delta={g.sessionsDelta} size="sm" />
+              </MetricStrip>
+            </Panel>
+          )}
         </div>
       ),
     },
-    tools: {
-      title: "Tool widgets",
-      description: "Current status of every tool in the project",
-      body: <ToolStatus summaries={d.summaries} />,
+    tools: { title: "Tool widgets", description: "Current status of every tool in the project", body: <ToolStatus summaries={d.summaries} /> },
+    search: {
+      title: "Search performance",
+      description: g ? `Search Console clicks and GA4 organic sessions per day, ${g.range.start} → ${g.range.end}` : undefined,
+      body: g ? (
+        <TrendChart data={g.daily} xKey="date" xFormat="day" height={220} series={[...(g.clicks != null ? [{ key: "clicks", label: "Clicks" }] : []), ...(g.sessions != null ? [{ key: "organic", label: "Organic sessions" }] : [])]} />
+      ) : (
+        <GoogleNeeds d={d} />
+      ),
     },
-    traffic: { title: "Organic traffic trend", description: "Estimated monthly organic visits, last 12 months", body: <TrendChart data={history} xKey="month" type="area" height={220} series={[{ key: "organic", label: "Organic traffic" }]} /> },
-    keywords: {
-      title: "Top organic keywords",
-      body: (
+    queries: {
+      title: "Top search queries",
+      body: g ? (
         <MiniTable
-          columns={[{ header: "Keyword" }, { header: "Pos.", align: "right" }, { header: "Volume", align: "right" }, { header: "KD %", align: "right" }, { header: "Traffic %", align: "right" }]}
-          rows={o.topKeywords.slice(0, 10).map((k) => [<KeywordLink key="k" keyword={k.keyword} db={db} />, k.position, compact(k.volume), <KdBadge key="kd" kd={k.kd} />, pct(k.trafficPct, 2)])}
+          empty="Search Console returned no queries for this period."
+          columns={[{ header: "Query" }, { header: "Clicks", align: "right" }, { header: "Impressions", align: "right" }, { header: "CTR", align: "right" }, { header: "Position", align: "right" }]}
+          rows={g.topQueries.map((q) => [<KeywordLink key="k" keyword={q.query} db={db} />, compact(q.clicks), compact(q.impressions), pct(q.ctr * 100, 1), q.position.toFixed(1)])}
         />
+      ) : (
+        <GoogleNeeds d={d} />
+      ),
+    },
+    pages: {
+      title: "Top landing pages",
+      body: g ? (
+        <MiniTable
+          empty="No page data for this period."
+          columns={[{ header: "Page" }, { header: "Clicks", align: "right" }, { header: "Impressions", align: "right" }, { header: "Position", align: "right" }, { header: "Org. sessions", align: "right" }]}
+          rows={g.topPages.map((p) => [<span key="u" className="block max-w-[320px] truncate text-text-2">{p.path}</span>, nv(p.clicks), nv(p.impressions), nv(p.position, (x) => x.toFixed(1)), nv(p.sessions)])}
+        />
+      ) : (
+        <GoogleNeeds d={d} />
+      ),
+    },
+    audit: {
+      title: "Site Audit",
+      description: lastAudit ? `Latest crawl ${lastAudit.finishedAt ? dateLabel(lastAudit.finishedAt) : ""} · ${compact(lastAudit.pages)} pages` : undefined,
+      body: lastAudit ? (
+        <div className="space-y-3">
+          <Panel className="p-0">
+            <MetricStrip>
+              <Metric label="Site Health" value={lastAudit.health == null ? "n/a" : `${lastAudit.health}%`} size="sm" />
+              <Metric label="Errors" value={compact(lastAudit.errors)} size="sm" />
+              <Metric label="Warnings" value={compact(lastAudit.warnings)} size="sm" />
+              <Metric label="Notices" value={compact(lastAudit.notices)} size="sm" />
+            </MetricStrip>
+          </Panel>
+          {audit.length > 1 && <TrendChart data={audit.map((c) => ({ date: (c.finishedAt ?? "").slice(0, 10), health: c.health }))} xKey="date" xFormat="day" yFormat="number" height={180} series={[{ key: "health", label: "Site Health %" }]} />}
+        </div>
+      ) : (
+        <p className="rounded-lg border border-dashed border-border-strong px-4 py-5 text-center text-[13px] text-text-3">No completed Site Audit crawl for this project yet.</p>
+      ),
+    },
+    rankings: {
+      title: "Tracked keyword rankings",
+      description: d.rankings?.day ? `Position Tracking · ${dateLabel(d.rankings.day)}${d.rankings.previousDay ? ` vs ${dateLabel(d.rankings.previousDay)}` : ""}` : undefined,
+      body: d.rankings?.rows.length ? (
+        <MiniTable
+          columns={[{ header: "Keyword" }, { header: "Position", align: "right" }, { header: "Change", align: "right" }, { header: "URL" }]}
+          rows={d.rankings.rows.slice(0, 20).map((r) => {
+            const ch = r.position != null && r.previous != null ? r.previous - r.position : null;
+            return [
+              <KeywordLink key="k" keyword={r.keyword} db={db} />,
+              r.position ?? <span key="p" className="text-text-3">not in top 100</span>,
+              ch == null ? <span key="c" className="text-text-3">—</span> : <span key="c" className={ch > 0 ? "text-good-ink" : ch < 0 ? "text-critical-ink" : "text-text-3"}>{ch > 0 ? `+${ch}` : ch}</span>,
+              <span key="u" className="block max-w-[240px] truncate text-text-2">{r.url ? displayUrl(r.url) : "—"}</span>,
+            ];
+          })}
+        />
+      ) : (
+        <p className="rounded-lg border border-dashed border-border-strong px-4 py-5 text-center text-[13px] text-text-3">No real rankings stored yet. Set up Position Tracking for this project.</p>
       ),
     },
     competitors: {
       title: "Competitor benchmark",
       description: d.project.competitors.length ? undefined : "No competitors are set for this project yet.",
-      body: (
+      body: !d.competitors.length ? (
+        d.available.dataforseo || d.available.demo ? <p className="text-[13px] text-text-3">No competitor data could be loaded.</p> : dfsNeeds
+      ) : (
         <div className="space-y-4">
           <ComparisonTable rows={d.competitors} db={db} highlight={d.project.domain} />
           {d.competitors.length > 1 && (
@@ -359,11 +432,17 @@ function ProjectSections({ d, sections }: { d: Extract<ReportData, { template: "
     },
     backlinks: {
       title: "Backlink profile",
-      body: (
+      body: !o ? (
+        dfsNeeds
+      ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <Panel>
-            <Sub>Referring domains, 12 months</Sub>
-            <TrendChart data={history} xKey="month" type="area" height={190} series={[{ key: "referringDomains", label: "Referring domains" }]} />
+            <Sub>Summary</Sub>
+            <dl className="space-y-1 text-[13px]">
+              <div className="flex justify-between"><dt className="text-text-3">Referring domains</dt><dd>{compact(o.backlinks.referringDomains)}</dd></div>
+              <div className="flex justify-between"><dt className="text-text-3">Backlinks</dt><dd>{compact(o.backlinks.total)}</dd></div>
+              <div className="flex justify-between"><dt className="text-text-3">Referring IPs</dt><dd>{compact(o.backlinks.referringIps)}</dd></div>
+            </dl>
           </Panel>
           <Panel>
             <Sub>Top referring domains</Sub>
@@ -407,10 +486,12 @@ function BacklinkSections({ b, sections }: { b: Extract<ReportData, { template: 
   const weeks: { week: string; new: number; lost: number }[] = [];
   for (let i = 0; i < b.velocity.length; i += 7) {
     const chunk = b.velocity.slice(i, i + 7);
+    if (!chunk.length) continue;
     weeks.push({ week: chunk[0].date.slice(5), new: chunk.reduce((s, x) => s + x.newReferringDomains, 0), lost: chunk.reduce((s, x) => s + x.lostReferringDomains, 0) });
   }
   const growth = f.history.map((h) => ({ month: h.month, referringDomains: h.referringDomains, backlinks: h.backlinks }));
   const toxicTotal = b.toxicity.reduce((s, t) => s + t.value, 0) || 1;
+  if (b.toxicity.length < 3) sections = sections.filter((x) => x !== "toxicity");
   const blocks: Record<string, { title: string; description?: string; body: ReactNode }> = {
     summary: {
       title: "Backlink summary",
@@ -574,7 +655,7 @@ export function ReportDocument({ report, data }: { report: ReportRecord; data: R
   const info = database(report.db);
   const accent = accentColor(report.branding.accent);
   const subject = report.template === "comparison" ? `${report.subject} vs ${(report.options.competitors ?? []).join(", ")}` : report.subject;
-  const source = data.template === "missing" ? null : data.source;
+  const source = data.template === "missing" || data.template === "needs" ? null : data.source;
   return (
     <article className="report-doc mx-auto w-full max-w-[760px] overflow-hidden rounded-lg border border-border bg-surface shadow-card" style={{ "--report-accent": accent } as CSSProperties}>
       <div className="h-2" style={{ background: accent }} aria-hidden />
@@ -609,7 +690,7 @@ export function ReportDocument({ report, data }: { report: ReportRecord; data: R
         </dl>
         {source && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <DataSourceBadge source={source} fetchedAt={data.template !== "missing" ? data.fetchedAt : undefined} />
+            <DataSourceBadge source={source} fetchedAt={"fetchedAt" in data ? data.fetchedAt : undefined} />
             {source === "demo" && <span className="text-[12px] text-text-3">Synthetic demo numbers, not measured data.</span>}
           </div>
         )}
@@ -617,6 +698,7 @@ export function ReportDocument({ report, data }: { report: ReportRecord; data: R
       </header>
       <div className="report-body border-t border-border px-6 py-7 sm:px-8">
         {data.template === "missing" && <p className="py-10 text-center text-[13px] text-text-3">{data.reason}</p>}
+        {data.template === "needs" && <NeedsData providers={data.providers} title="This report needs DataForSEO" shows={["Authority, organic and paid traffic of any domain", "Keywords, competitors and backlink profile", "Charts that refresh every time you open the report"]}>{<p className="mt-2 text-[12.5px] text-text-3">{data.reason}</p>}</NeedsData>}
         {data.template === "domain" && <DomainSections o={data.overview} sections={report.sections} db={info.code} />}
         {data.template === "project" && <ProjectSections d={data} sections={report.sections} />}
         {data.template === "backlinks" && <BacklinkSections b={data.backlinks} sections={report.sections} />}

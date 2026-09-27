@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
 import { enqueue } from "@/lib/jobs/queue";
 import { clamp, round, unit } from "@/lib/seo/engine";
 import type { Project } from "@/lib/projects";
@@ -9,9 +11,9 @@ import { offsetKm, type GeoPoint } from "./geo";
 import type { BusinessProfile } from "./profile-schema";
 
 /**
- * Map Rank Tracker (demo): local-pack rankings on a geo-grid around the business. Rankings are
- * simulated deterministically from prominence, relevance and distance to each nearby business, so a
- * rescan shows gradual drift rather than random noise. Always labelled "Demo data".
+ * Map Rank Tracker: local-pack rankings on a geo-grid around the business. Real scans (source
+ * "dataforseo") query Google Maps results at every grid point via DataForSEO. The deterministic
+ * simulation (source "demo") runs only with DEMO_DATA=true and demo scans are hidden otherwise.
  */
 
 export const GRID_SIZES = [3, 5, 7, 9] as const;
@@ -33,7 +35,9 @@ export type ScanMetrics = {
   foundPct: number;
   buckets: { top3: number; top4_10: number; top11_20: number; notFound: number };
 };
-export type CompetitorStat = { id: string; name: string; you: boolean; avgRank: number | null; top3: number; solv: number; rating: number; reviews: number };
+export type CompetitorStat = { id: string; name: string; you: boolean; avgRank: number | null; top3: number; solv: number; rating: number | null; reviews: number | null };
+/** A business competing in the local pack (demo: simulated; live: seen in Google Maps results). */
+export type PackBusiness = { id: string; name: string; you?: boolean; rating: number | null; reviews: number | null };
 export type KeywordResult = { keyword: string; cells: GridCell[]; metrics: ScanMetrics; competitors: CompetitorStat[] };
 
 export type ScanRow = {
@@ -45,6 +49,7 @@ export type ScanRow = {
   center: GeoPoint;
   seq: number;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
+  source: "demo" | "dataforseo";
   job_id: string | null;
   error: string | null;
   created_at: string;
@@ -88,7 +93,7 @@ export function simulateRow(input: { domain: string; businesses: LocalBusiness[]
     });
 }
 
-export function summarize(cells: (GridCell & { order?: string[] })[], businesses: LocalBusiness[]): { metrics: ScanMetrics; competitors: CompetitorStat[] } {
+export function summarize(cells: (GridCell & { order?: string[] })[], businesses: PackBusiness[]): { metrics: ScanMetrics; competitors: CompetitorStat[] } {
   const n = cells.length || 1;
   const ranks = cells.map((c) => c.rank);
   const found = ranks.filter((r): r is number => r != null);
@@ -152,8 +157,8 @@ export async function listScans(projectId: string, limit = 30) {
     `SELECT s.*, (SELECT avg((r.metrics->>'avgRank')::float) FROM local_scan_results r WHERE r.scan_id=s.id) AS avg_rank,
             (SELECT avg((r.metrics->>'solv')::float) FROM local_scan_results r WHERE r.scan_id=s.id) AS solv,
             (SELECT avg((r.metrics->>'top3Pct')::float) FROM local_scan_results r WHERE r.scan_id=s.id) AS top3_pct
-     FROM local_scans s WHERE s.project_id=$1 ORDER BY s.created_at DESC LIMIT $2`,
-    [projectId, limit],
+     FROM local_scans s WHERE s.project_id=$1 AND ($3::boolean OR s.source <> 'demo') ORDER BY s.created_at DESC LIMIT $2`,
+    [projectId, limit, demoAllowed()],
   );
   return rows.map((r) => ({ ...mapScan(r), avgRank: r.avg_rank == null ? null : round(Number(r.avg_rank), 1), solv: r.solv == null ? null : round(Number(r.solv), 1), top3Pct: r.top3_pct == null ? null : round(Number(r.top3_pct), 1) }));
 }
@@ -176,13 +181,15 @@ export async function createScan(input: { ownerId: string; project: Project; pro
   if (keywords.some((k) => k.length > 80)) throw new AppError("Keywords can be at most 80 characters.");
   if (!GRID_SIZES.includes(input.grid)) throw new AppError("Choose a 3×3, 5×5, 7×7 or 9×9 grid.");
   if (!(input.radiusKm >= 0.5 && input.radiusKm <= 25)) throw new AppError("Radius must be between 0.5 and 25 km.");
+  const source = liveEnabled() ? "dataforseo" : demoAllowed() ? "demo" : null;
+  if (!source) throw new AppError("Map rank scans need DataForSEO (Google Maps results). Connect it in Settings → Integrations.", 503);
   const [running] = await query<{ id: string }>("SELECT id FROM local_scans WHERE project_id=$1 AND status IN ('queued','running') LIMIT 1", [input.project.id]);
   if (running) throw new AppError("A scan is already running for this project. Wait for it to finish.", 409);
   const [{ n }] = await query<{ n: number }>("SELECT count(*)::int AS n FROM local_scans WHERE project_id=$1", [input.project.id]);
   const id = randomUUID();
   await query(
-    `INSERT INTO local_scans(id,project_id,keywords,grid_size,radius_km,center,seq,status) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7,'queued')`,
-    [id, input.project.id, JSON.stringify(keywords), input.grid, input.radiusKm, JSON.stringify(input.center), n + 1],
+    `INSERT INTO local_scans(id,project_id,keywords,grid_size,radius_km,center,seq,status,source) VALUES($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7,'queued',$8)`,
+    [id, input.project.id, JSON.stringify(keywords), input.grid, input.radiusKm, JSON.stringify(input.center), n + 1, source],
   );
   const job = await enqueue({ kind: "local.map-scan", ownerId: input.ownerId, projectId: input.project.id, payload: { scanId: id } });
   await query("UPDATE local_scans SET job_id=$2 WHERE id=$1", [id, job.id]);

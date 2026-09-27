@@ -3,7 +3,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { requirePageUser } from "@/lib/auth";
-import { AUDIT_JOB, auditSchedule, disavowText, effectiveStats, getAuditSettings, latestRunsByProject, listAuditDomains, listAuditRuns, listOrphanListEntries } from "@/lib/backlinks/audit";
+import { AUDIT_JOB, auditAvailable, auditSchedule, disavowText, effectiveStats, getAuditSettings, latestDomainsAreDemo, latestRunsByProject, listAllListEntries, listAuditDomains, listAuditRuns, listOrphanListEntries } from "@/lib/backlinks/audit";
+import { LIVE_MARKERS } from "@/lib/backlinks/map";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
+import { NeedsData } from "@/components/seo/needs-data";
 import { MARKER_INFO, POTENTIAL_MIN, TOXIC_MIN, type AuditDomainRow } from "@/lib/backlinks/types";
 import { database } from "@/lib/domain";
 import { compact, dateTimeLabel, timeAgo } from "@/lib/format";
@@ -93,10 +97,14 @@ export default async function BacklinkAuditPage({ searchParams }: PageProps<"/ba
 
   const tabParam = typeof sp.tab === "string" ? sp.tab : "overview";
   const tab: Tab = (TABS as readonly string[]).includes(tabParam) ? (tabParam as Tab) : "overview";
-  const [settings, job, runs, schedule] = await Promise.all([getAuditSettings(project.id), latestJob(project.id, AUDIT_JOB), listAuditRuns(project.id), auditSchedule(project.id)]);
-  const running = !!job && (job.status === "queued" || job.status === "running");
+  const [settings, job, allRuns, schedule, domainsDemo] = await Promise.all([getAuditSettings(project.id), latestJob(project.id, AUDIT_JOB), listAuditRuns(project.id), auditSchedule(project.id), latestDomainsAreDemo(project.id)]);
+  const available = auditAvailable();
+  const running = available && !!job && (job.status === "queued" || job.status === "running");
+  // The stored domains belong to the most recent run; if that run used (hidden) demo data, show no results.
+  const runs = domainsDemo ? [] : allRuns;
   const latest = runs[0] ?? null;
-  const source: DataSource = (latest?.source as DataSource) ?? "demo";
+  const source: DataSource = (latest?.source as DataSource) ?? (liveEnabled() ? "dataforseo" : "demo");
+  const markerNames = liveEnabled() || !demoAllowed() ? [...LIVE_MARKERS] : Object.keys(MARKER_INFO).filter((m) => m !== "Not in latest audit");
   const setupValues = { brandTerms: settings?.brandTerms ?? project.brand_terms ?? [], country: settings?.country ?? project.country, weekly: settings?.weekly ?? true };
   const switcher = <ProjectSwitcher projects={projects.map((p) => ({ id: p.id, name: p.name, domain: p.domain }))} current={project.id} />;
 
@@ -107,9 +115,9 @@ export default async function BacklinkAuditPage({ searchParams }: PageProps<"/ba
       subject={project.domain}
       meta={
         <>
-          <DataSourceBadge source={source} fetchedAt={latest?.createdAt} />
+          {latest && <DataSourceBadge source={source} fetchedAt={latest.createdAt} />}
           {latest && <Badge>Last audit {timeAgo(latest.createdAt)}</Badge>}
-          {settings && (schedule?.enabled ? <Badge tone="info">Weekly re-audit · next {timeUntil(schedule.next_run_at)}</Badge> : <Badge>Schedule off</Badge>)}
+          {settings && available && (schedule?.enabled ? <Badge tone="info">Weekly re-audit · next {timeUntil(schedule.next_run_at)}</Badge> : <Badge>Schedule off</Badge>)}
           {settings && (
             <Badge>
               {database(settings.country).flag} {database(settings.country).name}
@@ -120,12 +128,53 @@ export default async function BacklinkAuditPage({ searchParams }: PageProps<"/ba
       actions={
         <>
           {switcher}
-          {settings && <AuditSettingsButton projectId={project.id} initial={setupValues} />}
-          {(settings || latest) && <RunAuditButton projectId={project.id} disabled={running} />}
+          {settings && available && <AuditSettingsButton projectId={project.id} initial={setupValues} />}
+          {(settings || latest) && available && <RunAuditButton projectId={project.id} disabled={running} />}
         </>
       }
     />
   );
+
+  if (!available && !latest) {
+    const entries = await listAllListEntries(project.id);
+    const lists = { remove: entries.filter((r) => r.list === "remove"), disavow: entries.filter((r) => r.list === "disavow") };
+    const listTab = sp.tab === "disavow" ? "disavow" : "remove";
+    return (
+      <Page className="overflow-x-clip">
+        {header}
+        <NeedsData
+          className="mb-4"
+          providers={["dataforseo"]}
+          title="Connect DataForSEO to audit your backlinks"
+          shows={[
+            `Every referring domain of ${project.domain} with a 0–100 toxicity score`,
+            "DataForSEO spam score plus markers from the real link data",
+            "Spammy domain names, suspicious TLDs, low authority, sitewide links",
+            "Keyword-rich anchors and link networks on shared IP subnets",
+            "Weekly re-audits with alerts for new toxic domains",
+            "Toxic-score history per audit",
+          ]}
+        >
+          <p className="mt-3 text-[12.5px] text-text-2">Your Remove and Disavow lists stay available below, and disavow.txt can still be downloaded.</p>
+        </NeedsData>
+        <TabsNav
+          className="mb-4"
+          items={[
+            { href: "/backlink-audit?tab=remove", label: "Remove", count: lists.remove.length },
+            { href: "/backlink-audit?tab=disavow", label: "Disavow", count: lists.disavow.length },
+          ]}
+        />
+        {listTab === "remove" ? (
+          <Card>
+            <CardHeader title="Remove list" description="Track outreach to site owners asking them to remove links. Emails are copied, never sent automatically." />
+            <RemoveTable projectId={project.id} rows={lists.remove} site={{ domain: project.domain, name: project.name }} />
+          </Card>
+        ) : (
+          <DisavowPanel projectId={project.id} rows={lists.disavow} fileText={(await disavowText(project)).text} domain={project.domain} />
+        )}
+      </Page>
+    );
+  }
 
   if (!settings && !latest && !running)
     return (
@@ -142,9 +191,9 @@ export default async function BacklinkAuditPage({ searchParams }: PageProps<"/ba
             <CardHeader title="What the audit checks" description="Each referring domain gets a 0–100 toxicity score from these markers" />
             <CardBody>
               <ul className="space-y-1.5 text-[13px]">
-                {Object.entries(MARKER_INFO).map(([m, info]) => (
+                {markerNames.map((m) => (
                   <li key={m} className="flex items-center gap-1.5 text-text-2">
-                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-text-3" /> {m} <InfoTip text={info} />
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-text-3" /> {m} <InfoTip text={MARKER_INFO[m] ?? m} />
                   </li>
                 ))}
               </ul>
@@ -161,7 +210,7 @@ export default async function BacklinkAuditPage({ searchParams }: PageProps<"/ba
         {job && <JobProgress jobId={job.id} title="Auditing your backlink profile" initial={{ status: job.status, progress: job.progress, total: job.total, message: job.message }} className="mb-4" />}
         {!running && (
           <Card>
-            <EmptyState title="No audit results yet" description="The last audit did not finish. Run it again." action={<RunAuditButton projectId={project.id} />} />
+            <EmptyState title="No audit results yet" description={domainsDemo ? "Earlier results used demo data and are hidden. Run a new audit with live data." : "The last audit did not finish. Run it again."} action={<RunAuditButton projectId={project.id} />} />
           </Card>
         )}
       </Page>

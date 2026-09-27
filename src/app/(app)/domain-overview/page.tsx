@@ -3,6 +3,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { getDomainOverview } from "@/lib/competitive/domain-overview";
+import { getOwnSearch, getOwnTraffic, ownSiteFor, settle } from "@/lib/competitive/own-site";
+import { ownRange } from "@/lib/competitive/own-site-map";
+import { demoAllowed } from "@/lib/data-mode";
+import { liveEnabled } from "@/lib/providers/source";
+import { NoSearchSource, OwnDomainOverview, RangeBar } from "@/components/competitive/own-search-view";
 import { database, tryRootDomain } from "@/lib/domain";
 import { compact, displayUrl, money, pct } from "@/lib/format";
 import { featureLabel, FeatureIcon, INTENT_META, DomainLink, KeywordLink, KdBadge, IntentBadges, AsBadge } from "@/components/seo/badges";
@@ -25,6 +30,7 @@ import { NewProjectButton } from "@/components/projects/project-form";
 
 export const metadata: Metadata = { title: "Domain Overview" };
 
+const CRUMBS = [{ label: "Competitive research" }, { label: "Domain Overview", href: "/domain-overview" }];
 const EXAMPLES = ["nike.com", "zillow.com", "healthline.com", "coursera.org", "paruluniversity.ac.in"];
 
 export default async function DomainOverviewPage({ searchParams }: PageProps<"/domain-overview">) {
@@ -60,6 +66,20 @@ export default async function DomainOverviewPage({ searchParams }: PageProps<"/d
       </Page>
     );
 
+  if (!liveEnabled()) {
+    const own = await ownSiteFor(user.id, domain);
+    if (own) return <OwnSiteOverview userId={user.id} own={own} domain={domain} db={db} rangeParam={typeof sp.range === "string" ? sp.range : undefined} />;
+    if (!demoAllowed())
+      return (
+        <Page>
+          <PageHeader breadcrumbs={CRUMBS} title="Domain Overview:" subject={domain} actions={<NewProjectButton variant="secondary" label="Create project" defaultDomain={domain} />}>
+            <ToolSearch placeholder="Enter a domain" />
+          </PageHeader>
+          <NoSearchSource domain={domain} tool="Domain Overview" />
+        </Page>
+      );
+  }
+
   const { data: d, source, fetchedAt } = await getDomainOverview(user.id, domain, db);
   const info = database(db);
   const link = (path: string) => `${path}?q=${encodeURIComponent(domain)}&db=${db}`;
@@ -79,7 +99,7 @@ export default async function DomainOverviewPage({ searchParams }: PageProps<"/d
   return (
     <Page>
       <PageHeader
-        breadcrumbs={[{ label: "Competitive research" }, { label: "Domain Overview", href: "/domain-overview" }]}
+        breadcrumbs={CRUMBS}
         title="Domain Overview:"
         subject={domain}
         meta={
@@ -367,6 +387,69 @@ export default async function DomainOverviewPage({ searchParams }: PageProps<"/d
         </Card>
       </Grid>
       {source === "demo" && <DemoNotice className="mt-6" />}
+    </Page>
+  );
+}
+
+/** Real "your site" overview from Search Console (+GA4) for a domain linked in one of the user's projects. */
+async function OwnSiteOverview({ userId, own, domain, db, rangeParam }: { userId: string; own: NonNullable<Awaited<ReturnType<typeof ownSiteFor>>>; domain: string; db: string; rangeParam?: string }) {
+  const range = ownRange(rangeParam);
+  const [search, traffic] = await Promise.all([
+    own.link.gscSite ? settle(getOwnSearch(userId, own, range.id)) : Promise.resolve(null),
+    own.link.ga4Property ? settle(getOwnTraffic(userId, own.link.ga4Property, range.id)) : Promise.resolve(null),
+  ]);
+  const base = `/domain-overview?q=${encodeURIComponent(domain)}&db=${db}`;
+  const orgBase = `/organic-research?q=${encodeURIComponent(domain)}&db=${db}&range=${range.id}`;
+  const insights = `/organic-traffic-insights?project=${own.project.id}`;
+  return (
+    <Page>
+      <PageHeader
+        breadcrumbs={CRUMBS}
+        title="Domain Overview:"
+        subject={domain}
+        meta={
+          <>
+            {search?.data && <DataSourceBadge source="search-console" fetchedAt={search.data.fetchedAt} note={search.data.data.site} />}
+            {traffic?.data && <DataSourceBadge source="google-analytics" fetchedAt={traffic.data.fetchedAt} note={own.link.ga4PropertyName ?? traffic.data.data.property} />}
+            <Badge tone="brand">Your site · {own.project.name}</Badge>
+          </>
+        }
+        actions={
+          <>
+            <ButtonLink href={insights} variant="secondary">
+              Organic Traffic Insights
+            </ButtonLink>
+            <PrintButton />
+          </>
+        }
+      >
+        <ToolSearch placeholder="Enter a domain" />
+      </PageHeader>
+      {search?.error && <Callout tone="critical" className="mb-4" title="Search Console data could not be loaded">{search.error}</Callout>}
+      {traffic?.error && <Callout tone="warning" className="mb-4" title="Google Analytics data could not be loaded">{traffic.error}</Callout>}
+      {!own.link.gscSite && (
+        <Callout tone="info" className="mb-4" title="Link Search Console for search data">
+          Only GA4 is linked for this project. <Link href={`${insights}&edit=1`} className="text-link hover:underline">Link a Search Console property</Link> to see clicks, queries and positions.
+        </Callout>
+      )}
+      {search?.data ? (
+        <>
+          <RangeBar base={base} report={search.data.data} rangeId={range.id} />
+          <OwnDomainOverview r={search.data.data} traffic={traffic?.data?.data ?? null} db={db} orgBase={orgBase} trafficHref={`/traffic-analytics?q=${encodeURIComponent(domain)}&range=${range.id}`} />
+        </>
+      ) : (
+        traffic?.data && (
+          <Card className="mb-4">
+            <CardHeader title="Site traffic (GA4)" href={`/traffic-analytics?q=${encodeURIComponent(domain)}`} />
+            <MetricStrip>
+              <Metric label="Sessions" value={compact(traffic.data.data.totals.sessions)} />
+              <Metric label="Users" value={compact(traffic.data.data.totals.users)} />
+              <Metric label="Key events" value={compact(traffic.data.data.totals.keyEvents)} />
+            </MetricStrip>
+          </Card>
+        )
+      )}
+      <p className="mt-2 text-[12px] text-text-3">Your own data from Google, read-only. Nothing on this page is estimated; search volume, competitors and backlinks need DataForSEO.</p>
     </Page>
   );
 }

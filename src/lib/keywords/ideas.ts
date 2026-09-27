@@ -1,23 +1,26 @@
 import { database } from "@/lib/domain";
 import { autocompleteSuggestions, type AutocompleteResult } from "@/lib/providers/autocomplete";
 import { dfs, market } from "@/lib/providers/dataforseo";
-import { cached, liveEnabled } from "@/lib/providers/source";
+import { cached } from "@/lib/providers/source";
 import { expandSeed, rng, serp, topicFor, topicUniverse } from "@/lib/seo/engine";
-import { keywordRows, mapDfsKeyword } from "./metrics";
+import { keywordRows, mapDfsKeyword, metricsSource, textRow } from "./metrics";
 import { isQuestion, matchesSeed, normalizeKw, stem } from "./text";
 import { toIdea, type AutocompleteInfo, type IdeaRow, type KwRow, type MatchType } from "./types";
 
 export const MAX_IDEAS = 3000;
 
 export type { AutocompleteInfo };
-export type PoolRow = KwRow & { ac: boolean; question: boolean; rel: number | null };
+export type PoolRow = KwRow & { ac: boolean; question: boolean; rel: number | null; /** Discovery order (Autocomplete order for autocomplete pools). */ order: number };
 export type IdeaPool = {
   seed: string;
   db: string;
   topicName: string;
   rows: PoolRow[];
-  /** Metrics source for every row in the pool. */
-  source: "demo" | "dataforseo";
+  /**
+   * Metrics source for every row in the pool. "autocomplete": no metrics provider, the ideas are the real
+   * Google Autocomplete suggestions and every metric is null (intent is text-based).
+   */
+  source: "demo" | "dataforseo" | "autocomplete";
   fetchedAt: string;
   autocomplete: AutocompleteInfo;
   /** Demo pools compute SERP relatedness lazily (only the Related view and Overview need it). */
@@ -96,8 +99,32 @@ async function buildDemoPool(ownerId: string, seed: string, db: string, ac: Auto
   for (const k of topicUniverse(topicFor(seed).id)) all.add(k);
   const keywords = [...all].filter((k) => k.length <= 120);
   const { data, fetchedAt } = await keywordRows(ownerId, keywords, db);
-  const rows: PoolRow[] = data.map((r) => ({ ...r, ac: acSet.has(r.keyword), question: isQuestion(r.keyword), rel: r.keyword === seed ? 100 : null }));
+  const rows: PoolRow[] = data.map((r, order) => ({ ...r, ac: acSet.has(r.keyword), question: isQuestion(r.keyword), rel: r.keyword === seed ? 100 : null, order }));
   return { seed, db, topicName: topic.name, rows, source: "demo", fetchedAt, autocomplete: autocompleteInfo(ac), relReady: false };
+}
+
+/**
+ * No metrics provider: the pool is the seed plus its real Google Autocomplete suggestions, in the order
+ * Google returned them. Metrics stay null; intent is classified from the text.
+ */
+export function autocompletePoolRows(seed: string, ac: AutocompleteResult): PoolRow[] {
+  const suggestions = ac.status === "ok" ? ac.data.suggestions.map((s) => s.keyword) : [];
+  const keywords = [...new Set([seed, ...suggestions])].filter((k) => k && k.length <= 120);
+  const acSet = new Set(suggestions);
+  return keywords.map((k, order) => ({ ...textRow(k), ac: acSet.has(k), question: isQuestion(k), rel: null, order }));
+}
+
+function buildAutocompletePool(seed: string, db: string, ac: AutocompleteResult): IdeaPool {
+  return {
+    seed,
+    db,
+    topicName: "",
+    rows: autocompletePoolRows(seed, ac),
+    source: "autocomplete",
+    fetchedAt: ac.status === "ok" ? ac.fetchedAt : new Date().toISOString(),
+    autocomplete: autocompleteInfo(ac),
+    relReady: true,
+  };
 }
 
 function ensureRelatedness(pool: IdeaPool) {
@@ -124,7 +151,7 @@ async function buildLivePool(ownerId: string, seed: string, db: string, ac: Auto
   const missing = [...acSet].filter((k) => !byKw.has(k)).slice(0, 700);
   if (missing.length) for (const r of (await keywordRows(ownerId, missing, db)).data) byKw.set(r.keyword, r);
   const relatedSet = new Set(fetched.related);
-  const rows: PoolRow[] = [...byKw.values()].map((r) => ({ ...r, ac: acSet.has(r.keyword), question: isQuestion(r.keyword), rel: relatedSet.has(r.keyword) ? 50 : null }));
+  const rows: PoolRow[] = [...byKw.values()].map((r, order) => ({ ...r, ac: acSet.has(r.keyword), question: isQuestion(r.keyword), rel: relatedSet.has(r.keyword) ? 50 : null, order }));
   return { seed, db, topicName: "", rows, source: "dataforseo", fetchedAt, autocomplete: autocompleteInfo(ac), relReady: true };
 }
 
@@ -136,13 +163,15 @@ export async function ideaPool(ownerId: string, seedInput: string, dbInput: stri
   const seed = normalizeKw(seedInput);
   const db = database(dbInput).code;
   const useAc = opts.autocomplete !== false;
-  const live = liveEnabled();
-  const key = `${live ? "live" : "demo"}:${db}:${seed}:${useAc ? "ac" : "-"}`;
+  const source = metricsSource();
+  const key = `${source}:${db}:${seed}:${useAc ? "ac" : "-"}`;
   const hit = POOLS.get(key);
   if (hit && Date.now() < hit.expires) return hit.pool;
   const pool = (async () => {
     const ac: AutocompleteResult = useAc ? await autocompleteSuggestions(seed, db) : { status: "disabled" };
-    return live ? buildLivePool(ownerId, seed, db, ac) : buildDemoPool(ownerId, seed, db, ac);
+    if (source === "dataforseo") return buildLivePool(ownerId, seed, db, ac);
+    if (source === "demo") return buildDemoPool(ownerId, seed, db, ac);
+    return buildAutocompletePool(seed, db, ac);
   })();
   const entry = { expires: Date.now() + POOL_TTL, pool };
   POOLS.set(key, entry);
@@ -160,7 +189,7 @@ export function selectIdeas(pool: IdeaPool, match: MatchType, questionsOnly: boo
   rows.sort((a, b) =>
     match === "related"
       ? (b.rel ?? 0) - (a.rel ?? 0) || (b.volume ?? -1) - (a.volume ?? -1)
-      : (b.volume ?? -1) - (a.volume ?? -1) || a.keyword.localeCompare(b.keyword),
+      : (b.volume ?? -1) - (a.volume ?? -1) || (pool.source === "autocomplete" ? a.order - b.order : a.keyword.localeCompare(b.keyword)),
   );
   const total = rows.length;
   const totalVolume = rows.reduce((s, r) => s + (r.volume ?? 0), 0);

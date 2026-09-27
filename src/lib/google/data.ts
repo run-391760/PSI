@@ -71,10 +71,11 @@ export function dateRange(days: number) {
 
 // ------------------------------------------------------------------------------ Search Console
 
-type GscRow = { keys?: string[]; clicks: number; impressions: number; ctr: number; position: number };
+export type GscRow = { keys?: string[]; clicks: number; impressions: number; ctr: number; position: number };
 export type GscTotals = { clicks: number; impressions: number; ctr: number; position: number };
 
-async function gscQuery(userId: string, site: string, body: Record<string, unknown>) {
+/** Raw Search Analytics query (type web, includes fresh data). */
+export async function gscQuery(userId: string, site: string, body: Record<string, unknown>) {
   const data = await googleApi<{ rows?: GscRow[] }>(userId, `${GSC}/sites/${encodeURIComponent(site)}/searchAnalytics/query`, { type: "web", dataState: "all", ...body });
   return data.rows ?? [];
 }
@@ -142,8 +143,9 @@ async function gscInsights(userId: string, site: string, range: ReturnType<typeo
 
 // ------------------------------------------------------------------------------ GA4
 
-type Ga4Row = { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] };
-async function ga4Report(userId: string, property: string, body: Record<string, unknown>) {
+export type Ga4Row = { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] };
+/** Raw GA4 Data API runReport. Call sequentially: GA4 limits concurrent requests per property. */
+export async function ga4Report(userId: string, property: string, body: Record<string, unknown>) {
   const data = await googleApi<{ rows?: Ga4Row[] }>(userId, `${GA_DATA}/${property}:runReport`, body);
   return data.rows ?? [];
 }

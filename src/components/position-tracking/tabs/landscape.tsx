@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { compact, dayLabel, displayUrl, num, pct } from "@/lib/format";
 import { landscape, type Ctx } from "@/lib/position-tracking/reports";
-import { FeatureIcon, featureLabel, PositionChange } from "@/components/seo/badges";
+import { FeatureIcon, featureLabel } from "@/components/seo/badges";
 import { Grid } from "@/components/shell/page";
 import { BarChart } from "@/components/charts/bar-chart";
 import { TrendChart } from "@/components/charts/trend-chart";
@@ -10,9 +10,10 @@ import { Metric, MetricStrip } from "@/components/ui/metric";
 import { MiniTable } from "@/components/ui/mini-table";
 import { Bar } from "@/components/ui/progress";
 import { InfoTip } from "@/components/ui/tooltip";
+import { NeedsData } from "@/components/seo/needs-data";
 import { ExportButton } from "../export-button";
 import { SovBars } from "../sov-bars";
-import { Delta, Pos, Stat, domainColor, domainDashed } from "../ui";
+import { Delta, Pos, PosDiff, Stat, domainColor, domainDashed } from "../ui";
 
 export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
   const d = await landscape(ctx);
@@ -43,13 +44,17 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
     { band: "Top 3", start: d.bandsStart.top3, end: d.bandsEnd.top3 },
     { band: "4–10", start: d.bandsStart.top10, end: d.bandsEnd.top10 },
     { band: "11–20", start: d.bandsStart.top20, end: d.bandsEnd.top20 },
-    { band: "21–100", start: d.bandsStart.top100, end: d.bandsEnd.top100 },
-    { band: "Not ranking", start: d.bandsStart.none, end: d.bandsEnd.none },
+    { band: ctx.measured ? "21+" : "21–100", start: d.bandsStart.top100, end: d.bandsEnd.top100 },
+    { band: ctx.measured ? "No impressions" : "Not ranking", start: d.bandsStart.none, end: d.bandsEnd.none },
   ];
   const trafficDelta = s && e && s.traffic > 0 ? ((e.traffic - s.traffic) / s.traffic) * 100 : null;
+  const m = ctx.measured;
+  const ownDaily = d.daily.filter((a) => a.domain === own);
+  const clicks = ownDaily.reduce((sum, a) => sum + (a.clicks ?? 0), 0);
+  const impressions = ownDaily.reduce((sum, a) => sum + (a.impressions ?? 0), 0);
   const exportRows: (string | number | null)[][] = [
-    ["Date", "Domain", "Visibility %", "Estimated traffic", "Average position", "Top 3", "Top 10", "Top 20", "Top 100", "Keywords"],
-    ...d.daily.map((a) => [a.day, a.domain, a.visibility.toFixed(2), Math.round(a.traffic), a.avgPosition?.toFixed(1) ?? null, a.top3, a.top10, a.top20, a.top100, a.keywords]),
+    ["Date", "Domain", "Visibility %", m ? "Clicks" : "Estimated traffic", "Average position", "Top 3", "Top 10", "Top 20", m ? "Keywords with impressions" : "Top 100", "Keywords", ...(m ? ["Impressions"] : [])],
+    ...d.daily.map((a) => [a.day, a.domain, a.visibility.toFixed(2), Math.round(a.traffic), a.avgPosition?.toFixed(1) ?? null, a.top3, a.top10, a.top20, a.top100, a.keywords, ...(m ? [a.impressions ?? null] : [])]),
   ];
   const link = (tab: string, extra = "") => `${base}&tab=${tab}${extra}`;
   const kwLink = (id: string) => link("overview", `&kw=${id}`);
@@ -60,27 +65,31 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
         <MetricStrip>
           <Stat
             label="Visibility"
-            info={<InfoTip text="Σ CTR(position) ÷ (keywords × CTR(#1)) × 100. 100% means every tracked keyword ranks #1." />}
+            info={<InfoTip text={m ? "Index from your Search Console average positions: Σ CTR(position) ÷ (keywords × CTR(#1)) × 100. Keywords without impressions count as 0." : "Σ CTR(position) ÷ (keywords × CTR(#1)) × 100. 100% means every tracked keyword ranks #1."} />}
             value={e ? pct(e.visibility, 2) : "n/a"}
             delta={<Delta value={e && s ? e.visibility - s.visibility : null} digits={2} suffix="%" />}
             sub={s && ctx.startDay !== ctx.endDay ? `${pct(s.visibility, 2)} at start of range` : undefined}
           />
-          <Metric label="Estimated traffic" info="Search volume × CTR at the current position, summed over tracked keywords (monthly)." value={e ? compact(e.traffic) : "n/a"} delta={trafficDelta == null ? null : Number(trafficDelta.toFixed(1))} sub="visits / month" />
+          {m ? (
+            <Metric label="Clicks" info="Real Search Console clicks from the tracked keywords over the selected range." value={compact(clicks)} sub={`${compact(impressions)} impressions · CTR ${impressions ? pct((clicks / impressions) * 100, 1) : "n/a"}`} />
+          ) : (
+            <Metric label="Estimated traffic" info="Search volume × CTR at the current position, summed over tracked keywords (monthly)." value={e ? compact(e.traffic) : "n/a"} delta={trafficDelta == null ? null : Number(trafficDelta.toFixed(1))} sub="visits / month" />
+          )}
           <Stat
             label="Average position"
-            info={<InfoTip text="Mean position of all tracked keywords; keywords outside the top 100 count as 100." />}
+            info={<InfoTip text={m ? "Mean Search Console position of the keywords that had impressions on the end date." : "Mean position of all tracked keywords; keywords outside the top 100 count as 100."} />}
             value={e?.avgPosition != null ? num(e.avgPosition, 1) : "n/a"}
             delta={<Delta value={s?.avgPosition != null && e?.avgPosition != null ? s.avgPosition - e.avgPosition : null} />}
             sub="lower is better"
           />
           <Stat label="Keywords in top 3" value={e ? e.top3 : "n/a"} delta={<Delta value={e && s ? e.top3 - s.top3 : null} digits={0} hideZero />} sub={e ? `of ${e.keywords} tracked` : undefined} />
-          <Stat label="Keywords in top 10" value={e ? e.top10 : "n/a"} delta={<Delta value={e && s ? e.top10 - s.top10 : null} digits={0} hideZero />} sub={e ? `${e.ranked} in top 100` : undefined} />
+          <Stat label="Keywords in top 10" value={e ? e.top10 : "n/a"} delta={<Delta value={e && s ? e.top10 - s.top10 : null} digits={0} hideZero />} sub={e ? `${e.ranked} ${m ? "with impressions" : "in top 100"}` : undefined} />
         </MetricStrip>
       </Card>
 
       <Grid cols={2} className="mb-4 lg:grid-cols-[1.65fr_1fr]">
         <Card>
-          <CardHeader title="Visibility trend" description="Your domain vs competitors, daily" info="Click a legend item to hide a domain." actions={<ExportButton name={`visibility-${own}`} rows={exportRows} />} />
+          <CardHeader title="Visibility trend" description={m ? "Your domain, daily (from Search Console positions)" : "Your domain vs competitors, daily"} info="Click a legend item to hide a domain." actions={<ExportButton name={`visibility-${own}`} rows={exportRows} />} />
           <CardBody>
             {visData.length > 1 ? (
               <TrendChart data={visData} xKey="day" xFormat="day" yFormat="percent" series={series} height={280} />
@@ -89,6 +98,11 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
             )}
           </CardBody>
         </Card>
+        {m ? (
+          <NeedsData compact providers={["dataforseo"]} title="Competitors need DataForSEO" shows={["Competitor visibility and average position", "Share of voice on your keywords", "Competitors discovered in your SERPs"]}>
+            <p className="mt-2 text-[12px] text-text-3">Search Console only reports your own site.</p>
+          </NeedsData>
+        ) : (
         <Card>
           <CardHeader title="Competitors" description="Visibility on the end date" href={link("competitors")} />
           <CardBody>
@@ -123,6 +137,7 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
             </Link>
           </CardFooter>
         </Card>
+        )}
       </Grid>
 
       <Grid cols={2} className="mb-4">
@@ -150,7 +165,7 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
           </CardBody>
         </Card>
         <Card>
-          <CardHeader title="Estimated traffic" description="Monthly visits from tracked keywords, per domain" />
+          <CardHeader title={m ? "Clicks" : "Estimated traffic"} description={m ? "Daily Search Console clicks from tracked keywords" : "Monthly visits from tracked keywords, per domain"} />
           <CardBody>
             {trafficData.length > 1 ? <TrendChart data={trafficData} xKey="day" xFormat="day" yFormat="compact" series={series} height={240} /> : <p className="py-16 text-center text-[13px] text-text-3">Not enough history yet.</p>}
           </CardBody>
@@ -159,17 +174,17 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
 
       <Grid cols={3} className="mb-4">
         <Card>
-          <CardHeader title="Top keywords" description="By estimated traffic" href={link("overview")} />
+          <CardHeader title="Top keywords" description={m ? "By clicks in the range" : "By estimated traffic"} href={link("overview")} />
           <CardBody>
             <MiniTable
               empty="No keywords rank in the top 100 yet."
-              columns={[{ header: "Keyword" }, { header: "Pos.", align: "right" }, { header: "Diff", align: "right" }, { header: "Traffic", align: "right" }]}
+              columns={[{ header: "Keyword" }, { header: "Pos.", align: "right" }, { header: "Diff", align: "right" }, { header: m ? "Clicks" : "Traffic", align: "right" }]}
               rows={d.topKeywords.map((k) => [
                 <Link key="k" href={kwLink(k.id)} scroll={false} className="block max-w-[180px] truncate text-link hover:underline" title={k.url ? `${k.keyword} → ${displayUrl(k.url)}` : k.keyword}>
                   {k.keyword}
                 </Link>,
                 <Pos key="p" value={k.position} strong />,
-                <PositionChange key="c" previous={k.start} current={k.position} />,
+                <PosDiff key="c" previous={k.start} current={k.position} />,
                 compact(k.traffic),
               ])}
             />
@@ -180,6 +195,9 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
       </Grid>
 
       <Grid cols={2} className="mb-4">
+        {m ? (
+          <NeedsData compact providers={["dataforseo"]} title="SERP features need DataForSEO" shows={["Featured snippets, AI Overviews and other features in your keywords' SERPs", "Features owned by your domain"]} />
+        ) : (
         <Card>
           <CardHeader title="SERP features" description="Present in your keywords' SERPs vs. owned by your domain" href={link("features")} />
           <CardBody>
@@ -215,6 +233,7 @@ export async function LandscapeTab({ ctx, base }: { ctx: Ctx; base: string }) {
             </div>
           </CardBody>
         </Card>
+        )}
         <Card>
           <CardHeader title="Rankings overview" description="Keywords per position band: start vs end of range" />
           <CardBody>

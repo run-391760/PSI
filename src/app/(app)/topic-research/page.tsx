@@ -7,6 +7,7 @@ import { normalizeKw } from "@/lib/keywords/text";
 import { getTopicResearch, listFavorites } from "@/lib/keywords/topics";
 import { kdBand } from "@/components/seo/badges";
 import { DemoNotice } from "@/components/seo/source-badge";
+import { NeedsData } from "@/components/seo/needs-data";
 import { ToolSearch } from "@/components/seo/tool-search";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
@@ -75,6 +76,7 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
   const base = `/topic-research?q=${encodeURIComponent(topic)}&db=${db}`;
   const headlines = t.subtopics.reduce((s, x) => s + x.headlines.length, 0);
   const questions = t.subtopics.reduce((s, x) => s + x.questions.length, 0);
+  const metrics = t.source !== "autocomplete";
 
   return (
     <Page>
@@ -101,18 +103,32 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
         <ToolSearch placeholder="Enter a topic" buttonLabel="Get content ideas" keep={["view"]} />
       </PageHeader>
 
+      {!metrics && (
+        <NeedsData
+          compact
+          className="mb-4"
+          providers={["dataforseo"]}
+          title="Volumes, difficulty and top-ranking headlines need DataForSEO"
+          shows={["Search volume and difficulty per subtopic", "Topic efficiency (volume vs. difficulty)", "Headlines of the pages ranking in the live Google top 10", "Thousands of database ideas beyond Autocomplete"]}
+        >
+          <p className="mt-2 text-[12.5px] text-text-2">Shown now: subtopics, questions and related searches from real Google Autocomplete suggestions, grouped by shared words.</p>
+        </NeedsData>
+      )}
       {t.subtopics.length === 0 ? (
         <Card>
-          <EmptyState title="Not enough data for this topic" description="Try a broader topic (one or two words), or check the spelling." />
+          <EmptyState
+            title={!metrics && t.autocomplete.status !== "ok" ? "Google Autocomplete returned no suggestions" : "Not enough data for this topic"}
+            description={!metrics && t.autocomplete.status !== "ok" ? "Autocomplete could not be reached; it will be retried shortly." : "Try a broader topic (one or two words), or check the spelling."}
+          />
         </Card>
       ) : (
         <>
           <Card className="mb-4">
             <MetricStrip>
-              <Metric label="Topic volume" value={compact(t.volume)} sub={`${info.flag} monthly searches, all ideas`} />
-              <Metric label="Avg. difficulty" value={t.difficulty == null ? "n/a" : `${t.difficulty}%`} sub={t.difficulty == null ? undefined : kdBand(t.difficulty).label} />
-              <Metric label="Subtopics" value={t.subtopics.length} />
-              <Metric label="Headlines" value={headlines} sub="from the top 10 + ideas" />
+              <Metric label="Topic volume" value={compact(t.volume)} sub={t.volume == null ? "needs DataForSEO" : `${info.flag} monthly searches, all ideas`} />
+              <Metric label="Avg. difficulty" value={t.difficulty == null ? "n/a" : `${t.difficulty}%`} sub={t.difficulty == null ? (metrics ? undefined : "needs DataForSEO") : kdBand(t.difficulty).label} />
+              <Metric label="Subtopics" value={t.subtopics.length} sub={metrics ? undefined : "grouped by shared words"} />
+              <Metric label="Headlines" value={t.serpHeadlines ? headlines : "n/a"} sub={t.serpHeadlines ? "from the top 10 + ideas" : "needs DataForSEO"} />
               <Metric label="Questions" value={questions} sub={t.autocomplete.status === "ok" ? "incl. real autocomplete" : undefined} />
             </MetricStrip>
           </Card>
@@ -129,7 +145,7 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
             ]}
           />
 
-          {view === "cards" && <TopicCards subtopics={t.subtopics} topic={topic} db={db} favorites={favKeys} />}
+          {view === "cards" && <TopicCards subtopics={t.subtopics} topic={topic} db={db} favorites={favKeys} metrics={metrics} />}
           {view === "explorer" && <TopicExplorer subtopics={t.subtopics} topic={topic} db={db} favorites={favKeys} />}
           {view === "mindmap" && (
             <Card>
@@ -137,13 +153,13 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
               <CardBody>
                 <MindMap
                   root={topic}
-                  rootSub={`${compact(t.volume)} volume · ${t.subtopics.length} subtopics`}
+                  rootSub={t.volume == null ? `${t.subtopics.length} subtopics` : `${compact(t.volume)} volume · ${t.subtopics.length} subtopics`}
                   branches={[...t.subtopics]
-                    .sort((a, b) => b.volume - a.volume)
+                    .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || b.keywords - a.keywords)
                     .slice(0, 12)
                     .map((s) => ({
                       label: s.name,
-                      sub: `${compact(s.volume)} vol · KD ${s.difficulty ?? "n/a"}% · ${s.efficiencyLabel} efficiency`,
+                      sub: s.volume == null ? `${s.keywords} suggestions` : `${compact(s.volume)} vol · KD ${s.difficulty ?? "n/a"}% · ${s.efficiencyLabel} efficiency`,
                       href: `/keyword-overview?q=${encodeURIComponent(s.keyword)}&db=${db}`,
                       children: [...s.questions.slice(0, 2), ...s.related.slice(0, 2)].map((i) => ({ label: i.text, sub: i.volume != null ? compact(i.volume) : undefined })),
                     }))}
@@ -154,14 +170,18 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
           )}
           {view === "overview" && (
             <Grid cols={3}>
+              {t.serpHeadlines ? (
+                <Card>
+                  <CardHeader title="Top headlines" description={t.source === "demo" ? "Titles of top-10 pages, by backlinks" : "Titles of pages in the live Google top 10"} />
+                  <CardBody>
+                    <IdeaListCard ideas={t.topHeadlines} topic={topic} db={db} favorites={favKeys} empty="No headlines found." />
+                  </CardBody>
+                </Card>
+              ) : (
+                <NeedsData compact providers={["dataforseo"]} title="Top headlines need DataForSEO" shows={["Titles of the pages ranking in the live Google top 10 for each subtopic"]} />
+              )}
               <Card>
-                <CardHeader title="Top headlines" description="Titles of top-10 pages, by backlinks" />
-                <CardBody>
-                  <IdeaListCard ideas={t.topHeadlines} topic={topic} db={db} favorites={favKeys} empty="No headlines found." />
-                </CardBody>
-              </Card>
-              <Card>
-                <CardHeader title="Interesting questions" description="Most searched questions" />
+                <CardHeader title="Interesting questions" description={metrics ? "Most searched questions" : "Real Google Autocomplete questions"} />
                 <CardBody>
                   <IdeaListCard ideas={t.topQuestions} topic={topic} db={db} favorites={favKeys} empty="No questions found." />
                 </CardBody>

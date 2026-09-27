@@ -63,7 +63,7 @@ export function ProspectsTable({ projectId, prospects, rejected, competitorCount
       ),
     },
     { key: "rating", header: "Rating", sortValue: (p) => p.score, info: "1–5 stars from Authority Score, topical relevance and how many of your competitors the site links to.", render: (p) => <Stars value={p.rating} reason={p.reason} /> },
-    { key: "authorityScore", header: "AS", align: "right", render: (p) => <AsBadge score={p.authorityScore} /> },
+    { key: "authorityScore", header: "AS", align: "right", render: (p) => (p.authorityScore ? <AsBadge score={p.authorityScore} /> : <span className="text-text-3">n/a</span>) },
     {
       key: "competitors",
       header: "Links to competitors",
@@ -105,7 +105,7 @@ export function ProspectsTable({ projectId, prospects, rejected, competitorCount
           <span className="text-text-3">–</span>
         ),
     },
-    { key: "category", header: "Category", render: (p) => <span className="text-[12.5px] whitespace-nowrap text-text-2">{p.category}</span> },
+    { key: "category", header: "Category", render: (p) => <span className="text-[12.5px] whitespace-nowrap text-text-2">{p.category || "n/a"}</span> },
     {
       key: "actions",
       header: "",
@@ -126,8 +126,8 @@ export function ProspectsTable({ projectId, prospects, rejected, competitorCount
   ];
   const rejectedColumns: Column<PipelineRow>[] = [
     { key: "domain", header: "Prospect", render: (r) => <DomainLink domain={r.domain} db={db} /> },
-    { key: "rating", header: "Rating", render: (r) => <Stars value={r.rating} reason={r.reason} /> },
-    { key: "authorityScore", header: "AS", align: "right", render: (r) => <AsBadge score={r.authorityScore} /> },
+    { key: "rating", header: "Rating", render: (r) => (r.rating ? <Stars value={r.rating} reason={r.reason} /> : <span className="text-text-3">n/a</span>) },
+    { key: "authorityScore", header: "AS", align: "right", render: (r) => (r.authorityScore ? <AsBadge score={r.authorityScore} /> : <span className="text-text-3">n/a</span>) },
     { key: "updatedAt", header: "Rejected", align: "right", render: (r) => <span className="text-text-2">{shortDate(r.updatedAt)}</span> },
     {
       key: "actions",

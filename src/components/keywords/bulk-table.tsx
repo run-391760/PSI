@@ -3,6 +3,8 @@
 import { ListPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { compact, money } from "@/lib/format";
+import type { GscKwStat } from "@/lib/keywords/gsc-map";
+import { TEXT_INTENT_NOTE } from "@/lib/keywords/intent";
 import type { KwRow } from "@/lib/keywords/types";
 import { INTENT_META, IntentBadges, KdBadge, KeywordLink, SerpFeatureIcons, TrendBars, featureLabel } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,8 @@ export function KeywordMetricsTable({
   listName,
   from = "keyword-overview",
   showGlobal = true,
+  metrics = true,
+  gsc,
 }: {
   rows: BulkRow[];
   db: string;
@@ -27,15 +31,33 @@ export function KeywordMetricsTable({
   listName?: string;
   from?: string;
   showGlobal?: boolean;
+  /** False: no metrics provider; volume/KD/CPC show n/a, other metric columns are hidden, intent is text-based. */
+  metrics?: boolean;
+  /** The user's Search Console stats per keyword (adds "Your …" columns). */
+  gsc?: Record<string, GscKwStat>;
 }) {
   const [dialog, setDialog] = useState<string[] | null>(null);
   const columns = useMemo<Column<BulkRow>[]>(() => {
     const cols: Column<BulkRow>[] = [
       { key: "keyword", header: "Keyword", sortValue: (r) => r.keyword, render: (r) => <KeywordLink keyword={r.keyword} db={db} className="whitespace-nowrap" /> },
-      { key: "intent", header: "Intent", sortValue: (r) => r.intents[0] ?? "", render: (r) => (r.intents.length ? <IntentBadges intents={r.intents} /> : na), csv: (r) => r.intents.map((i) => INTENT_META[i].label).join("; ") },
+      { key: "intent", header: metrics ? "Intent" : "Intent (text)", info: metrics ? undefined : TEXT_INTENT_NOTE, sortValue: (r) => r.intents[0] ?? "", render: (r) => (r.intents.length ? <IntentBadges intents={r.intents} /> : na), csv: (r) => r.intents.map((i) => INTENT_META[i].label).join("; ") },
       { key: "volume", header: "Volume", align: "right", sortValue: (r) => r.volume, render: (r) => (r.volume == null ? na : r.volume.toLocaleString()) },
     ];
     if (showGlobal) cols.push({ key: "globalVolume", header: "Global vol.", align: "right", sortValue: (r) => r.globalVolume, render: (r) => (r.globalVolume == null ? na : compact(r.globalVolume)) });
+    if (gsc)
+      cols.push(
+        { key: "gscImpr", header: "Your impr.", align: "right", info: "Impressions of your linked sites in Search Console (last 3 months).", sortValue: (r) => gsc[r.keyword]?.impressions ?? null, render: (r) => (gsc[r.keyword] ? compact(gsc[r.keyword].impressions) : na), csv: (r) => gsc[r.keyword]?.impressions ?? "" },
+        { key: "gscClicks", header: "Your clicks", align: "right", sortValue: (r) => gsc[r.keyword]?.clicks ?? null, render: (r) => (gsc[r.keyword] ? compact(gsc[r.keyword].clicks) : na), csv: (r) => gsc[r.keyword]?.clicks ?? "" },
+        { key: "gscPos", header: "Your pos.", align: "right", info: "Average position in Search Console.", sortValue: (r) => gsc[r.keyword]?.position ?? null, render: (r) => (gsc[r.keyword] ? gsc[r.keyword].position.toFixed(1) : na), csv: (r) => gsc[r.keyword]?.position ?? "" },
+        { key: "gscPage", header: "Your page", sortable: false, render: (r) => (gsc[r.keyword]?.page ? <a href={gsc[r.keyword].page!} target="_blank" rel="noopener noreferrer" className="block max-w-[220px] truncate text-[12.5px] text-link hover:underline" title={gsc[r.keyword].page!}>{gsc[r.keyword].page!.replace(/^https?:\/\/[^/]+/, "") || "/"}</a> : na), csv: (r) => gsc[r.keyword]?.page ?? "" },
+      );
+    if (!metrics) {
+      cols.push(
+        { key: "kd", header: "KD %", align: "right", sortable: false, render: () => na, csv: () => "" },
+        { key: "cpc", header: "CPC (USD)", align: "right", sortable: false, render: () => na, csv: () => "" },
+      );
+      return cols;
+    }
     cols.push(
       { key: "trend", header: "Trend", sortable: false, render: (r) => (r.trend.length ? <TrendBars values={r.trend} width={56} height={16} /> : na), csv: (r) => r.trend.join(" ") },
       { key: "kd", header: "KD %", align: "right", sortValue: (r) => r.kd, render: (r) => <KdBadge kd={r.kd} /> },
@@ -45,14 +67,14 @@ export function KeywordMetricsTable({
       { key: "results", header: "Results", align: "right", sortValue: (r) => r.results, render: (r) => compact(r.results) },
     );
     return cols;
-  }, [db, showGlobal]);
+  }, [db, showGlobal, metrics, gsc]);
   return (
     <>
       <DataTable
         rows={rows}
         columns={columns}
         rowKey={(r) => r.keyword}
-        defaultSort={{ key: "volume", dir: "desc" }}
+        defaultSort={metrics ? { key: "volume", dir: "desc" } : gsc ? { key: "gscImpr", dir: "desc" } : undefined}
         pageSize={50}
         searchable
         searchText={(r) => r.keyword}

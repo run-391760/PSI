@@ -19,7 +19,6 @@ import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
-import { Tooltip } from "@/components/ui/tooltip";
 import { type HighlightRange, HighlightedTextarea } from "./highlighted-textarea";
 import { ScorePanel } from "./score-panel";
 
@@ -34,7 +33,7 @@ const HL: { key: HlKey; label: string; swatch: string }[] = [
   { key: "repeat", label: "Repeats", swatch: "bg-critical-soft" },
 ];
 
-export function WritingEditor({ doc }: { doc: Doc }) {
+export function WritingEditor({ doc, recommendSource = "autocomplete" }: { doc: Doc; recommendSource?: "serp" | "autocomplete" }) {
   const [title, setTitle] = useState(doc.title);
   const [body, setBody] = useState(doc.body);
   const [keywords, setKeywords] = useState(doc.keywords);
@@ -169,7 +168,7 @@ export function WritingEditor({ doc }: { doc: Doc }) {
     setRecommendError(null);
     const res = await recommendTargetsAction(keywords, settings.db);
     setRecommending(false);
-    if (res.ok) setSettings({ ...res.data, origin: settings.origin });
+    if (res.ok) setSettings({ ...res.data, tone: settings.tone, origin: settings.origin });
     else setRecommendError(res.error);
   };
 
@@ -184,11 +183,8 @@ export function WritingEditor({ doc }: { doc: Doc }) {
         meta={
           <>
             <DataSourceBadge source="user" note="scored in your browser" />
-            {settings.demoTargets && (
-              <Tooltip content="Target length, readability and recommended keywords come from the demo engine's top-10 benchmark.">
-                <Badge tone="warning">Targets: demo data</Badge>
-              </Tooltip>
-            )}
+            {settings.targetsSource === "serp" && <DataSourceBadge source="dataforseo" note="targets from the crawled live top 10" />}
+            {settings.targetsSource === "autocomplete" && <DataSourceBadge source="google-autocomplete" note="recommended words" />}
             <span className={cn("text-[12px]", save.status === "error" ? "text-critical-ink" : "text-text-3")} aria-live="polite">
               {saveLabel}
             </span>
@@ -291,6 +287,7 @@ export function WritingEditor({ doc }: { doc: Doc }) {
             onRecommend={recommend}
             recommending={recommending}
             recommendError={recommendError}
+            recommendSource={recommendSource}
           />
         </aside>
       </div>

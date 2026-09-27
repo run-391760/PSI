@@ -48,4 +48,18 @@ CREATE TABLE IF NOT EXISTS local_review_replies (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(project_id, review_id)
 );
+ALTER TABLE local_scans ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'demo';
+CREATE TABLE IF NOT EXISTS local_gbp (
+  project_id text PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  listing jsonb,
+  query text NOT NULL DEFAULT '',
+  fetched_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS local_reviews (
+  project_id text PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  rating real,
+  total integer,
+  reviews jsonb NOT NULL DEFAULT '[]',
+  fetched_at timestamptz NOT NULL DEFAULT now()
+);
 `;

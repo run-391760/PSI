@@ -1,15 +1,19 @@
 import type { SummaryProvider } from "@/lib/projects/summary-types";
+import { enabledLiveEngines } from "@/lib/providers/ai-engines";
 import { loadAiContext } from "./context";
-import { visibilityReport } from "./report";
-import { listPrompts } from "./store";
+import { liveReport } from "./live-report";
+import { listPrompts, liveResults } from "./store";
 
-/** Project dashboard widget: AI visibility score across AI engines (demo data). */
+/** Project dashboard widget: AI visibility computed from real live answers (last 7 days). */
 export const summaries: SummaryProvider[] = [
   async (project) => {
     const base = { tool: "ai-visibility", label: "AI Visibility", href: `/ai-visibility?project=${project.id}` };
     const prompts = await listPrompts(project.id);
     if (!prompts.length) return { ...base, state: "empty", cta: "Track AI prompts" };
-    const r = visibilityReport(await loadAiContext(project), prompts);
+    const live = await liveResults(project.id);
+    const r = liveReport(await loadAiContext(project), prompts, live);
+    if (!r.current.answers)
+      return { ...base, state: "empty", cta: enabledLiveEngines().length ? "Run a live check" : "Connect an AI engine", note: `${prompts.length} prompts tracked` };
     const delta = r.prevScore ? ((r.score - r.prevScore) / r.prevScore) * 100 : null;
     return {
       ...base,
@@ -20,9 +24,8 @@ export const summaries: SummaryProvider[] = [
         { label: "Cited", value: `${r.current.cited}/${r.current.answers}` },
         { label: "Share of voice", value: `${r.sov}%` },
       ],
-      spark: r.trend.map((t) => Number(t.score)),
-      updatedAt: new Date().toISOString(),
-      note: "Demo data · 7 days",
+      updatedAt: r.lastAt ?? undefined,
+      note: `Live answers · ${r.engines.map((e) => e.name).join(", ")}`,
     };
   },
 ];

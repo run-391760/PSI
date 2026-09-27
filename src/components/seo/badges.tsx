@@ -119,7 +119,8 @@ export function PositionChange({ previous, current, compact }: { previous: numbe
   if (current == null && previous != null) return <span className="text-[12px] font-medium text-critical-ink">Lost</span>;
   if (previous == null && current != null) return <span className="rounded bg-brand-soft px-1 text-[11px] font-semibold text-brand-ink">New</span>;
   if (previous == null || current == null) return <span className="text-text-3">–</span>;
-  const d = previous - current;
+  // Search Console positions are fractional averages: round the change to one decimal.
+  const d = Math.round((previous - current) * 10) / 10;
   if (d === 0)
     return (
       <span className="inline-flex items-center text-text-3" aria-label="No change">

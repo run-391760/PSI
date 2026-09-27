@@ -2,12 +2,17 @@ import { ArrowRight, FileSearch2, Lightbulb, ListChecks, Radio } from "lucide-re
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
-import { IDEA_LABELS, IDEA_TYPES, priorityScore, type IdeaType } from "@/lib/content/ideas";
-import { MAX_TARGETS, activeJob, doneIdeas, latestRun, latestRunsByProject, listTargets, openIdeas, rankingSuggestions, recentRuns, runResults } from "@/lib/content/onpage";
+import { IDEA_LABELS, IDEA_TYPES, benchDemand, priorityScore, type IdeaType } from "@/lib/content/ideas";
+import { MAX_TARGETS, activeJob, doneIdeas, latestRun, latestRunsByProject, listTargets, openIdeas, recentRuns, runResults, type Suggestion } from "@/lib/content/onpage";
+import { gscPairs } from "@/lib/content/real";
+import { getProjectGoogle } from "@/lib/google/data";
+import { googleConfigured } from "@/lib/google/oauth";
+import { liveEnabled } from "@/lib/providers/source";
+import { NeedsData } from "@/components/seo/needs-data";
+import type { GscSuggestions } from "@/components/content/onpage/targets-manager";
 import { database } from "@/lib/domain";
 import { compact, dateTimeLabel, displayUrl, timeAgo } from "@/lib/format";
 import { findProject, listProjects } from "@/lib/projects";
-import { keywordMetrics } from "@/lib/seo/engine";
 import { BarChart } from "@/components/charts/bar-chart";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { JobProgress } from "@/components/content/job-progress";
@@ -18,7 +23,7 @@ import { getSchedule } from "@/lib/jobs/queue";
 import { TargetsManager } from "@/components/content/onpage/targets-manager";
 import { ProjectGate } from "@/components/projects/project-gate";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
-import { DataSourceBadge, DemoNotice } from "@/components/seo/source-badge";
+import { DataSourceBadge } from "@/components/seo/source-badge";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
@@ -31,7 +36,7 @@ import { TabsNav } from "@/components/ui/tabs";
 export const metadata: Metadata = { title: "On Page SEO Checker" };
 
 const BREADCRUMBS = [{ label: "On page & tech SEO" }, { label: "On Page SEO Checker", href: "/on-page-checker" }];
-const DESCRIPTION = "Page-level optimization ideas: each page is fetched live and compared with the top 10 results for its target keyword.";
+const DESCRIPTION = "Page-level optimization ideas: each page is fetched live, checked against its target keyword and compared with the real top 10 and your Search Console data when connected.";
 
 function priorityColor(score: number) {
   return score >= 70 ? "var(--critical)" : score >= 45 ? "var(--serious)" : score >= 25 ? "var(--warning)" : "var(--good)";
@@ -64,9 +69,9 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
         />
         <Grid cols={3} className="mt-4">
           {[
-            { icon: <ListChecks className="h-4 w-4" />, title: "1. Choose pages and keywords", text: "Discover pages on your live site, pick them from ranking data, or import a CSV of URL + keyword pairs." },
-            { icon: <Radio className="h-4 w-4" />, title: "2. We fetch and benchmark", text: "Each page is fetched for real (robots.txt respected) and compared with the top 10 results for its keyword." },
-            { icon: <Lightbulb className="h-4 w-4" />, title: "3. Act on prioritized ideas", text: "Strategy, SERP features, semantic, content, backlinks, technical and UX ideas, ranked by traffic potential." },
+            { icon: <ListChecks className="h-4 w-4" />, title: "1. Choose pages and keywords", text: "Discover pages on your live site, pick them from Search Console, or import a CSV of URL + keyword pairs." },
+            { icon: <Radio className="h-4 w-4" />, title: "2. We fetch and benchmark", text: "Each page is fetched for real (robots.txt respected), compared with the crawled Google top 10 (DataForSEO) and your Search Console queries." },
+            { icon: <Lightbulb className="h-4 w-4" />, title: "3. Act on prioritized ideas", text: "Strategy, SERP features, semantic, content, technical and UX ideas, ranked by real impressions and position." },
           ].map((s) => (
             <Card key={s.title}>
               <CardBody className="pt-4">
@@ -82,7 +87,28 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
   }
 
   const db = database(project.country).code;
-  const [targets, run, job, runs, done, schedule] = await Promise.all([listTargets(project.id), latestRun(project.id), activeJob(project.id), recentRuns(project.id), doneIdeas(project.id), getSchedule(project.id, "content.onpage")]);
+  const [targets, run, job, runs, done, schedule, link] = await Promise.all([
+    listTargets(project.id),
+    latestRun(project.id),
+    activeJob(project.id),
+    recentRuns(project.id),
+    doneIdeas(project.id),
+    getSchedule(project.id, "content.onpage"),
+    googleConfigured() ? getProjectGoogle(project.id) : Promise.resolve(null),
+  ]);
+  const serpOn = liveEnabled();
+  const gscSite = link?.gscSite ?? null;
+  let gsc: GscSuggestions;
+  if (!googleConfigured()) gsc = { status: "unavailable", reason: "Connect Search Console (Google) to pick your pages with the most clicks and their top queries." };
+  else if (!gscSite) gsc = { status: "unavailable", reason: `Link a Search Console property to ${project.domain} in Organic Traffic Insights to see page and query suggestions here.` };
+  else {
+    try {
+      const r = await gscPairs(user.id, gscSite, 30);
+      gsc = { status: "ok", rows: r.data.map((p): Suggestion => ({ url: p.url, keyword: p.keyword, clicks: p.clicks, impressions: p.impressions, position: p.position, origin: "gsc" })), fetchedAt: r.fetchedAt };
+    } catch (e) {
+      gsc = { status: "unavailable", reason: `Search Console data could not be loaded: ${e instanceof Error ? e.message : "request failed"}` };
+    }
+  }
   const results = run ? await runResults(run.id) : [];
   const targetIds = new Set(targets.map((t) => t.id));
   const liveResults = results.filter((r) => targetIds.has(r.target_id));
@@ -96,8 +122,9 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
       subject={project.domain}
       meta={
         <>
-          {run && <DataSourceBadge source="crawler" fetchedAt={run.finished_at ?? run.created_at} note="page facts fetched from your site" />}
-          <DataSourceBadge source="demo" />
+          <DataSourceBadge source="crawler" fetchedAt={run ? (run.finished_at ?? run.created_at) : undefined} note="page facts fetched from your site" />
+          {serpOn && <DataSourceBadge source="dataforseo" note="live top 10, crawled for benchmarks" />}
+          {gscSite && <DataSourceBadge source="search-console" note={gscSite} />}
           <Badge>
             {database(db).flag} {database(db).name}
           </Badge>
@@ -120,13 +147,27 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
     </div>
   );
 
+  const missing = [...(serpOn ? [] : (["dataforseo"] as const)), ...(gscSite ? [] : (["google"] as const))];
+  const sourcesCard = missing.length ? (
+    <NeedsData
+      compact
+      className="mb-4"
+      providers={[...missing]}
+      title={missing.length === 2 ? "Ideas use your live pages only — connect data for benchmarks" : missing[0] === "dataforseo" ? "Connect DataForSEO for top-10 benchmarks" : `Link Search Console to ${project.domain} for query ideas`}
+      shows={[
+        ...(serpOn ? [] : ["Live Google top 10 per keyword, crawled to benchmark length, readability and structure", "Words the top pages share, SERP features and People-also-ask questions"]),
+        ...(gscSite ? [] : ["Queries each page gets impressions for but lacks in its title or H1", "Real position, clicks and CTR per page; cannibalization between your pages", "Page + keyword suggestions from your top pages"]),
+      ]}
+    />
+  ) : null;
+
   const setup = (
     <TargetsManager
       projectId={project.id}
       domain={project.domain}
       max={MAX_TARGETS}
-      targets={targets.map((t) => ({ id: t.id, url: t.url, keyword: t.keyword, origin: t.origin, volume: keywordMetrics(t.keyword, db).volume }))}
-      ranking={rankingSuggestions(project.domain, db)}
+      targets={targets.map((t) => ({ id: t.id, url: t.url, keyword: t.keyword, origin: t.origin }))}
+      gsc={gsc}
     />
   );
 
@@ -137,11 +178,11 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
         {progress}
         {!job && (
           <Callout tone="info" className="mb-4" title={targets.length ? `${targets.length} page${targets.length === 1 ? "" : "s"} ready` : "Start by adding pages and target keywords"}>
-            {targets.length ? "Click “Collect ideas” to fetch the pages and compare them with the top 10 rivals for each keyword." : "Discover pages on your live site, pick suggestions from ranking data, or add URL + keyword pairs manually. Up to 50 pairs per project."}
+            {targets.length ? "Click “Collect ideas” to fetch the pages and check them against their keywords." : "Discover pages on your live site, pick them from Search Console, or add URL + keyword pairs manually. Up to 50 pairs per project."}
           </Callout>
         )}
+        {sourcesCard}
         {setup}
-        <DemoNotice className="mt-6" />
       </Page>
     );
 
@@ -154,9 +195,9 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
       targetId: r.target_id,
       url: r.url,
       keyword: r.keyword,
-      volume: r.benchmark.metrics.volume,
-      position: r.benchmark.position,
-      priority: priorityScore(r.benchmark.metrics.volume, r.benchmark.position, open, r.benchmark.metrics.serpFeatures),
+      impressions: benchDemand(r.benchmark).impressions,
+      position: benchDemand(r.benchmark).position,
+      priority: priorityScore(r.benchmark, open),
       total: r.ideas.length,
       open: open.length,
       high: open.filter((i) => i.priority === "high").length,
@@ -176,6 +217,8 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
   const titleFor = (id: string) => IDEA_LABELS[id] ?? allOpen.find((i) => i.id === id)?.title ?? id;
   const top = [...rows].sort((a, b) => b.priority - a.priority).slice(0, 6);
   const live = allOpen.filter((i) => i.source === "live").length;
+  const fromSerp = allOpen.filter((i) => i.source === "serp").length;
+  const fromGsc = allOpen.filter((i) => i.source === "gsc").length;
   const trend = [...runs].reverse().map((r) => ({ date: dateTimeLabel(r.finished_at ?? r.created_at), ideas: r.ideas }));
   const stale = targets.length !== liveResults.length;
 
@@ -197,8 +240,12 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
         ]}
       />
 
+      {tab !== "setup" && sourcesCard}
       {tab === "setup" ? (
-        setup
+        <>
+          {sourcesCard}
+          {setup}
+        </>
       ) : tab === "ideas" ? (
         <Card>
           <CardHeader title="Optimization ideas by page" description="Open ideas per page and category. Sort by priority to see where to start." />
@@ -212,7 +259,7 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
               <Metric label="High priority" value={high} sub="Ideas with the biggest impact" />
               <Metric label="Pages checked" value={`${fetched} / ${liveResults.length}`} sub={fetched < liveResults.length ? `${liveResults.length - fetched} could not be fetched` : "All fetched live"} />
               <Metric label="Pages optimized" value={`${optimized} / ${rows.length}`} info="Pages with no open high-priority ideas." sub="No open high-priority ideas" />
-              <Metric label="Ideas from live pages" value={`${allOpen.length ? Math.round((live / allOpen.length) * 100) : 0}%`} sub={`${live} live · ${allOpen.length - live} demo-based`} />
+              <Metric label="Ideas from your pages" value={`${allOpen.length ? Math.round((live / allOpen.length) * 100) : 0}%`} sub={`${live} page · ${fromSerp} top 10 · ${fromGsc} Search Console`} />
             </MetricStrip>
           </Card>
 
@@ -224,10 +271,10 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
               </CardBody>
             </Card>
             <Card>
-              <CardHeader title="Top pages to optimize" description="Highest priority first: traffic potential plus open high-priority ideas" href={`${base}&tab=ideas`} />
+              <CardHeader title="Top pages to optimize" description="Highest priority first: real impressions and position plus open high-priority ideas" href={`${base}&tab=ideas`} />
               <CardBody>
                 <MiniTable
-                  columns={[{ header: "Page · keyword" }, { header: "Priority", className: "w-32" }, { header: "Ideas", align: "right" }, { header: "Volume", align: "right" }]}
+                  columns={[{ header: "Page · keyword" }, { header: "Priority", className: "w-32" }, { header: "Ideas", align: "right" }, { header: "Impr. (28d)", align: "right" }]}
                   rows={top.map((r) => [
                     <Link key="u" href={`/on-page-checker/${r.targetId}?project=${project.id}`} className="group block max-w-[170px] min-w-0 sm:max-w-[300px]">
                       <span className="block truncate text-link group-hover:underline" title={r.url}>
@@ -243,7 +290,7 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
                       {r.open}
                       {r.high > 0 && <span className="ml-1 text-[11.5px] text-critical-ink">({r.high} high)</span>}
                     </span>,
-                    compact(r.volume),
+                    r.impressions == null ? <span key="v" className="text-text-3">n/a</span> : compact(r.impressions),
                   ])}
                 />
               </CardBody>
@@ -277,12 +324,13 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
               </CardBody>
             </Card>
             <Card>
-              <CardHeader title="Where the ideas come from" info="Live-page ideas come from HTML we fetched from your site. Demo-based ideas rely on synthetic rival benchmarks, SERP features, rankings and backlinks." />
+              <CardHeader title="Where the ideas come from" info="Page ideas come from the HTML we fetched from your site; top-10 ideas from the live Google results crawled for comparison (DataForSEO); Search Console ideas from your own query data." />
               <CardBody>
                 <DistributionBar
                   segments={[
-                    { label: "Live page analysis", value: live, color: "var(--series-3)" },
-                    { label: "Demo benchmarks", value: allOpen.length - live, color: "var(--series-4)" },
+                    { label: "Your live page", value: live, color: "var(--series-3)" },
+                    { label: "Top-10 benchmark", value: fromSerp, color: "var(--series-1)" },
+                    { label: "Search Console", value: fromGsc, color: "var(--series-2)" },
                   ]}
                   format={(v, s) => `${v} · ${s.toFixed(0)}%`}
                 />
@@ -300,9 +348,8 @@ export default async function OnPageCheckerPage({ searchParams }: PageProps<"/on
         </>
       )}
       <p className="mt-6 text-[12px] text-text-3">
-        Page facts (title, headings, text, images, links, schema, indexability) are measured from a live fetch. Rival benchmarks, SERP features, rankings and backlink sources come from the demo engine.
+        Page facts (title, headings, text, images, links, schema, indexability) are measured from a live fetch.{serpOn ? " Benchmarks come from the live Google top 10 (DataForSEO), each page crawled with robots.txt respected." : ""}{gscSite ? " Query, position and click data come from Search Console (last 28 days)." : ""}
       </p>
-      <DemoNotice className="mt-1" />
     </Page>
   );
 }

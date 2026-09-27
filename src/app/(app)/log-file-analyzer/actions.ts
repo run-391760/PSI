@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { rateLimit, requireUser } from "@/lib/auth";
 import { AppError } from "@/lib/domain";
+import { demoAllowed } from "@/lib/data-mode";
 import { fail, type ActionResult } from "@/lib/content/action";
 import { ingestText } from "@/lib/content/logs/ingest";
 import { SAMPLE_HOST, generateSampleLog } from "@/lib/content/logs/sample";
@@ -13,6 +14,7 @@ import { deleteAnalyses, renameAnalysis, saveAnalysis } from "@/lib/content/logs
 export async function loadSampleAction(): Promise<ActionResult<{ id: string }>> {
   try {
     const user = await requireUser();
+    if (!demoAllowed()) throw new AppError("The sample log is only available in local development (DEMO_DATA=true).");
     await rateLimit(`content-logs-sample:${user.id}`, 20, 3600);
     const text = generateSampleLog({ days: 30 });
     const agg = ingestText(text);

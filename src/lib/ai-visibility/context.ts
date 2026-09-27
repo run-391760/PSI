@@ -1,4 +1,5 @@
 import { query } from "@/lib/db";
+import { demoAllowed } from "@/lib/data-mode";
 import type { Project } from "@/lib/projects";
 import { localCompetitors } from "@/lib/local/competitors";
 import { getProfile } from "@/lib/local/profile";
@@ -25,11 +26,12 @@ export async function saveAiCompetitorNames(projectId: string, names: string[]) 
 /** Builds the AI context from the project, its local profile (category, nearby rivals) and competitor names. */
 export async function loadAiContext(project: Project) {
   const [{ names }, stored] = await Promise.all([aiCompetitorNames(project.id), getProfile(project.id)]);
-  const localRivals = stored
+  // Nearby rivals come from the demo local engine: only with DEMO_DATA=true.
+  const localRivals = stored && demoAllowed()
     ? localCompetitors(project, stored.profile)
         .filter((b) => !b.you && !b.domain)
         .slice(0, 3)
         .map((b) => ({ name: b.name, strength: b.strength }))
     : [];
-  return aiContext(project, { competitorNames: names, category: stored?.profile.primaryCategory, localRivals });
+  return aiContext(project, { competitorNames: names, category: stored?.profile.primaryCategory, localRivals, realOnly: !demoAllowed() });
 }

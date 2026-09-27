@@ -7,13 +7,20 @@ import { requireUser } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
 import { AppError, database } from "@/lib/domain";
 import { getProject } from "@/lib/projects";
+import { demoAllowed } from "@/lib/data-mode";
 import { liveEnabled } from "@/lib/providers/source";
 import { keywordMetrics } from "@/lib/seo/engine";
 import { rebuildAllDaily } from "@/lib/position-tracking/check";
+import { gscSuggestions, linkedGscSite } from "@/lib/position-tracking/gsc";
+import { GSC_BACKFILL_DAYS } from "@/lib/position-tracking/gsc-map";
 import { failure, type ActionResult } from "@/lib/position-tracking/result";
 import { cancelCheck, setCheckSchedule, startCheck, type Cadence } from "@/lib/position-tracking/run";
-import { cleanCompetitors, cleanEntries, cleanTagName, clearHistory, createCampaign, deleteCampaign, getCampaign, insertKeywords, keywordCount, updateCampaign } from "@/lib/position-tracking/store";
-import { BACKFILL_DAYS, MAX_KEYWORDS, type DeviceMode, type KeywordEntry } from "@/lib/position-tracking/types";
+import { availableSources, cleanCompetitors, cleanEntries, cleanTagName, clearHistory, createCampaign, deleteCampaign, getCampaign, insertKeywords, keywordCount, updateCampaign } from "@/lib/position-tracking/store";
+import { BACKFILL_DAYS, MAX_KEYWORDS, type CampaignSource, type DeviceMode, type KeywordEntry } from "@/lib/position-tracking/types";
+
+/** First check after setup / a source switch / a market change. */
+const initialPayload = (source: CampaignSource) => (source === "search-console" ? { backfill: GSC_BACKFILL_DAYS } : source === "demo" ? { backfill: BACKFILL_DAYS } : {});
+const sourceSchema = z.enum(["search-console", "dataforseo", "demo"]);
 
 const PATH = "/position-tracking";
 const entrySchema = z.array(z.object({ keyword: z.string().max(255), tags: z.array(z.string().max(40)).max(20).default([]) })).max(MAX_KEYWORDS * 2);
@@ -38,15 +45,16 @@ async function assertKeywords(projectId: string, ids: string[]) {
 
 export async function setupCampaignAction(
   projectId: string,
-  input: { db: string; location: string; device: DeviceMode; competitors: string[]; keywords: KeywordEntry[] },
+  input: { db: string; location: string; device: DeviceMode; competitors: string[]; keywords: KeywordEntry[]; source?: CampaignSource | null },
 ): Promise<ActionResult<{ jobId: string }>> {
   try {
     const { user, project } = await owned(projectId);
     const device = deviceSchema.parse(input.device);
     const keywords = entrySchema.parse(input.keywords);
-    await createCampaign(project, { db: String(input.db), location: String(input.location ?? ""), device, competitors: z.array(z.string().max(255)).max(20).parse(input.competitors), keywords });
+    const source = input.source ? sourceSchema.parse(input.source) : null;
+    const campaign = await createCampaign(project, { db: String(input.db), location: String(input.location ?? ""), device, competitors: z.array(z.string().max(255)).max(20).parse(input.competitors), keywords, source });
     await setCheckSchedule(project.id, "daily");
-    const job = await startCheck(user.id, project.id, liveEnabled() ? {} : { backfill: BACKFILL_DAYS });
+    const job = await startCheck(user.id, project.id, initialPayload(campaign!.source));
     revalidatePath(PATH);
     return { ok: true, data: { jobId: job.id } };
   } catch (e) {
@@ -204,7 +212,7 @@ export async function updateCampaignAction(
     if (targetingChanged) {
       // A different market is a different dataset: start the history over so markets never mix.
       await clearHistory(project.id);
-      if (db !== campaign.db && campaign.source === "demo") {
+      if (db !== campaign.db && campaign.source === "demo" && demoAllowed()) {
         const kws = await query<{ id: string; keyword: string }>("SELECT id, keyword FROM pt_keywords WHERE project_id=$1", [project.id]);
         const rows = kws.map((k) => {
           const m = keywordMetrics(k.keyword, db);
@@ -212,7 +220,7 @@ export async function updateCampaignAction(
         });
         await query("UPDATE pt_keywords k SET volume=x.volume, cpc=x.cpc, kd=x.kd, intents=x.intents FROM jsonb_to_recordset($1::jsonb) AS x(id text, volume int, cpc real, kd int, intents jsonb) WHERE k.id=x.id", [JSON.stringify(rows)]);
       } else if (db !== campaign.db) await query("UPDATE pt_keywords SET metrics_source='pending' WHERE project_id=$1", [project.id]);
-      jobId = (await startCheck(user.id, project.id, campaign.source === "demo" ? { backfill: BACKFILL_DAYS } : {})).id;
+      jobId = (await startCheck(user.id, project.id, initialPayload(campaign.source))).id;
     } else {
       const removed = oldDevices.filter((d) => !newDevices.includes(d));
       for (const d of removed) {
@@ -220,7 +228,10 @@ export async function updateCampaignAction(
         await query("DELETE FROM pt_daily WHERE project_id=$1 AND device=$2", [project.id, d]);
         await query("DELETE FROM pt_serps WHERE project_id=$1 AND device=$2", [project.id, d]);
       }
-      if (campaign.source === "demo" && (addedDevice || competitorsChanged)) jobId = (await startCheck(user.id, project.id, { rebuild: true })).id;
+      if (campaign.source === "search-console") {
+        // Competitors are stored for later (DataForSEO) but Search Console cannot measure them: only a new device needs data.
+        if (addedDevice) jobId = (await startCheck(user.id, project.id, { rebuild: true })).id;
+      } else if (campaign.source === "demo" && (addedDevice || competitorsChanged)) jobId = (await startCheck(user.id, project.id, { rebuild: true })).id;
       else if (addedDevice || competitorsChanged) {
         await rebuildAllDaily(project.id);
         jobId = (await startCheck(user.id, project.id, { manual: true })).id;
@@ -256,21 +267,32 @@ export async function setScheduleAction(projectId: string, cadence: Cadence): Pr
   }
 }
 
-/** Demo campaign → live DataForSEO data. Clears demo history so demo and live numbers never mix. */
-export async function switchToLiveAction(projectId: string): Promise<ActionResult<{ jobId: string }>> {
+/**
+ * Switches a campaign's data source (e.g. a demo campaign → Search Console or DataForSEO). Clears the stored
+ * history and keyword metrics so numbers from different sources never mix, then re-collects (Search Console
+ * backfills 90 days).
+ */
+export async function switchSourceAction(projectId: string, target: CampaignSource): Promise<ActionResult<{ jobId: string }>> {
   try {
     const { user, project, campaign } = await ownedCampaign(projectId);
-    if (!liveEnabled()) throw new AppError("Connect DataForSEO in Settings first.");
-    if (campaign.source === "dataforseo") throw new AppError("This campaign already uses live data.");
+    const source = sourceSchema.parse(target);
+    if (campaign.source === source) throw new AppError("This campaign already uses that data source.");
+    if (!(await availableSources(project.id)).includes(source))
+      throw new AppError(source === "search-console" ? "Link a Search Console property to this project in Organic Traffic Insights first." : source === "dataforseo" ? "Connect DataForSEO in Settings first." : "Demo data is disabled.");
     await clearHistory(project.id);
     await query("UPDATE pt_keywords SET volume=NULL, cpc=NULL, kd=NULL, intents='[]'::jsonb, metrics_source='pending' WHERE project_id=$1", [project.id]);
-    await updateCampaign(project.id, { source: "dataforseo" });
-    const job = await startCheck(user.id, project.id, {});
+    await updateCampaign(project.id, { source });
+    const job = await startCheck(user.id, project.id, initialPayload(source));
     revalidatePath(PATH);
     return { ok: true, data: { jobId: job.id } };
   } catch (e) {
     return failure(e);
   }
+}
+
+/** Demo campaign → live DataForSEO data. */
+export async function switchToLiveAction(projectId: string): Promise<ActionResult<{ jobId: string }>> {
+  return switchSourceAction(projectId, "dataforseo");
 }
 
 export async function deleteCampaignAction(projectId: string): Promise<ActionResult> {
@@ -284,11 +306,16 @@ export async function deleteCampaignAction(projectId: string): Promise<ActionRes
   }
 }
 
-/** Keyword suggestions for the setup wizard / add-keywords dialog (demo engine only; empty in live mode). */
-export async function keywordSuggestionsAction(projectId: string, db: string): Promise<ActionResult<{ keyword: string; position: number; volume: number; kd: number }[]>> {
+/**
+ * Keyword suggestions for the setup wizard / add-keywords dialog: the project's top Search Console queries (real)
+ * for the chosen market; demo engine only with DEMO_DATA=true; otherwise none.
+ */
+export async function keywordSuggestionsAction(projectId: string, db: string): Promise<ActionResult<{ keyword: string; position: number | null; volume: number | null; kd: number | null; clicks?: number; impressions?: number }[]>> {
   try {
-    const { project } = await owned(projectId);
-    if (liveEnabled()) return { ok: true, data: [] };
+    const { user, project } = await owned(projectId);
+    const site = await linkedGscSite(project.id);
+    if (site) return { ok: true, data: await gscSuggestions(user.id, site, database(db).code) };
+    if (!demoAllowed() || liveEnabled()) return { ok: true, data: [] };
     const { domainKeywords } = await import("@/lib/seo/engine");
     const rows = domainKeywords(project.domain, database(db).code)
       .slice(0, 150)

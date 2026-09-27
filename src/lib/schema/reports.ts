@@ -4,6 +4,8 @@
  *
  * - reports: saved My Reports documents (template + subject + sections + branding).
  * - platform_prefs: per-user UI preferences stored server-side (e.g. dismissed onboarding checklist).
+ * - sensor_serps: SERP Sensor market panel, one real top-10 Google snapshot (DataForSEO) per
+ *   regional database × device × UTC day × panel keyword.
  */
 export const reportsSchema = `
 CREATE TABLE IF NOT EXISTS reports (
@@ -26,5 +28,15 @@ CREATE TABLE IF NOT EXISTS platform_prefs (
   user_id text PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   prefs jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sensor_serps (
+  db text NOT NULL,
+  device text NOT NULL,
+  day text NOT NULL,
+  keyword text NOT NULL,
+  results jsonb NOT NULL DEFAULT '[]',
+  features jsonb NOT NULL DEFAULT '[]',
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(db, device, day, keyword)
 );
 `;
