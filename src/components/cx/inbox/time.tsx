@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { dateTimeLabel, timeAgo } from "@/lib/format";
 import { formatSpan, slaStatus, type SlaClock, type SlaTicket } from "@/lib/cx/inbox/sla";
 import { cn } from "@/lib/utils";
+import { PrefsContext } from "./prefs";
 
 /** Re-render every `ms` so relative times and SLA countdowns stay current. */
 export function useNow(ms = 30_000) {
@@ -15,12 +16,15 @@ export function useNow(ms = 30_000) {
   return now;
 }
 
-export function Ago({ iso, className }: { iso: string | null; className?: string }) {
+/** Relative time ("2 hours ago"), or the absolute date when the user turned on "Normal date". */
+export function Ago({ iso, className, absolute }: { iso: string | null; className?: string; absolute?: boolean }) {
   useNow();
+  const ctxAbs = useContext(PrefsContext).prefs.absoluteDates;
+  const abs = absolute ?? ctxAbs;
   if (!iso) return <span className={className}>n/a</span>;
   return (
-    <time dateTime={iso} title={dateTimeLabel(iso)} className={className} suppressHydrationWarning>
-      {timeAgo(iso)}
+    <time dateTime={iso} title={abs ? timeAgo(iso) : dateTimeLabel(iso)} className={className} suppressHydrationWarning>
+      {abs ? dateTimeLabel(iso) : timeAgo(iso)}
     </time>
   );
 }

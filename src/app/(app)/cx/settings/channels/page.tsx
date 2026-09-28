@@ -8,7 +8,9 @@ import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
 import { listChannels } from "@/lib/cx/inbox/channels";
 import { availableChannels } from "@/lib/cx/providers";
+import { cardConfigured, CONNECT_CARDS, CONNECTORS, listConnectorChannels } from "@/lib/cx/admin/connectors";
 import { ChannelsClient } from "./channels-client";
+import { ConnectorsSection } from "./connectors-client";
 
 export const metadata: Metadata = { title: "Channels" };
 
@@ -21,7 +23,7 @@ export default async function Page_({ searchParams }: { searchParams: Promise<Re
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3200";
   const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https");
-  const channels = await listChannels(brand.id);
+  const [channels, connectorRows] = await Promise.all([listChannels(brand.id), listConnectorChannels(brand.id)]);
   const env = {
     whatsappVerify: !!process.env.WHATSAPP_VERIFY_TOKEN,
     whatsappSend: !!process.env.WHATSAPP_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID,
@@ -44,6 +46,7 @@ export default async function Page_({ searchParams }: { searchParams: Promise<Re
         actions={<BrandSwitcher brands={switcher} current={brand.id} />}
       />
       <ChannelsClient brand={brand.id} origin={`${proto}://${host}`} channels={channels} available={availableChannels()} env={env} />
+      <ConnectorsSection brand={brand.id} connectors={[...CONNECTORS]} cards={CONNECT_CARDS.map((c) => ({ ...c, configured: cardConfigured(c.env) }))} rows={connectorRows} />
     </Page>
   );
 }

@@ -174,7 +174,13 @@ export function addBusinessMinutes(start: Date, minutes: number, hours: DayHours
 
 // ------------------------------------------------------------- quality scoring
 
-export type QaCriterion = { id: string; label: string; weight: number; fatal?: boolean; description?: string };
+/**
+ * Response types: yesno (Yes/Partly/No/N/A), input (free text, not scored), scale (1..scaleMax),
+ * scale_text (scale plus a required comment), auto (computed from ticket facts; see autoScore).
+ */
+export type ResponseType = "yesno" | "input" | "scale" | "scale_text" | "auto";
+export type AutoRule = { metric: "frt" | "resolution" | "csat" | "sentiment"; target: number };
+export type QaCriterion = { id: string; label: string; weight: number; fatal?: boolean; description?: string; type?: ResponseType; scaleMax?: number; auto?: AutoRule };
 export type QaSection = { id: string; name: string; criteria: QaCriterion[] };
 /** Answer per criterion: 1 = meets, 0 = does not meet, 0.5 = partially, null = not applicable. */
 export type QaAnswers = Record<string, number | null | undefined>;
@@ -190,7 +196,7 @@ export function scoreReview(sections: QaSection[], answers: QaAnswers) {
     let sg = 0, sm = 0;
     for (const c of s.criteria) {
       const a = answers[c.id];
-      if (a == null) continue;
+      if (a == null || c.type === "input") continue;
       if (c.fatal) {
         if (a === 0) fatal = true;
         continue;
@@ -203,7 +209,7 @@ export function scoreReview(sections: QaSection[], answers: QaAnswers) {
     max += sm;
     bySection.push({ id: s.id, name: s.name, score: sm ? (sg / sm) * 100 : null });
   }
-  const answered = sections.some((s) => s.criteria.some((c) => answers[c.id] != null));
+  const answered = sections.some((s) => s.criteria.some((c) => c.type !== "input" && answers[c.id] != null));
   const score = !answered ? null : fatal ? 0 : max ? (got / max) * 100 : null;
   return { score, fatal, bySection };
 }
@@ -237,4 +243,39 @@ export function humanDuration(seconds: number | null | undefined) {
   if (h < 24) return mm ? `${h}h ${mm}m` : `${h}h`;
   const d = Math.floor(h / 24), hh = h % 24;
   return hh ? `${d}d ${hh}h` : `${d}d`;
+}
+
+/** Scale answer (1..max) as a 0–1 fraction: 1 → 0, max → 1. */
+export function scaleFraction(value: number, max: number) {
+  if (!(max > 1)) return value >= 1 ? 1 : 0;
+  return Math.min(1, Math.max(0, (value - 1) / (max - 1)));
+}
+
+/**
+ * Auto-scale: a 0–1 answer computed from ticket facts. Time metrics (hours) meet the target at 1 and
+ * fall linearly to 0 at 3× the target; CSAT scales 1–5 against the target; sentiment maps
+ * positive/neutral/negative to 1/0.5/0. Null when the fact is unknown.
+ */
+export function autoScore(rule: AutoRule, facts: { frtHours: number | null; resolutionHours: number | null; csat: number | null; sentiment: string | null }) {
+  const time = (h: number | null) => (h == null ? null : h <= rule.target ? 1 : h >= rule.target * 3 ? 0 : 1 - (h - rule.target) / (rule.target * 2));
+  if (rule.metric === "frt") return time(facts.frtHours);
+  if (rule.metric === "resolution") return time(facts.resolutionHours);
+  if (rule.metric === "csat") return facts.csat == null ? null : Math.min(1, Math.max(0, (facts.csat - 1) / Math.max(0.01, rule.target - 1)));
+  return facts.sentiment === "positive" ? 1 : facts.sentiment === "neutral" ? 0.5 : facts.sentiment === "negative" ? 0 : null;
+}
+
+/**
+ * Early warning for an agent from weekly average QA scores (oldest first): "declining" when the last
+ * three weeks fall by 10+ points in total, "below_pass" when the last two weeks are under the pass score.
+ */
+export function earlyWarnings(weekly: (number | null)[], passScore = 80) {
+  const xs = weekly.filter((x): x is number => x != null);
+  const flags: ("declining" | "below_pass")[] = [];
+  if (xs.length >= 3) {
+    const [a, b, c] = xs.slice(-3);
+    if (a > b && b > c && a - c >= 10) flags.push("declining");
+  }
+  if (xs.length >= 2 && xs.slice(-2).every((x) => x < passScore)) flags.push("below_pass");
+  const change = xs.length >= 2 ? xs[xs.length - 1] - xs[0] : null;
+  return { flags, change, latest: xs.length ? xs[xs.length - 1] : null };
 }

@@ -60,13 +60,16 @@ export async function ingestBrand(project: Project, progress: (done: number, tot
           `INSERT INTO cx_mentions(id,project_id,topic_id,source,external_id,url,author,author_handle,author_followers,title,body,language,country,published_at,sentiment,sentiment_score,intent,engagement)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
            ON CONFLICT(project_id,source,external_id) DO UPDATE SET engagement=excluded.engagement, author_followers=COALESCE(excluded.author_followers, cx_mentions.author_followers)
-           RETURNING (xmax = 0) inserted`,
+           RETURNING id, (xmax = 0) inserted`,
           [
             randomUUID(), project.id, topic.id, source, r.externalId.slice(0, 500), r.url, r.author.slice(0, 200), r.authorHandle, r.authorFollowers,
             r.title.slice(0, 500), r.body.slice(0, 8000), r.language, r.country, r.publishedAt, r.sentiment, r.sentimentScore, r.intent, JSON.stringify(r.engagement),
           ],
         );
-        if ((res[0] as { inserted?: boolean } | undefined)?.inserted) inserted++;
+        const row = res[0] as { id?: string; inserted?: boolean } | undefined;
+        if (row?.inserted) inserted++;
+        if (row?.id && r.media?.length)
+          await query("INSERT INTO cx_listening_media(mention_id,project_id,media) VALUES($1,$2,$3::jsonb) ON CONFLICT(mention_id) DO UPDATE SET media=excluded.media", [row.id, project.id, JSON.stringify(r.media.slice(0, 8))]);
       }
       bump(source, { fetched: rows.length, inserted });
       report.inserted += inserted;

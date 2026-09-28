@@ -7,7 +7,7 @@ import { AppError } from "@/lib/domain";
 import { setSchedule } from "@/lib/jobs/queue";
 import { getCxBrand } from "@/lib/cx/context";
 import { actionError, type ActionResult } from "@/app/(app)/projects/actions";
-import { deleteSurvey, dispatchSurveys, getSurvey, inviteForTicket, saveSurvey, surveyInput } from "@/lib/cx/insights/surveys";
+import { deleteSurvey, dispatchSurveys, getSurvey, inviteForTicket, saveSurvey, saveSurveySettings, surveyInput } from "@/lib/cx/insights/surveys";
 import type { z } from "zod";
 
 async function brand(projectId: string) {
@@ -68,6 +68,18 @@ export async function ticketLinkAction(projectId: string, surveyId: string, tick
     const token = await inviteForTicket(projectId, surveyId, t.id, "manual");
     revalidatePath(`/cx/surveys/${surveyId}`);
     return { ok: true, data: { path: `/s/${surveyId}?t=${token}` } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+/** Delivery settings: subject/template, trigger, inline rating, social email dispatch, redirect, background, conditions. */
+export async function saveSurveySettingsAction(projectId: string, id: string, settings: unknown): Promise<ActionResult<null>> {
+  try {
+    await brand(projectId);
+    await saveSurveySettings(projectId, id, settings);
+    revalidatePath(`/cx/surveys/${id}`);
+    return { ok: true, data: null };
   } catch (e) {
     return actionError(e);
   }

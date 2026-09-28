@@ -4,6 +4,7 @@ import Link from "next/link";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { BrandSwitcher } from "@/components/cx/brand-switcher";
 import { CrisisSettingsForm } from "@/components/cx/listening/crisis-settings";
+import { Checklists, EventTools, ExtraSettingsForm } from "@/components/cx/listening/crisis-v2";
 import { EventControls } from "@/components/cx/listening/event-controls";
 import { JobButton } from "@/components/cx/listening/job-button";
 import { ListeningNav } from "@/components/cx/listening/listening-nav";
@@ -18,9 +19,12 @@ import { Metric, MetricStrip } from "@/components/ui/metric";
 import { MiniTable } from "@/components/ui/mini-table";
 import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
+import { aiConfigured } from "@/lib/cx/ai";
 import { eventTimeline, getEvent, listEvents, type CrisisEvent, type ScopeResult } from "@/lib/cx/listening/crisis";
+import { eventChecklists, eventRecovery, getExtraSettings, listPlaybooks } from "@/lib/cx/listening/crisis2";
+import type { Risk } from "@/lib/cx/listening/crisis-math";
 import { getSettings, listTopics } from "@/lib/cx/listening/data";
-import { dateTimeLabel, num, timeAgo } from "@/lib/format";
+import { dateTimeLabel, num, pct, timeAgo } from "@/lib/format";
 import { latestJob } from "@/lib/jobs/queue";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +34,15 @@ const STATUS_TONE: Record<string, Tone> = { open: "critical", monitoring: "warni
 const SEV_TONE: Record<string, Tone> = { critical: "critical", warning: "warning" };
 const KIND_LABEL: Record<string, string> = { volume: "Volume spike", negative: "Negative spike", both: "Volume + negative" };
 const z = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : "n/a");
+const RISK_TONE: Record<string, Tone> = { high: "critical", elevated: "warning", low: "good" };
+function RiskBadge({ risk }: { risk?: Partial<Risk> | null }) {
+  if (!risk || risk.score == null) return <span className="text-[12px] text-text-3">n/a</span>;
+  return (
+    <Badge tone={RISK_TONE[risk.band ?? "low"]}>
+      <span title={`velocity ${(risk.velocity ?? 0).toFixed(2)} × negativity ${(risk.negativity ?? 0).toFixed(2)} × reach ${(risk.reach ?? 0).toFixed(2)}${risk.reachKnown ? "" : " (reach from mention count)"}`}>Risk {risk.score}</span>
+    </Badge>
+  );
+}
 
 export default async function CrisisPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requirePageUser();
@@ -38,7 +51,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
   if (!brand) return <NoBrand title="Crisis management" />;
   const eventId = typeof sp.event === "string" ? sp.event : null;
   const statusFilter = typeof sp.status === "string" && ["open", "monitoring", "resolved"].includes(sp.status) ? sp.status : undefined;
-  const [settings, events, topics, job] = await Promise.all([getSettings(brand.id), listEvents(brand.id), listTopics(brand.id), latestJob(brand.id, "cx.listening.detect")]);
+  const [settings, events, topics, job, extra] = await Promise.all([getSettings(brand.id), listEvents(brand.id), listTopics(brand.id), latestJob(brand.id, "cx.listening.detect"), getExtraSettings(brand.id)]);
   const running = job && ["queued", "running"].includes(job.status) ? job.id : null;
   const counts = { open: events.filter((e) => e.status === "open").length, monitoring: events.filter((e) => e.status === "monitoring").length, resolved: events.filter((e) => e.status === "resolved").length };
   const scopes = ((settings.lastDetect as { scopes?: ScopeResult[] }).scopes ?? []) as ScopeResult[];
@@ -72,7 +85,8 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
         </Page>
       );
     const { event: e, notes, mentions } = data;
-    const buckets = await eventTimeline(brand, e);
+    const [buckets, recovery, checklists, playbooks] = await Promise.all([eventTimeline(brand, e), eventRecovery(brand.id, e, settings.baselineDays), eventChecklists(e.id), listPlaybooks(brand.id)]);
+    const untickedNegative = mentions.filter((x) => x.sentiment === "negative" && !x.ticket_id && x.status !== "ignored").length;
     const hourly = settings.windowHours < 24;
     const chart = buckets.map((b) => ({
       label: new Date(b.start).toLocaleString("en-US", hourly ? { month: "short", day: "numeric", hour: "numeric", timeZone: "UTC" } : { month: "short", day: "numeric", timeZone: "UTC" }),
@@ -91,6 +105,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
           <Badge tone={STATUS_TONE[e.status]}>{e.status}</Badge>
           <Badge tone={SEV_TONE[e.severity]}>{e.severity}</Badge>
           <Badge>{KIND_LABEL[e.kind]}</Badge>
+          <RiskBadge risk={e.risk as Risk} />
         </div>
         <MetricStrip className="mb-5">
           <Metric label="Mentions in spike window" value={num(m.volume?.value)} sub={`baseline ${m.volume ? m.volume.mean.toFixed(1) : "n/a"} per window`} />
@@ -115,6 +130,32 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                     { key: "negative", label: "Negative", color: "var(--critical)" },
                   ]}
                 />
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader
+                title="Recovery vs pre-crisis baseline"
+                description={recovery.baseline.volume == null ? "No baseline: no stored mentions before the spike for this scope." : `Daily volume index (baseline ${recovery.baseline.volume.toFixed(1)}/day over ${recovery.baseline.days}d = 100) and negative share; baseline negative share ${recovery.baseline.negativeShare == null ? "n/a" : pct(recovery.baseline.negativeShare)}`}
+                info="Recovered = 7-day average volume ≤ 125% of baseline and negative share ≤ baseline + 5 points."
+              />
+              <CardBody className="grid gap-4">
+                <div className="grid grid-cols-3 gap-2">
+                  {recovery.milestones.map((m) => (
+                    <div key={m.day} className="rounded-md border border-border p-2.5">
+                      <div className="text-[12px] text-text-3">Day {m.day}</div>
+                      <div className="mt-0.5 text-[14px] font-semibold">
+                        {!m.reached ? <span className="text-text-3">Not yet</span> : m.recovered == null ? "n/a" : m.recovered ? <span className="text-good-ink">Recovered</span> : <span className="text-critical-ink">Not recovered</span>}
+                      </div>
+                      <div className="text-[11.5px] text-text-3">{m.reached ? `volume ${m.volumeIndex == null ? "n/a" : Math.round(m.volumeIndex)} · neg ${m.negativeShare == null ? "n/a" : pct(m.negativeShare)}` : dateTimeLabel(m.date).split(",")[0]}</div>
+                    </div>
+                  ))}
+                </div>
+                {recovery.baseline.volume != null && recovery.points.length > 1 && (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <TrendChart data={recovery.points} xKey="date" xFormat="day" height={180} yFormat="number" showLegend series={[{ key: "volumeIndex", label: "Volume index" }, { key: "baselineIndex", label: "Baseline", dashed: true, color: "var(--chart-text)" }]} />
+                    <TrendChart data={recovery.points} xKey="date" xFormat="day" height={180} yFormat="percent" showLegend series={[{ key: "negativeShare", label: "Negative share", color: "var(--critical)" }, { key: "baselineNegative", label: "Baseline", dashed: true, color: "var(--chart-text)" }]} />
+                  </div>
+                )}
               </CardBody>
             </Card>
             <div>
@@ -143,6 +184,16 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
               <CardBody>
                 <EventControls brandId={brand.id} id={e.id} status={e.status} severity={e.severity} owner={e.owner} />
               </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title="Response" description="Tickets, statements and the debrief" />
+              <CardBody>
+                <EventTools brandId={brand.id} eventId={e.id} untickedNegative={untickedNegative} aiReady={aiConfigured()} />
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title="Playbook" href={`/cx/crisis/playbooks?brand=${brand.id}`} />
+              <Checklists brandId={brand.id} eventId={e.id} checklists={checklists} playbooks={playbooks.map((p) => ({ id: p.id, name: p.name }))} />
             </Card>
             <Card>
               <CardHeader title="Activity" description="Notes, status changes and system events" />
@@ -192,7 +243,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                 <MiniTable
                   className="px-4 pb-3"
                   empty="Detection has not run yet. It runs after each fetch, or use Run detection."
-                  columns={[{ header: "Scope" }, { header: "Mentions", align: "right" }, { header: "Baseline", align: "right" }, { header: "Volume z", align: "right" }, { header: "Negative", align: "right" }, { header: "Negative z", align: "right" }, { header: "State" }]}
+                  columns={[{ header: "Scope" }, { header: "Mentions", align: "right" }, { header: "Baseline", align: "right" }, { header: "Volume z", align: "right" }, { header: "Negative", align: "right" }, { header: "Negative z", align: "right" }, { header: "Risk" }, { header: "State" }]}
                   rows={scopes.map((s) => [
                     <span key="n" className="font-medium">{s.name}</span>,
                     num(s.result.volume.value),
@@ -200,6 +251,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                     s.result.ready ? z(s.result.volume.z) : "n/a",
                     num(s.result.negative.value),
                     s.result.ready ? z(s.result.negative.z) : "n/a",
+                    <RiskBadge key="r" risk={s.risk} />,
                     s.result.triggered ? (
                       <Badge key="b" tone={SEV_TONE[s.result.severity ?? "warning"]}>Spike</Badge>
                     ) : s.result.ready ? (
@@ -234,13 +286,19 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                 )}
               </Card>
             </div>
-            <Card className="self-start">
-              <CardHeader title="Detection thresholds" description="z-score = (window count − baseline mean) / baseline SD (floored at √mean)." />
-              <CrisisSettingsForm
-                brandId={brand.id}
-                initial={{ volumeZ: settings.volumeZ, negativeZ: settings.negativeZ, minMentions: settings.minMentions, baselineDays: settings.baselineDays, windowHours: settings.windowHours, escalationOwner: settings.escalationOwner, notify: settings.notify }}
-              />
-            </Card>
+            <div className="grid content-start gap-5">
+              <Card>
+                <CardHeader title="Detection thresholds" description="z-score = (window count − baseline mean) / baseline SD (floored at √mean)." />
+                <CrisisSettingsForm
+                  brandId={brand.id}
+                  initial={{ volumeZ: settings.volumeZ, negativeZ: settings.negativeZ, minMentions: settings.minMentions, baselineDays: settings.baselineDays, windowHours: settings.windowHours, escalationOwner: settings.escalationOwner, notify: settings.notify }}
+                />
+              </Card>
+              <Card>
+                <CardHeader title="Automation" description="Risk score = ∛(velocity × negativity × reach) × 100" info="Velocity from the volume z-score, negativity from the negative share, reach from author followers (or mention count when the source reports no followers)." />
+                <ExtraSettingsForm brandId={brand.id} initial={extra} />
+              </Card>
+            </div>
           </div>
         </div>
       )}
@@ -260,6 +318,7 @@ function EventRow({ e, brandId }: { e: CrisisEvent; brandId: string }) {
             {e.owner ? ` · owner ${e.owner}` : ""}
           </div>
         </div>
+        <RiskBadge risk={e.risk as Risk} />
         <Badge tone={SEV_TONE[e.severity]}>{e.severity}</Badge>
         <Badge tone={STATUS_TONE[e.status]}>{e.status}</Badge>
       </Link>

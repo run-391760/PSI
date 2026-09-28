@@ -41,6 +41,8 @@ export const jobs: Record<string, JobHandler> = {
     const { query } = await import("@/lib/db");
     const { notify, enqueue } = await import("@/lib/jobs/queue");
     if (!job.project_id) return { alerts: 0 };
+    // Ticket reminders ride on this 5-minute chain so they fire while nobody has the inbox open.
+    await import("./workspace").then((w) => w.fireDueReminders(job.project_id!)).catch((e) => console.error("[cx] reminders", e));
     const rows = await query<{ id: string; number: number; subject: string; kind: "first_response" | "resolution" }>(
       `WITH due AS (
          SELECT t.id,t.number,t.subject,'first_response' AS kind FROM cx_tickets t

@@ -6,6 +6,7 @@ import { aiConfigured } from "@/lib/cx/ai";
 import { cxContext } from "@/lib/cx/context";
 import { humanDuration } from "@/lib/cx/insights/metrics";
 import { getReview, getScorecard, ticketThread } from "@/lib/cx/insights/quality";
+import { agentsOf } from "@/lib/cx/insights/team";
 import { dateTimeLabel } from "@/lib/format";
 import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps<"/c
     throw e;
   });
   const [card, { ticket, messages }] = await Promise.all([review.scorecard_id ? getScorecard(brand.id, review.scorecard_id).catch(() => null) : null, ticketThread(brand.id, review.ticket_id)]);
+  const supervisors = (await agentsOf(brand.id)).filter((a) => a.role === "admin" || a.role === "supervisor" || a.id === user.id).map((a) => ({ id: a.id, name: a.name }));
   const frt = ticket.first_response_at ? (new Date(ticket.first_response_at).getTime() - new Date(ticket.created_at).getTime()) / 1000 : null;
   const art = ticket.resolved_at ? (new Date(ticket.resolved_at).getTime() - new Date(ticket.created_at).getTime()) / 1000 : null;
 
@@ -76,7 +78,8 @@ export default async function ReviewPage({ params, searchParams }: PageProps<"/c
           {card ? (
             <ReviewForm
               brand={brand.id}
-              review={JSON.parse(JSON.stringify({ id: review.id, status: review.status, answers: review.answers, comment: review.comment, coaching: review.coaching, dispute_reason: review.dispute_reason, dispute_response: review.dispute_response, ai_suggestion: review.ai_suggestion }))}
+              review={JSON.parse(JSON.stringify({ id: review.id, status: review.status, answers: review.answers, comment: review.comment, coaching: review.coaching, dispute_reason: review.dispute_reason, dispute_response: review.dispute_response, ai_suggestion: review.ai_suggestion, text_answers: review.text_answers ?? {}, tags: review.tags ?? [], supervisor_id: review.supervisor_id, due_at: review.due_at ? new Date(review.due_at).toISOString() : null, accepted_at: review.accepted_at ? new Date(review.accepted_at).toISOString() : null, auto_accepted: !!review.auto_accepted }))}
+              supervisors={supervisors}
               sections={card.sections}
               passScore={card.pass_score}
               ai={aiConfigured()}

@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/feedback";
 import { Textarea } from "@/components/ui/input";
@@ -34,13 +34,23 @@ function Scale({ min, max, value, onChange, labels, name }: { min: number; max: 
   );
 }
 
-export function PublicSurveyForm({ id, kind, question, questions, token }: { id: string; kind: SurveyKind; question: string; questions: Question[]; token?: string }) {
-  const [score, setScore] = useState<number | null>(null);
+export function PublicSurveyForm({ id, kind, question, questions, token, initialScore = null }: { id: string; kind: SurveyKind; question: string; questions: Question[]; token?: string; initialScore?: number | null }) {
+  const [score, setScore] = useState<number | null>(initialScore);
+  const [rated, setRated] = useState(false);
+  const auto = useRef(false);
   const [answers, setAnswers] = useState<Record<string, string | number>>({});
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+
+  // Inline email rating (?r=): record the clicked score right away, then offer an optional comment.
+  useEffect(() => {
+    if (initialScore == null || auto.current) return;
+    auto.current = true;
+    void submit(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (done)
     return (
@@ -50,29 +60,34 @@ export function PublicSurveyForm({ id, kind, question, questions, token }: { id:
       </div>
     );
 
-  const submit = async () => {
+  async function submit(inline = false) {
     setBusy(true);
     setError(null);
     try {
       const r = await fetch(`/api/cx/surveys/${id}/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, score, answers, comment }) });
       const d = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; thankYou?: string };
+      const d2 = d as { redirect?: string | null };
       if (!r.ok || !d.ok) setError(d.error ?? "Something went wrong. Please try again.");
+      else if (inline) setRated(true);
+      else if (d2.redirect && /^https?:\/\//i.test(d2.redirect)) window.location.assign(d2.redirect);
       else setDone(d.thankYou || "Thank you!");
     } catch {
       setError("Network error. Please try again.");
     } finally {
       setBusy(false);
     }
-  };
+  }
 
   return (
     <form
       className="space-y-6"
+      data-rated={rated ? "1" : undefined}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
+      {rated && <Callout tone="good">Thanks, your rating of {score} was recorded. Add a comment below if you like, or change your rating.</Callout>}
       {kind === "csat" && (
         <fieldset>
           <legend className="mb-3 text-[16px] font-semibold text-text">{question}</legend>
@@ -117,7 +132,7 @@ export function PublicSurveyForm({ id, kind, question, questions, token }: { id:
       </div>
       {error && <Callout tone="critical">{error}</Callout>}
       <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={kind !== "custom" && score == null}>
-        Submit feedback
+        {rated ? "Update feedback" : "Submit feedback"}
       </Button>
     </form>
   );

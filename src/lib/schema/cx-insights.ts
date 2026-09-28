@@ -127,4 +127,140 @@ CREATE TABLE IF NOT EXISTS cx_qa_reviews (
   UNIQUE(ticket_id, scorecard_id)
 );
 CREATE INDEX IF NOT EXISTS cx_qa_reviews_project ON cx_qa_reviews(project_id, status, updated_at DESC);
+
+-- ---------------------------------------------------------------- WP5 (insights v2)
+ALTER TABLE cx_dashboards ADD COLUMN IF NOT EXISTS theme text NOT NULL DEFAULT 'default';
+ALTER TABLE cx_dashboards ADD COLUMN IF NOT EXISTS filters jsonb NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS cx_share_links (
+  token text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('dashboard','mcp')),
+  target_id text,
+  label text NOT NULL DEFAULT '',
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS cx_share_links_target ON cx_share_links(project_id, kind, target_id);
+
+CREATE TABLE IF NOT EXISTS cx_export_templates (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  source text NOT NULL CHECK (source IN ('tickets','messages')),
+  columns jsonb NOT NULL DEFAULT '[]',
+  basis text NOT NULL DEFAULT 'calendar',
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cx_export_schedules (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  template_id text NOT NULL REFERENCES cx_export_templates(id) ON DELETE CASCADE,
+  period text NOT NULL CHECK (period IN ('yesterday','7','30','31','month')),
+  cadence text NOT NULL DEFAULT 'daily' CHECK (cadence IN ('daily','weekly','monthly')),
+  recipients jsonb NOT NULL DEFAULT '[]',
+  enabled boolean NOT NULL DEFAULT true,
+  next_run_at timestamptz NOT NULL DEFAULT now(),
+  last_run_at timestamptz,
+  last_status text,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cx_export_files (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  rows integer NOT NULL DEFAULT 0,
+  csv text NOT NULL DEFAULT '',
+  schedule_id text REFERENCES cx_export_schedules(id) ON DELETE SET NULL,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_export_files_project ON cx_export_files(project_id, created_at DESC);
+
+ALTER TABLE cx_surveys ADD COLUMN IF NOT EXISTS settings jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE cx_survey_invites ADD COLUMN IF NOT EXISTS sent_at timestamptz;
+ALTER TABLE cx_survey_invites ADD COLUMN IF NOT EXISTS sent_via text;
+ALTER TABLE cx_survey_invites ADD COLUMN IF NOT EXISTS agent_id text REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE cx_qa_scorecards ADD COLUMN IF NOT EXISTS form_type text NOT NULL DEFAULT 'evaluation';
+ALTER TABLE cx_qa_scorecards ADD COLUMN IF NOT EXISTS team_id text REFERENCES cx_teams(id) ON DELETE SET NULL;
+ALTER TABLE cx_qa_scorecards ADD COLUMN IF NOT EXISTS due_days integer;
+ALTER TABLE cx_qa_scorecards ADD COLUMN IF NOT EXISTS auto_accept boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_qa_scorecards ADD COLUMN IF NOT EXISTS tags jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS tags jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS supervisor_id text REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS text_answers jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS due_at timestamptz;
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS accepted_at timestamptz;
+ALTER TABLE cx_qa_reviews ADD COLUMN IF NOT EXISTS auto_accepted boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS cx_qa_coaching (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scorecard_id text REFERENCES cx_qa_scorecards(id) ON DELETE SET NULL,
+  supervisor_id text REFERENCES users(id) ON DELETE SET NULL,
+  assigned_by text REFERENCES users(id) ON DELETE SET NULL,
+  notes text NOT NULL DEFAULT '',
+  outcome text NOT NULL DEFAULT '',
+  status text NOT NULL DEFAULT 'assigned' CHECK (status IN ('assigned','completed')),
+  due_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_qa_coaching_project ON cx_qa_coaching(project_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cx_kb_categories (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_id text REFERENCES cx_kb_categories(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cx_kb_articles (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  category_id text REFERENCES cx_kb_categories(id) ON DELETE SET NULL,
+  title text NOT NULL,
+  body text NOT NULL DEFAULT '',
+  tags jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'published' CHECK (status IN ('draft','published')),
+  views integer NOT NULL DEFAULT 0,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_kb_articles_project ON cx_kb_articles(project_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS cx_ai_briefs (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  period text NOT NULL,
+  body text NOT NULL,
+  metrics jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cx_ai_settings (
+  project_id text PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  brief_cadence text NOT NULL DEFAULT 'off' CHECK (brief_cadence IN ('off','weekly','monthly')),
+  brief_recipients jsonb NOT NULL DEFAULT '[]',
+  brief_next_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cx_ask_log (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id text REFERENCES users(id) ON DELETE SET NULL,
+  question text NOT NULL,
+  answer text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_ask_log_project ON cx_ask_log(project_id, created_at DESC);
 `;

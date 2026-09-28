@@ -20,7 +20,10 @@ export type RawMention = {
   country: string | null;
   publishedAt: string | null;
   engagement: Record<string, number>;
+  /** Images/videos attached to the post (UGC board). */
+  media?: MediaItem[];
 };
+export type MediaItem = { type: "image" | "video"; url: string; preview: string | null; alt: string | null };
 
 type J = Record<string, any>;
 const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
@@ -30,6 +33,24 @@ const iso = (v: unknown) => {
   const d = typeof v === "number" ? new Date(v * 1000) : new Date(String(v));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
+const httpsUrl = (v: unknown) => (typeof v === "string" && /^https:\/\//.test(v) ? v : null);
+/** Mastodon media_attachments → media. */
+export function mastodonMedia(list: J[] | undefined): MediaItem[] {
+  return (Array.isArray(list) ? list : []).flatMap((m) => {
+    const url = httpsUrl(m.url) ?? httpsUrl(m.remote_url);
+    if (!url || !["image", "video", "gifv"].includes(str(m.type))) return [];
+    return [{ type: m.type === "image" ? ("image" as const) : ("video" as const), url, preview: httpsUrl(m.preview_url), alt: str(m.description) || null }];
+  });
+}
+/** Bluesky embed views (images, video, record-with-media) → media. */
+export function blueskyMedia(embed: J | undefined): MediaItem[] {
+  if (!embed) return [];
+  const t = str(embed.$type);
+  if (t.startsWith("app.bsky.embed.images")) return ((embed.images ?? []) as J[]).flatMap((i) => (httpsUrl(i.fullsize) ? [{ type: "image" as const, url: i.fullsize, preview: httpsUrl(i.thumb), alt: str(i.alt) || null }] : []));
+  if (t.startsWith("app.bsky.embed.video")) return httpsUrl(embed.playlist) ? [{ type: "video", url: embed.playlist, preview: httpsUrl(embed.thumbnail), alt: str(embed.alt) || null }] : [];
+  if (t.startsWith("app.bsky.embed.recordWithMedia")) return blueskyMedia(embed.media);
+  return [];
+}
 const eng = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).flatMap(([k, v]) => (numOrNull(v) == null ? [] : [[k, numOrNull(v) as number]])));
 
 export function stripHtml(s: string) {
@@ -137,6 +158,7 @@ export function mapMastodon(statuses: J[], instance = "mastodon.social"): RawMen
         country: null,
         publishedAt: iso(s.created_at),
         engagement: eng({ likes: s.favourites_count, reposts: s.reblogs_count, replies: s.replies_count }),
+        media: mastodonMedia(s.media_attachments),
       },
     ];
   });
@@ -193,6 +215,7 @@ export function mapReddit(json: J): RawMention[] {
         country: null,
         publishedAt: iso(numOrNull(d.created_utc)),
         engagement: eng({ score: d.score, comments: d.num_comments }),
+        media: d.post_hint === "image" && httpsUrl(d.url) ? [{ type: "image" as const, url: d.url, preview: httpsUrl(d.thumbnail), alt: null }] : d.is_video && httpsUrl(d.url) ? [{ type: "video" as const, url: d.url, preview: httpsUrl(d.thumbnail), alt: null }] : [],
       },
     ];
   });
@@ -219,6 +242,7 @@ export function mapYouTubeSearch(json: J): RawMention[] {
         country: null,
         publishedAt: iso(s.publishedAt),
         engagement: {},
+        media: httpsUrl(s.thumbnails?.high?.url ?? s.thumbnails?.medium?.url) ? [{ type: "video" as const, url: `https://www.youtube.com/watch?v=${vid}`, preview: s.thumbnails?.high?.url ?? s.thumbnails?.medium?.url, alt: null }] : [],
       },
     ];
   });
@@ -272,6 +296,7 @@ export function mapBluesky(json: J): RawMention[] {
         country: null,
         publishedAt: iso(p.record?.createdAt) ?? iso(p.indexedAt),
         engagement: eng({ likes: p.likeCount, reposts: p.repostCount, replies: p.replyCount }),
+        media: blueskyMedia(p.embed),
       },
     ];
   });

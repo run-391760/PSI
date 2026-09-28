@@ -120,4 +120,31 @@ CREATE TABLE IF NOT EXISTS cx_pub_stats (
   posts bigint,
   PRIMARY KEY (project_id, kind, day)
 );
+
+-- WP4: post types, per-network options, multi-approver workflow, content tags
+ALTER TABLE cx_pub_posts ADD COLUMN IF NOT EXISTS post_type text NOT NULL DEFAULT 'text';
+ALTER TABLE cx_pub_posts ADD COLUMN IF NOT EXISTS options jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE cx_pub_posts ADD COLUMN IF NOT EXISTS approver_ids jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_pub_posts ADD COLUMN IF NOT EXISTS content_tags jsonb NOT NULL DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS cx_pub_approvals (
+  post_id text NOT NULL REFERENCES cx_pub_posts(id) ON DELETE CASCADE,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  decision text NOT NULL,
+  comment text NOT NULL DEFAULT '',
+  decided_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, user_id)
+);
+-- WP4: asset approval + storage quota
+ALTER TABLE cx_pub_assets ADD COLUMN IF NOT EXISTS approval text NOT NULL DEFAULT 'none';
+ALTER TABLE cx_pub_assets ADD COLUMN IF NOT EXISTS approval_by text REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE cx_pub_assets ADD COLUMN IF NOT EXISTS approval_note text NOT NULL DEFAULT '';
+ALTER TABLE cx_pub_assets ADD COLUMN IF NOT EXISTS approval_at timestamptz;
+ALTER TABLE cx_pub_assets ADD COLUMN IF NOT EXISTS origin text;
+ALTER TABLE cx_pub_settings ADD COLUMN IF NOT EXISTS quota_mb integer NOT NULL DEFAULT 1024;
+ALTER TABLE cx_pub_settings ADD COLUMN IF NOT EXISTS require_asset_approval boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_pub_settings ADD COLUMN IF NOT EXISTS tag_policy text NOT NULL DEFAULT 'authors';
+ALTER TABLE cx_pub_settings ADD COLUMN IF NOT EXISTS content_tags jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_pub_settings ADD COLUMN IF NOT EXISTS failure_email boolean NOT NULL DEFAULT true;
+-- content-tag managers use role 'tagger' (validated in code)
+ALTER TABLE cx_pub_roles DROP CONSTRAINT IF EXISTS cx_pub_roles_role_check;
 `;

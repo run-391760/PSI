@@ -4,7 +4,9 @@ import { requirePageUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { cxContext } from "@/lib/cx/context";
-import { getDashboard, runWidget } from "@/lib/cx/insights/dashboards";
+import { getDashboard, listShareLinks, runWidget } from "@/lib/cx/insights/dashboards";
+import { getClassificationTree, getFieldDefs } from "@/lib/cx/admin/fields";
+import { aiConfigured } from "@/lib/cx/ai";
 import { dateTimeLabel } from "@/lib/format";
 import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +28,10 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
   });
   const print = sp.print === "1";
   const now = new Date();
-  const results = Object.fromEntries(await Promise.all(d.widgets.map(async (w) => [w.id, await runWidget(brand.id, w, now)] as const)));
+  const results = Object.fromEntries(await Promise.all(d.widgets.map(async (w) => [w.id, await runWidget(brand.id, w, now, d.filters)] as const)));
+  const [defs, tree, shares] = await Promise.all([getFieldDefs(brand.id).catch(() => []), getClassificationTree(brand.id).catch(() => []), listShareLinks(brand.id, "dashboard", d.id)]);
+  const fields = defs.filter((f) => f.scope === "ticket" && !f.hidden && !f.encrypted).map((f) => ({ key: f.key, label: f.label, options: f.options ?? [] }));
+  const classifications = tree.filter((n) => !n.hidden).map((n) => ({ id: n.id, label: n.label }));
   const [opts] = await query<{ channels: string[]; tags: string[] }>(
     `SELECT COALESCE((SELECT json_agg(DISTINCT k) FROM (SELECT channel_kind AS k FROM cx_tickets WHERE project_id=$1 UNION SELECT source FROM cx_mentions WHERE project_id=$1) a),'[]') AS channels,
             COALESCE((SELECT json_agg(DISTINCT tg) FROM (SELECT jsonb_array_elements_text(tags) AS tg FROM cx_tickets WHERE project_id=$1 UNION SELECT jsonb_array_elements_text(tags) FROM cx_mentions WHERE project_id=$1) b),'[]') AS tags`,
@@ -47,6 +52,7 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
             <BrandMeta switcher={switcher} current={brand.id}>
               <Badge tone={d.shared ? "good" : "neutral"}>{d.shared ? "Shared with brand" : "Private"}</Badge>
               {d.creator && <Badge>By {d.creator}</Badge>}
+              {shares.length > 0 && <Badge tone="info">{shares.length} public link{shares.length > 1 ? "s" : ""}</Badge>}
             </BrandMeta>
           )
         }
@@ -61,10 +67,12 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
       />
       <DashboardBoard
         brand={brand.id}
-        meta={{ id: d.id, name: d.name, description: d.description, shared: d.shared, creator: d.creator }}
+        meta={{ id: d.id, name: d.name, description: d.description, shared: d.shared, creator: d.creator, theme: d.theme ?? "default", filters: d.filters ?? {} }}
         widgets={d.widgets}
         results={results}
-        options={{ channels: (opts?.channels ?? []).filter(Boolean).sort(), tags: (opts?.tags ?? []).filter(Boolean).sort() }}
+        options={{ channels: (opts?.channels ?? []).filter(Boolean).sort(), tags: (opts?.tags ?? []).filter(Boolean).sort(), fields, classifications }}
+        ai={aiConfigured()}
+        shares={shares.map((l) => ({ token: l.token, created_at: new Date(l.created_at).toISOString(), last_used_at: l.last_used_at ? new Date(l.last_used_at).toISOString() : null }))}
         print={print}
       />
     </Page>

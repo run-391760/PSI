@@ -3,7 +3,7 @@
 import { ExternalLink, GitMerge, Plus, Trash, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { addNoteAction, deleteContactAction, deleteNoteAction, mergeContactsAction, updateContactAction } from "@/app/(app)/cx/contacts/actions";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Metric, MetricStrip } from "@/components/ui/metric";
-import { Tabs } from "@/components/ui/tabs";
+import { Segmented, Tabs } from "@/components/ui/tabs";
+import { journeyWindow, type JourneyItem } from "@/lib/cx/inbox/model";
 import type { ContactDetail } from "@/lib/cx/inbox/contacts";
 import { dateTimeLabel } from "@/lib/format";
 import { Ago } from "./time";
@@ -119,6 +120,7 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
           <Tabs
             className="pt-1"
             tabs={[
+              { id: "journey", label: "User journey", content: <JourneyTab brand={brand} detail={detail} /> },
               { id: "tickets", label: `Tickets (${detail.tickets.length})`, content: <TicketsTab brand={brand} tickets={detail.tickets} /> },
               { id: "messages", label: `Messages (${detail.messages.length})`, content: <MessagesTab brand={brand} messages={detail.messages} /> },
               { id: "mentions", label: `Mentions (${detail.mentions.length})`, content: <MentionsTab mentions={detail.mentions} /> },
@@ -133,6 +135,45 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
         footer={<><Button onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" onClick={async () => { const r = await deleteContactAction(brand, c.id); if (r.ok) router.push(`/cx/contacts?brand=${brand}`); else setError(r.error); }}>Delete</Button></>}>
         <p className="text-[13px] text-text-2">{c.name}</p>
       </Dialog>
+    </div>
+  );
+}
+
+/** User Journey: every touchpoint across channels, ascending/descending, last 30/60/180 days or all time. */
+function JourneyTab({ brand, detail }: { brand: string; detail: ContactDetail }) {
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [days, setDays] = useState<"30" | "60" | "180" | "0">("30");
+  const all = useMemo<JourneyItem[]>(() => [
+    ...detail.tickets.map((t) => ({ at: t.created_at, kind: "ticket" as const, title: `Opened #${t.number}: ${t.subject}`, channel: t.channel_kind, ticketId: t.id })),
+    ...detail.tickets.filter((t) => t.csat != null).map((t) => ({ at: t.updated_at, kind: "csat" as const, title: `Rated #${t.number} ${t.csat}/5`, channel: t.channel_kind, ticketId: t.id })),
+    ...detail.messages.map((m) => ({ at: m.created_at, kind: "message" as const, title: m.direction === "in" ? `${m.author_name || "Customer"} wrote on #${m.number}` : `${m.author_name} replied on #${m.number}`, body: m.body, channel: m.channel_kind, ticketId: m.ticket_id, direction: m.direction })),
+    ...detail.mentions.filter((m) => m.published_at).map((m) => ({ at: m.published_at!, kind: "mention" as const, title: `Mentioned you on ${channelLabel(m.source)}`, body: m.title || m.body, channel: m.source })),
+    ...detail.notes.map((n) => ({ at: n.created_at, kind: "note" as const, title: `Note by ${n.author_name}`, body: n.body })),
+  ], [detail]);
+  const items = journeyWindow(all, Number(days), order);
+  return (
+    <div className="p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Segmented value={days} onChange={setDays} options={[{ value: "30", label: "30 days" }, { value: "60", label: "60 days" }, { value: "180", label: "180 days" }, { value: "0", label: "All" }]} />
+        <Segmented value={order} onChange={setOrder} options={[{ value: "desc", label: "Newest first" }, { value: "asc", label: "Oldest first" }]} />
+        <span className="text-[12px] text-text-3">{items.length} of {all.length} events</span>
+      </div>
+      {items.length === 0 ? <p className="py-6 text-center text-[13px] text-text-3">No activity in this period.</p> : (
+        <ol className="relative space-y-3 border-l border-border pl-4">
+          {items.slice(0, 300).map((i, k) => (
+            <li key={`${i.kind}-${i.at}-${k}`} className="relative">
+              <span className={`absolute top-1.5 -left-[21px] h-2.5 w-2.5 rounded-full border-2 border-surface ${i.kind === "ticket" ? "bg-brand" : i.kind === "mention" ? "bg-warning" : i.kind === "csat" ? "bg-good" : i.kind === "note" ? "bg-text-3" : i.direction === "in" ? "bg-link" : "bg-border-strong"}`} />
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-text-3">
+                {i.channel && <ChannelIcon kind={i.channel} />}
+                <span suppressHydrationWarning>{dateTimeLabel(i.at)}</span>
+                {i.ticketId && <Link href={`/cx/inbox?brand=${brand}&view=all&t=${i.ticketId}`} className="text-link hover:underline">Open ticket</Link>}
+              </div>
+              <div className="text-[13px] font-medium text-text">{i.title}</div>
+              {i.body && <p className="line-clamp-2 text-[12.5px] whitespace-pre-wrap text-text-2">{i.body}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

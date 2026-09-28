@@ -1,10 +1,10 @@
 "use client";
 
-import { Check, ExternalLink, ImagePlus, MessageSquare, Send, Sparkles, X as XIcon } from "lucide-react";
+import { Check, Crop, ExternalLink, FileText, ImagePlus, MessageSquare, Send, Sparkles, Trash2, X as XIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { commentAction, markManualAction, savePostAction, suggestCaptionsAction, transitionAction } from "@/app/(app)/cx/publishing/actions";
+import { commentAction, deletePublishedAction, markManualAction, savePostAction, suggestCaptionsAction, transitionAction } from "@/app/(app)/cx/publishing/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -13,9 +13,14 @@ import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
 import { PUB_CHANNELS, buildUtmUrl, channelProblems, countChars, pubChannel, renderText, type ChannelResult, type PostStatus, type Utm } from "@/lib/cx/publishing/core";
+import { canDecide, manualSteps, POST_TYPES, typeProblems, typeSupport, type PostOptions } from "@/lib/cx/publishing/options";
+import type { HashtagSuggestion } from "@/lib/cx/publishing/suggest";
 import { cn } from "@/lib/utils";
+import { AiCompose } from "./ai-compose";
+import { ImageEditor } from "./image-editor";
 import { LocalTime } from "./posts-table";
 import { ChannelChip, StatusBadge } from "./shared";
+import { ApprovalProgress, ApproverPicker, BestTimes, HashtagChips, NetworkOptions, TagPicker, type DecisionItem } from "./wp4-fields";
 
 export type ComposerPost = {
   id: string;
@@ -35,6 +40,10 @@ export type ComposerPost = {
   published_at: string | null;
   results: Record<string, ChannelResult>;
   author: string | null;
+  post_type: string;
+  options: PostOptions;
+  approver_ids: string[];
+  content_tags: string[];
 };
 export type ComposerProps = {
   brandId: string;
@@ -43,7 +52,7 @@ export type ComposerProps = {
   origin: string;
   post: ComposerPost | null;
   channels: { kind: string; connected: boolean; reason: string | null; publishApi: boolean }[];
-  assets: { id: string; filename: string; mime: string; tags: string[] }[];
+  assets: { id: string; filename: string; mime: string; tags: string[]; approval: string }[];
   campaigns: { id: string; name: string }[];
   approvers: { user_id: string; name: string }[];
   ai: boolean;
@@ -52,6 +61,14 @@ export type ComposerProps = {
   requireApproval: boolean;
   comments: { id: string; author_name: string; kind: string; body: string; created_at: string }[];
   initialDate: string | null;
+  userId: string;
+  decisions: DecisionItem[];
+  requireAssetApproval: boolean;
+  tags: { defined: string[]; canCreate: boolean; locked: boolean };
+  bestTime: { clicks: Record<string, number[]>; mentions: number[] };
+  hashtags: HashtagSuggestion[];
+  imageAi: boolean;
+  deletable: string[];
 };
 
 const toLocalInput = (iso: string | null) => {
@@ -61,7 +78,21 @@ const toLocalInput = (iso: string | null) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 const assetUrl = (id: string) => `/api/cx/publishing/assets/${id}`;
-const KIND_LABEL: Record<string, string> = { submit: "submitted for approval", approve: "approved", reject: "requested changes", schedule: "scheduled", publish: "published", comment: "commented" };
+const KIND_LABEL: Record<string, string> = {
+  created: "created the post",
+  submit: "submitted for approval",
+  approve: "approved",
+  approve_partial: "approved",
+  reject: "requested changes",
+  schedule: "scheduled",
+  publish: "published",
+  failed: "could not publish",
+  deleted: "deleted a published post",
+  notice: "notified the team",
+  comment: "commented",
+};
+const KIND_TONE: Record<string, string> = { publish: "bg-good", failed: "bg-critical", reject: "bg-critical", approve: "bg-good", approve_partial: "bg-good", deleted: "bg-warning", submit: "bg-brand", schedule: "bg-brand" };
+const kindOf = (mime: string) => (mime.startsWith("video/") ? "video" : mime.startsWith("image/") ? "image" : "document") as "image" | "video" | "document";
 
 export function Composer(props: ComposerProps) {
   const { brandId, post } = props;
@@ -78,7 +109,11 @@ export function Composer(props: ComposerProps) {
   const [linkUrl, setLinkUrl] = useState(post?.link_url ?? "");
   const [utm, setUtm] = useState<Utm>({ medium: "social", ...(post?.utm ?? {}) });
   const [campaignId, setCampaignId] = useState(post?.campaign_id ?? "");
-  const [approverId, setApproverId] = useState(post?.approver_id ?? "");
+  const [approverIds, setApproverIds] = useState<string[]>(post?.approver_ids ?? []);
+  const [postType, setPostType] = useState<string>(post?.post_type ?? "text");
+  const [options, setOptions] = useState<PostOptions>(post?.options ?? {});
+  const [contentTags, setContentTags] = useState<string[]>(post?.content_tags ?? []);
+  const [editing, setEditing] = useState<{ id: string; filename: string; mime: string } | null>(null);
   const [when, setWhen] = useState("");
   const [tab, setTab] = useState<string>("base");
   const [preview, setPreview] = useState<string>(post?.channels[0] ?? "facebook");
@@ -94,7 +129,12 @@ export function Composer(props: ComposerProps) {
   const sampleShort = (k: string) => (linkUrl.trim() ? `${props.origin}/l/${post?.links[k] ?? "xxxxxxx"}` : null);
   const textFor = (k: string) => renderText(body, variants, k, sampleShort);
   const mediaCount = media.length;
-  const problems = useMemo(() => Object.fromEntries(channels.map((k) => [k, channelProblems(textFor(k), k, mediaCount)])), [channels, body, variants, mediaCount, linkUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mediaKinds = media.map((id) => ({ kind: kindOf(props.assets.find((a) => a.id === id)?.mime ?? "image/") }));
+  const problems = useMemo(
+    () => Object.fromEntries(channels.map((k) => [k, [...channelProblems(textFor(k), k, mediaCount).filter((x) => !(postType !== "text" && /needs an image/.test(x) && mediaCount)), ...typeProblems(postType, k, options, mediaKinds)]])),
+    [channels, body, variants, mediaCount, linkUrl, postType, options, media], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const manual = manualSteps(postType, channels, options);
   const hasProblems = Object.values(problems).some((p) => p.length);
   const utmPreview = useMemo(() => {
     if (!linkUrl.trim()) return null;
@@ -116,8 +156,12 @@ export function Composer(props: ComposerProps) {
     linkUrl,
     utm,
     campaignId: campaignId || null,
-    approverId: approverId || null,
+    approverId: post?.approver_id ?? null,
     scheduledAt: when ? new Date(when).toISOString() : null,
+    postType,
+    options,
+    approverIds,
+    contentTags,
   });
 
   const save = (then?: (id: string) => Promise<{ ok: boolean; error?: string }>, message?: string) =>
@@ -151,16 +195,28 @@ export function Composer(props: ComposerProps) {
   const toggle = (k: string) => setChannels((cs) => (cs.includes(k) ? cs.filter((c) => c !== k) : [...cs, k]));
   const canSchedule = !props.requireApproval || ["approved", "scheduled", "failed"].includes(status);
   const activeText = tab === "base" ? body : (variants[tab] ?? "");
+  const setActive = (t: string) => (tab === "base" ? setBody(t) : setVariants({ ...variants, [tab]: t }));
+  const iDecide = post ? canDecide(props.userId, post.approver_ids, props.canApprove) : false;
+  const myDecision = props.decisions.find((d) => d.user_id === props.userId)?.decision;
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="grid min-w-0 content-start gap-5">
         {error && <Callout tone="critical">{error}</Callout>}
         {notice && <Callout tone="good">{notice}</Callout>}
-        {post && status === "pending" && props.canApprove && (
+        {post && status === "pending" && post.approver_ids.length > 0 && (!iDecide || myDecision === "approved") && (
+          <Card>
+            <CardHeader title="Waiting for approval" description={`All ${post.approver_ids.length} designated approvers must approve.`} />
+            <CardBody>
+              <ApprovalProgress approvers={props.approvers} designated={post.approver_ids} decisions={props.decisions} />
+            </CardBody>
+          </Card>
+        )}
+        {post && status === "pending" && iDecide && myDecision !== "approved" && (
           <Card className="border-warning/40">
-            <CardHeader title="Waiting for your approval" description="Approve, or request changes with a comment for the author." />
+            <CardHeader title="Waiting for your approval" description={post.approver_ids.length > 1 ? `Every designated approver must approve (${props.decisions.filter((d) => d.decision === "approved" && post.approver_ids.includes(d.user_id)).length} of ${post.approver_ids.length} so far).` : "Approve, or request changes with a comment for the author."} />
             <CardBody className="grid gap-2">
+              <ApprovalProgress approvers={props.approvers} designated={post.approver_ids} decisions={props.decisions} />
               <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Comment (required to request changes)" />
               <div className="flex flex-wrap gap-2">
                 <Button variant="primary" disabled={pending} onClick={() => act(() => transitionAction(brandId, post.id, "approve", note), post.scheduled_at ? "Approved and scheduled." : "Approved.")}>
@@ -175,26 +231,46 @@ export function Composer(props: ComposerProps) {
         )}
 
         <Card>
-          <CardHeader title="Channels" description="Pick where this post goes. Unconnected channels can still be planned and scheduled." />
-          <CardBody className="flex flex-wrap gap-2">
+          <CardHeader title="Post type & channels" description="Pick the format, then where it goes. Unconnected channels can still be planned and scheduled." />
+          <CardBody className="grid gap-3">
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Post type">
+              {POST_TYPES.map((t) => (
+                <button
+                  key={t.type}
+                  type="button"
+                  role="radio"
+                  aria-checked={postType === t.type}
+                  disabled={!editable}
+                  title={t.hint}
+                  onClick={() => setPostType(t.type)}
+                  className={cn("rounded-full border px-2.5 py-1 text-[12.5px]", postType === t.type ? "border-brand bg-brand-soft text-text" : "border-border text-text-2 hover:bg-surface-3")}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
             {PUB_CHANNELS.map((c) => {
               const st = props.channels.find((x) => x.kind === c.kind);
               const on = channels.includes(c.kind);
+              const support = typeSupport(postType, c.kind);
               return (
                 <button
                   key={c.kind}
                   type="button"
-                  disabled={!editable}
+                  disabled={!editable || (support === "none" && !on)}
                   onClick={() => toggle(c.kind)}
-                  title={st?.connected ? "Connected" : (st?.reason ?? c.note ?? "")}
-                  className={cn("flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[13px] transition-colors", on ? "border-brand bg-brand-soft text-text" : "border-border-strong text-text-2 hover:bg-surface-3")}
+                  title={support === "none" ? `Does not support this post type` : st?.connected ? "Connected" : (st?.reason ?? c.note ?? "")}
+                  className={cn("flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[13px] transition-colors disabled:opacity-50", on ? "border-brand bg-brand-soft text-text" : "border-border-strong text-text-2 hover:bg-surface-3")}
                 >
                   <ChannelChip kind={c.kind} />
                   {c.name}
+                  {support === "manual" && <span className="text-[11px] text-text-3">manual</span>}
                   <span className={cn("h-1.5 w-1.5 rounded-full", st?.connected ? "bg-good" : "bg-border-strong")} />
                 </button>
               );
             })}
+            </div>
           </CardBody>
           {channels.some((k) => !props.channels.find((x) => x.kind === k)?.connected) && (
             <p className="px-4 pb-3 text-[12px] text-text-3">
@@ -208,7 +284,29 @@ export function Composer(props: ComposerProps) {
           <CardHeader
             title="Content"
             description="Write once, then customize per channel. Use {link} where the tracked short link should go."
-            actions={props.ai ? <AiSuggest brandId={brandId} text={activeText || body} channel={tab === "base" ? (channels[0] ?? "facebook") : tab} onUse={(t) => (tab === "base" ? setBody(t) : setVariants({ ...variants, [tab]: t }))} disabled={!editable} /> : null}
+            actions={
+              props.ai || props.imageAi ? (
+                <div className="flex flex-wrap gap-1.5">
+                  <AiCompose
+                    brandId={brandId}
+                    channel={tab === "base" ? (channels[0] ?? "facebook") : tab}
+                    postType={postType}
+                    textAi={props.ai}
+                    imageAi={props.imageAi}
+                    disabled={!editable}
+                    onText={(t, poll) => {
+                      setActive(t);
+                      if (poll.length >= 2) setOptions({ ...options, common: { ...(options.common ?? {}), poll_options: poll } });
+                    }}
+                    onImage={(id) => {
+                      setMedia([...media, id]);
+                      router.refresh();
+                    }}
+                  />
+                  {props.ai && <AiSuggest brandId={brandId} text={activeText || body} channel={tab === "base" ? (channels[0] ?? "facebook") : tab} onUse={setActive} disabled={!editable} />}
+                </div>
+              ) : null
+            }
           />
           <CardBody className="grid gap-3">
             <Field label="Internal title (optional)" htmlFor="pc-title">
@@ -229,7 +327,13 @@ export function Composer(props: ComposerProps) {
               onChange={(e) => (tab === "base" ? setBody(e.target.value) : setVariants({ ...variants, [tab]: e.target.value }))}
               placeholder={tab === "base" ? "What do you want to share?" : `Leave empty to use the text for all channels. Customize for ${pubChannel(tab)?.name}…`}
             />
-            {!props.ai && <p className="text-[12px] text-text-3">AI caption suggestions: connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) on the server.</p>}
+            {(!props.ai || !props.imageAi) && (
+              <p className="text-[12px] text-text-3">
+                {!props.ai ? "AI captions and prompt-based writing: connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) on the server. " : ""}
+                {!props.imageAi ? "AI image generation: set OPENAI_API_KEY (image API) on the server." : ""}
+              </p>
+            )}
+            <HashtagChips items={props.hashtags} draft={activeText + " " + firstComment} disabled={!editable} onAdd={(t) => setActive(`${activeText.replace(/\s+$/, "")}${activeText.trim() ? " " : ""}#${t}`)} />
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
               {channels.map((k) => {
                 const n = countChars(textFor(k), k);
@@ -256,12 +360,18 @@ export function Composer(props: ComposerProps) {
                 <div className="flex flex-wrap gap-2">
                   {media.map((id) => {
                     const a = props.assets.find((x) => x.id === id);
+                    const k = kindOf(a?.mime ?? "image/");
                     return (
-                      <div key={id} className="relative h-20 w-20 overflow-hidden rounded-md border border-border bg-surface-2">
-                        {a?.mime.startsWith("video/") ? <video src={assetUrl(id)} className="h-full w-full object-cover" muted /> : <img src={assetUrl(id)} alt={a?.filename ?? ""} className="h-full w-full object-cover" />}
+                      <div key={id} className="relative h-20 w-20 overflow-hidden rounded-md border border-border bg-surface-2" title={a?.filename}>
+                        {k === "video" ? <video src={assetUrl(id)} className="h-full w-full object-cover" muted /> : k === "document" ? <DocTile name={a?.filename ?? "Document"} /> : <img src={assetUrl(id)} alt={a?.filename ?? ""} className="h-full w-full object-cover" />}
                         {editable && (
                           <button type="button" onClick={() => setMedia(media.filter((m) => m !== id))} className="absolute top-1 right-1 rounded-full bg-black/60 p-0.5 text-white" aria-label="Remove">
                             <XIcon className="h-3 w-3" />
+                          </button>
+                        )}
+                        {editable && k === "image" && a && a.mime !== "image/gif" && (
+                          <button type="button" onClick={() => setEditing(a)} className="absolute bottom-1 left-1 rounded-full bg-black/60 p-1 text-white" aria-label="Edit or crop" title="Edit / crop">
+                            <Crop className="h-3 w-3" />
                           </button>
                         )}
                       </div>
@@ -274,9 +384,21 @@ export function Composer(props: ComposerProps) {
             </div>
 
             {channels.some((k) => pubChannel(k)?.firstComment) && (
-              <Field label="First comment" htmlFor="pc-fc" hint="Posted right after publishing on Facebook and Instagram, and as a reply on X.">
+              <Field label="First comment" htmlFor="pc-fc" hint="Posted right after publishing on Facebook, Instagram and LinkedIn, and as a reply on X.">
                 <Textarea id="pc-fc" rows={2} value={firstComment} onChange={(e) => setFirstComment(e.target.value)} disabled={!editable} placeholder="Hashtags or a link, posted as the first comment" />
               </Field>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Network options" description="Per-network settings. Options marked manual are not in the network's API; they are kept as a checklist." />
+          <CardBody className="grid gap-3">
+            <NetworkOptions channels={channels} postType={postType} options={options} onChange={setOptions} disabled={!editable} assets={props.assets} />
+            {manual.length > 0 && (
+              <Callout tone="info" title="Manual steps">
+                <ul className="list-disc pl-4">{manual.map((m) => <li key={m}>{m}</li>)}</ul>
+              </Callout>
             )}
           </CardBody>
         </Card>
@@ -312,22 +434,23 @@ export function Composer(props: ComposerProps) {
 
         <Card>
           <CardHeader title="Plan & schedule" />
-          <CardBody className="grid gap-3 sm:grid-cols-3">
-            <Field label="Campaign" htmlFor="pc-camp">
-              <Select id="pc-camp" value={campaignId} onChange={(e) => setCampaignId(e.target.value)} disabled={!editable}>
-                <option value="">None</option>
-                {props.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </Select>
-            </Field>
-            <Field label="Approver" htmlFor="pc-appr">
-              <Select id="pc-appr" value={approverId} onChange={(e) => setApproverId(e.target.value)} disabled={!editable}>
-                <option value="">Brand owner</option>
-                {props.approvers.map((a) => <option key={a.user_id} value={a.user_id}>{a.name}</option>)}
-              </Select>
-            </Field>
-            <Field label="Publish at (your time)" htmlFor="pc-when">
-              <Input id="pc-when" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} disabled={!editable} />
-            </Field>
+          <CardBody className="grid gap-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Campaign" htmlFor="pc-camp">
+                <Select id="pc-camp" value={campaignId} onChange={(e) => setCampaignId(e.target.value)} disabled={!editable}>
+                  <option value="">None</option>
+                  {props.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Publish at (your time)" htmlFor="pc-when">
+                <Input id="pc-when" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} disabled={!editable} />
+              </Field>
+            </div>
+            <BestTimes data={props.bestTime} channels={channels} onPick={setWhen} disabled={!editable} />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <ApproverPicker approvers={props.approvers} value={approverIds} onChange={setApproverIds} disabled={!editable} />
+              <TagPicker defined={props.tags.defined} value={contentTags} onChange={setContentTags} disabled={!editable} canCreate={props.tags.canCreate} locked={props.tags.locked} />
+            </div>
           </CardBody>
           {editable && (
             <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-3">
@@ -370,12 +493,15 @@ export function Composer(props: ComposerProps) {
                 {post.published_at ? <>Published <LocalTime iso={post.published_at} /></> : post.scheduled_at ? <>Planned for <LocalTime iso={post.scheduled_at} /></> : "Not scheduled"}
               </div>
               {post.channels.map((k) => (
-                <ResultRow key={k} brandId={brandId} postId={post.id} kind={k} r={post.results[k]} status={status} canAuthor={props.canAuthor} conn={props.channels.find((c) => c.kind === k)} />
+                <ResultRow key={k} brandId={brandId} postId={post.id} kind={k} r={post.results[k]} status={status} canAuthor={props.canAuthor} conn={props.channels.find((c) => c.kind === k)} deletable={props.deletable.includes(k)} />
               ))}
               {status === "failed" && props.canAuthor && (
-                <Button size="sm" disabled={pending} onClick={() => act(() => transitionAction(brandId, post.id, "retry"), "Retrying now.")}>
-                  Retry failed channels
-                </Button>
+                <>
+                  <p className="text-[12px] text-text-2">Fix the problem (or edit and pick a new time above), then retry. The author, owner and approvers were notified.</p>
+                  <Button size="sm" disabled={pending} onClick={() => act(() => transitionAction(brandId, post.id, "retry"), "Retrying now.")}>
+                    Retry failed channels
+                  </Button>
+                </>
               )}
             </CardBody>
           </Card>
@@ -399,17 +525,31 @@ export function Composer(props: ComposerProps) {
         </Card>
 
         {post && <Activity brandId={brandId} postId={post.id} comments={props.comments} />}
+        <ImageEditor
+          brandId={brandId}
+          asset={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(id) => {
+            if (editing) setMedia(media.map((m) => (m === editing.id ? id : m)));
+            setEditing(null);
+            setNotice("Edited copy saved to the library and attached. Save the post to keep it.");
+            router.refresh();
+          }}
+        />
       </div>
 
-      <Dialog open={pickOpen} onClose={() => setPickOpen(false)} title="Asset library" description="Pick images or videos (in order)." size="xl" footer={<Button variant="primary" onClick={() => setPickOpen(false)}>Done</Button>}>
+      <Dialog open={pickOpen} onClose={() => setPickOpen(false)} title="Asset library" description={props.requireAssetApproval ? "Pick media in order. This brand only allows approved assets." : "Pick images, videos or a PDF (in order)."} size="xl" footer={<Button variant="primary" onClick={() => setPickOpen(false)}>Done</Button>}>
         {props.assets.length ? (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {props.assets.map((a) => {
               const i = media.indexOf(a.id);
+              const blocked = props.requireAssetApproval && a.approval !== "approved" && i < 0;
+              const k = kindOf(a.mime);
               return (
-                <button key={a.id} type="button" onClick={() => setMedia(i >= 0 ? media.filter((m) => m !== a.id) : [...media, a.id])} className={cn("relative aspect-square overflow-hidden rounded-md border-2 bg-surface-2", i >= 0 ? "border-brand" : "border-transparent")} title={a.filename}>
-                  {a.mime.startsWith("video/") ? <video src={assetUrl(a.id)} className="h-full w-full object-cover" muted preload="metadata" /> : <img src={assetUrl(a.id)} alt={a.filename} loading="lazy" className="h-full w-full object-cover" />}
+                <button key={a.id} type="button" disabled={blocked} onClick={() => setMedia(i >= 0 ? media.filter((m) => m !== a.id) : [...media, a.id])} className={cn("relative aspect-square overflow-hidden rounded-md border-2 bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40", i >= 0 ? "border-brand" : "border-transparent")} title={blocked ? `${a.filename} — not approved` : a.filename}>
+                  {k === "video" ? <video src={assetUrl(a.id)} className="h-full w-full object-cover" muted preload="metadata" /> : k === "document" ? <DocTile name={a.filename} /> : <img src={assetUrl(a.id)} alt={a.filename} loading="lazy" className="h-full w-full object-cover" />}
                   {i >= 0 && <span className="absolute top-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-brand text-[11px] font-semibold text-white">{i + 1}</span>}
+                  {a.approval !== "none" && <span className={cn("absolute right-1 bottom-1 rounded px-1 text-[10px] font-medium", a.approval === "approved" ? "bg-good-soft text-good-ink" : a.approval === "rejected" ? "bg-critical-soft text-critical-ink" : "bg-warning-soft text-warning-ink")}>{a.approval}</span>}
                 </button>
               );
             })}
@@ -424,14 +564,15 @@ export function Composer(props: ComposerProps) {
   );
 }
 
-function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn }: { brandId: string; postId: string; kind: string; r?: ChannelResult; status: PostStatus; canAuthor: boolean; conn?: { connected: boolean; reason: string | null } }) {
+function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn, deletable }: { brandId: string; postId: string; kind: string; r?: ChannelResult; status: PostStatus; canAuthor: boolean; conn?: { connected: boolean; reason: string | null }; deletable: boolean }) {
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const tone = !r ? "neutral" : r.status === "published" || r.status === "manual" ? "good" : r.status === "failed" ? "critical" : "warning";
-  const label = !r ? (conn?.connected ? "Will publish automatically" : "Channel not connected") : r.status === "manual" ? "Published manually" : r.status === "not_connected" ? "Channel not connected" : r.status === "published" ? "Published" : "Failed";
-  const done = r && ["published", "manual"].includes(r.status);
+  const label = !r ? (conn?.connected ? "Will publish automatically" : "Channel not connected") : r.status === "manual" ? "Published manually" : r.status === "not_connected" ? "Not published" : r.status === "published" ? "Published" : r.status === "deleted" ? "Deleted" : "Failed";
+  const done = r && ["published", "manual", "deleted"].includes(r.status);
   return (
     <div className="rounded-md border border-border px-2.5 py-2">
       <div className="flex items-center justify-between gap-2">
@@ -445,6 +586,24 @@ function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn }: { bran
           View post <ExternalLink className="h-3 w-3" />
         </a>
       )}
+      {canAuthor && r?.status === "published" && r.externalId && deletable && (
+        <button
+          type="button"
+          disabled={pending}
+          className="mt-1 ml-3 inline-flex items-center gap-1 text-[12px] text-critical-ink hover:underline"
+          onClick={() =>
+            confirm(`Delete this post from ${kind === "gbp" ? "Business Profile" : kind}? This cannot be undone.`) &&
+            start(async () => {
+              const res = await deletePublishedAction(brandId, postId, kind);
+              if (!res.ok) setError(res.error);
+              else router.refresh();
+            })
+          }
+        >
+          <Trash2 className="h-3 w-3" /> Delete from network
+        </button>
+      )}
+      {error && <p className="mt-1 text-[12px] text-critical-ink">{error}</p>}
       {canAuthor && !done && status !== "draft" && (
         open ? (
           <div className="mt-2 flex gap-1">
@@ -469,16 +628,18 @@ function Activity({ brandId, postId, comments }: { brandId: string; postId: stri
   const [pending, start] = useTransition();
   return (
     <Card>
-      <CardHeader title="Activity & comments" />
+      <CardHeader title="Post activity" description="Every change, decision and publishing result, with comments." />
       <CardBody className="grid gap-3">
         {comments.length ? (
-          <ol className="grid gap-2.5">
+          <ol className="relative grid gap-3 border-l border-border pl-4">
             {comments.map((c) => (
-              <li key={c.id} className="text-[12.5px]">
+              <li key={c.id} className="relative text-[12.5px]">
+                <span className={cn("absolute top-1 -left-[21px] h-2.5 w-2.5 rounded-full border-2 border-surface", KIND_TONE[c.kind] ?? "bg-border-strong")} />
                 <div className="text-text-2">
                   <span className="font-medium text-text">{c.author_name}</span> {KIND_LABEL[c.kind] ?? c.kind} · <LocalTime iso={c.created_at} />
                 </div>
-                {c.body && c.kind !== "schedule" && <p className={cn("mt-0.5 whitespace-pre-wrap", c.kind === "reject" ? "text-critical-ink" : "text-text")}>{c.body}</p>}
+                {c.body && c.kind !== "schedule" && <p className={cn("mt-0.5 whitespace-pre-wrap", c.kind === "reject" || c.kind === "failed" ? "text-critical-ink" : "text-text")}>{c.body}</p>}
+                {c.kind === "schedule" && c.body.startsWith("Scheduled for ") && <p className="mt-0.5 text-text">for <LocalTime iso={c.body.slice(14)} /></p>}
               </li>
             ))}
           </ol>
@@ -544,7 +705,16 @@ function AiSuggest({ brandId, text, channel, onUse, disabled }: { brandId: strin
   );
 }
 
-const FOLD: Record<string, number> = { facebook: 480, instagram: 125, linkedin: 210, x: 10_000, youtube: 300 };
+function DocTile({ name }: { name: string }) {
+  return (
+    <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-1 text-center text-[10.5px] text-text-2">
+      <FileText className="h-5 w-5" />
+      <span className="line-clamp-2 break-all">{name}</span>
+    </span>
+  );
+}
+
+const FOLD: Record<string, number> = { facebook: 480, instagram: 125, linkedin: 210, x: 10_000, youtube: 300, threads: 500, gbp: 300 };
 
 /** Approximate mobile rendering of the post on each network (neutral styling, no network branding). */
 function PhonePreview({ kind, name, text, media, firstComment }: { kind: string; name: string; text: string; media: { id: string; video: boolean }[]; firstComment: string }) {

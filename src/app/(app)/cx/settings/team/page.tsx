@@ -10,6 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { TabsNav } from "@/components/ui/tabs";
 import { BrandMeta, NoBrand, cxHref } from "@/components/cx/insights/common";
 import { HoursPanel, MembersPanel, SlaPanel, TeamsPanel } from "@/components/cx/insights/team-settings";
+import { listEscalations, listSlaRules } from "@/lib/cx/admin/sla";
+import { editorRefs } from "../_admin/refs";
+import { EscalationsPanel, TatRulesPanel } from "./tat-client";
 
 export const metadata: Metadata = { title: "Team & SLAs" };
 
@@ -19,7 +22,7 @@ export default async function TeamPage({ searchParams }: PageProps<"/cx/settings
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Team & SLAs" breadcrumbs={[{ label: "CX" }, { label: "Settings" }, { label: "Team & SLAs" }]} />;
   const tab = typeof sp.tab === "string" ? sp.tab : "members";
-  const [members, teams, hours, policies] = await Promise.all([listMembers(brand.id), listTeams(brand.id), getHours(brand.id), listSlaPolicies(brand.id)]);
+  const [members, teams, hours, policies, tatRules, escalations] = await Promise.all([listMembers(brand.id), listTeams(brand.id), getHours(brand.id), listSlaPolicies(brand.id), listSlaRules(brand.id), listEscalations(brand.id)]);
 
   let stats: Record<string, ReturnType<typeof slaCompliance>> = {};
   if (tab === "sla") {
@@ -52,9 +55,15 @@ export default async function TeamPage({ searchParams }: PageProps<"/cx/settings
           { href: h("teams"), label: "Teams", count: teams.length },
           { href: h("hours"), label: "Business hours" },
           { href: h("sla"), label: "SLA policies", count: policies.length },
+          { href: h("tat"), label: "TAT rules", count: tatRules.length },
+          { href: h("escalation"), label: "Escalation", count: escalations.length },
         ]}
       />
-      {tab === "teams" ? (
+      {tab === "tat" ? (
+        <TatRulesPanel brand={brand.id} rules={tatRules} refs={await editorRefs(brand.id, switcher)} />
+      ) : tab === "escalation" ? (
+        <EscalationsPanel brand={brand.id} list={escalations} refs={await editorRefs(brand.id, switcher)} />
+      ) : tab === "teams" ? (
         <TeamsPanel brand={brand.id} teams={teams} />
       ) : tab === "hours" ? (
         <HoursPanel brand={brand.id} timezone={hours.timezone} hours={hours.hours} holidays={hours.holidays} />

@@ -8,9 +8,15 @@ import { getCxBrand } from "@/lib/cx/context";
 import { actionError, type ActionResult } from "@/app/(app)/projects/actions";
 import { aiConfigured } from "@/lib/cx/ai";
 import type { QaAnswers } from "@/lib/cx/insights/metrics";
+import { syncHourly } from "@/lib/cx/insights/schedule";
 import {
   STARTER_SCORECARD,
+  acceptReview,
   aiPrescore,
+  assignCoaching,
+  bulkAiScore,
+  completeCoaching,
+  deleteCoaching,
   deleteReview,
   deleteScorecard,
   disputeReview,
@@ -33,6 +39,7 @@ export async function saveScorecardAction(projectId: string, input: z.input<type
   try {
     await brand(projectId);
     const sid = await saveScorecard(projectId, input, id);
+    await syncHourly(projectId);
     done();
     return { ok: true, data: { id: sid } };
   } catch (e) {
@@ -72,7 +79,7 @@ export async function openReviewAction(projectId: string, ticketId: string, scor
     return actionError(e);
   }
 }
-export async function saveReviewAction(projectId: string, id: string, input: { answers: QaAnswers; comment: string; coaching: string; submit: boolean }): Promise<ActionResult<{ score: number | null; fatal: boolean; status: string }>> {
+export async function saveReviewAction(projectId: string, id: string, input: { answers: QaAnswers; comment: string; coaching: string; submit: boolean; texts?: Record<string, string>; tags?: string[]; supervisorId?: string | null }): Promise<ActionResult<{ score: number | null; fatal: boolean; status: string }>> {
   try {
     const user = await brand(projectId);
     const r = await saveReview(projectId, user.id, id, input);
@@ -122,6 +129,52 @@ export async function deleteReviewAction(projectId: string, id: string): Promise
     await deleteReview(projectId, id);
     done();
     return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function acceptReviewAction(projectId: string, id: string): Promise<ActionResult<null>> {
+  try {
+    await brand(projectId);
+    await acceptReview(projectId, id);
+    done();
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+export async function assignCoachingAction(projectId: string, input: { agentId: string; scorecardId?: string | null; supervisorId?: string | null; notes: string; dueDays?: number | null }): Promise<ActionResult<{ id: string }>> {
+  try {
+    const user = await brand(projectId);
+    if (!input.notes.trim()) throw new AppError("Describe what the coaching should cover.", 400);
+    const id = await assignCoaching(projectId, user.id, input);
+    done();
+    return { ok: true, data: { id } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+export async function coachingFlagAction(projectId: string, id: string, action: "complete" | "delete", outcome = ""): Promise<ActionResult<null>> {
+  try {
+    await brand(projectId);
+    if (action === "delete") await deleteCoaching(projectId, id);
+    else await completeCoaching(projectId, id, outcome);
+    done();
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+/** Bulk AI auto-score of queued reviews (drafts only; reviewers submit). */
+export async function bulkAiScoreAction(projectId: string): Promise<ActionResult<{ considered: number; scored: number; failed: number; avg: number | null; below: number }>> {
+  try {
+    const user = await brand(projectId);
+    if (!aiConfigured()) throw new AppError("Connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) to auto-score.", 400);
+    const r = await bulkAiScore(projectId, user.id, 20);
+    if (!r) throw new AppError("AI is not configured.", 400);
+    done();
+    return { ok: true, data: { considered: r.considered, scored: r.scored, failed: r.failed, avg: r.avg, below: r.below } };
   } catch (e) {
     return actionError(e);
   }

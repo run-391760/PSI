@@ -18,7 +18,9 @@ const ID_HINT: Record<string, { label: string; placeholder: string; token: strin
   instagram: { label: "Instagram business account ID", placeholder: "17841400000000000", token: "Page access token (of the linked Page)", help: "Needs instagram_content_publish + instagram_basic." },
   linkedin: { label: "Author URN", placeholder: "urn:li:organization:123456", token: "Access token", help: "Member token with w_organization_social (+ r_organization_social for analytics)." },
   x: { label: "User ID", placeholder: "2244994945", token: "OAuth 2.0 user access token", help: "User-context token with tweet.write, tweet.read, users.read, media.write (also used for analytics)." },
-  youtube: { label: "Channel ID or @handle", placeholder: "UC_x5XG1OV2P6uZZ5FSM9Ttw", token: null, help: "Used for channel analytics (YouTube Data API)." },
+  youtube: { label: "Channel ID or @handle", placeholder: "UC_x5XG1OV2P6uZZ5FSM9Ttw", token: "OAuth upload token (optional)", help: "Channel analytics use the YouTube Data API key. Video uploads (reel posts) need an OAuth token with the youtube.upload scope." },
+  threads: { label: "Threads user ID", placeholder: "17841400000000000", token: "Threads access token", help: "Long-lived token with threads_basic, threads_content_publish (and threads_delete to delete posts)." },
+  gbp: { label: "Location", placeholder: "accounts/123/locations/456", token: "OAuth access token", help: "Token with the business.manage scope for this location." },
 };
 
 function run(start: (fn: () => Promise<void>) => void, fn: () => Promise<{ ok: boolean; error?: string }>, setError: (e: string | null) => void, done: () => void) {
@@ -102,13 +104,13 @@ export type MemberItem = { user_id: string; name: string; email: string; team_ro
 export function RolesPanel({ brandId, members, requireApproval, isOwner }: { brandId: string; members: MemberItem[]; requireApproval: boolean; isOwner: boolean }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"author" | "approver">("approver");
+  const [role, setRole] = useState<"author" | "approver" | "tagger">("approver");
   const [req, setReq] = useState(requireApproval);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   return (
     <Card>
-      <CardHeader title="Approval workflow & roles" description="Authors write and submit posts; approvers approve or request changes. CX team admins/supervisors are approvers, agents are authors." />
+      <CardHeader title="Approval workflow & roles" description="Authors write and submit posts; approvers approve or request changes (pick several on a post to require all of them). Tag managers curate content tags. CX team admins/supervisors are approvers, agents are authors." />
       <CardBody className="grid gap-4">
         <label className="flex items-start gap-2 text-[13px]">
           <Checkbox
@@ -134,12 +136,12 @@ export function RolesPanel({ brandId, members, requireApproval, isOwner }: { bra
                 {m.team_role && <span className="ml-1 text-[12px] text-text-3">· {m.owner ? "owner" : `team ${m.team_role}`}</span>}
               </span>
               <span className="flex flex-wrap items-center gap-1">
-                {m.roles.map((r) => <Badge key={r} tone={r === "approver" ? "brand" : "neutral"}>{r}</Badge>)}
+                {m.roles.map((r) => <Badge key={r} tone={r === "approver" ? "brand" : "neutral"}>{r === "tagger" ? "tag manager" : r}</Badge>)}
                 {!m.roles.length && <Badge>read-only</Badge>}
                 {isOwner &&
                   m.explicit.map((r) => (
                     <Button key={r} size="sm" variant="ghost" title={`Remove explicit ${r} role`} disabled={pending} onClick={() => run(start, () => removeMemberAction(brandId, m.user_id, r), setError, () => router.refresh())}>
-                      <Trash2 className="h-3.5 w-3.5" /> {r}
+                      <Trash2 className="h-3.5 w-3.5" /> {r === "tagger" ? "tag manager" : r}
                     </Button>
                   ))}
               </span>
@@ -151,9 +153,10 @@ export function RolesPanel({ brandId, members, requireApproval, isOwner }: { bra
             <Field label="Add by email" htmlFor="role-email" className="min-w-52 flex-1">
               <Input id="role-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="colleague@company.com" />
             </Field>
-            <Select value={role} onChange={(e) => setRole(e.target.value as "author" | "approver")} aria-label="Role" className="w-32">
+            <Select value={role} onChange={(e) => setRole(e.target.value as "author" | "approver" | "tagger")} aria-label="Role" className="w-40">
               <option value="approver">Approver</option>
               <option value="author">Author</option>
+              <option value="tagger">Tag manager</option>
             </Select>
             <Button disabled={pending || !email.trim()} onClick={() => run(start, () => addMemberAction(brandId, email, role), setError, () => { setEmail(""); router.refresh(); })}>
               <UserPlus className="h-4 w-4" /> Add

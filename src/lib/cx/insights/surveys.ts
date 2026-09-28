@@ -3,11 +3,15 @@ import { z } from "zod";
 import { query, transaction } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { sentimentOf } from "@/lib/cx/ai";
+import { getTicketFields } from "@/lib/cx/admin/fields";
 import { csat, dayKeys, nps } from "./metrics";
+import { DEFAULT_SETTINGS, fillSurveyTemplate, inlineRatingLinks, matchesConditions, settingsInput, type SurveySettings } from "./survey-defs";
+import { brandMailer } from "./mailer";
 
 export type SurveyKind = "csat" | "nps" | "custom";
 export type Question = { id: string; label: string; type: "rating5" | "nps" | "text" | "choice"; options?: string[]; required?: boolean };
-export type Survey = { id: string; project_id: string; name: string; kind: SurveyKind; question: string; questions: Question[]; thank_you: string; status: "active" | "paused"; auto_send: boolean; created_at: string };
+export type Survey = { id: string; project_id: string; name: string; kind: SurveyKind; question: string; questions: Question[]; thank_you: string; status: "active" | "paused"; auto_send: boolean; created_at: string; settings: SurveySettings };
+export type { SurveySettings, SurveyConditions } from "./survey-defs";
 export type SurveyWithStats = Survey & { responses: number; last_response: string | null; scores: number[] };
 export type ResponseRow = { id: string; score: number | null; answers: Record<string, unknown>; comment: string; sentiment: string | null; created_at: string; ticket_id: string | null; ticket_number: number | null; contact: string | null; agent: string | null };
 
@@ -46,7 +50,7 @@ export async function listSurveys(projectId: string) {
 export async function getSurvey(projectId: string, id: string) {
   const [s] = await query<Survey>("SELECT * FROM cx_surveys WHERE id=$1 AND project_id=$2", [id, projectId]);
   if (!s) throw new AppError("Survey not found.", 404);
-  return s;
+  return { ...s, settings: { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) } };
 }
 export async function saveSurvey(projectId: string, raw: z.input<typeof surveyInput>, id?: string) {
   const s = surveyInput.parse(raw);
@@ -66,6 +70,13 @@ export async function saveSurvey(projectId: string, raw: z.input<typeof surveyIn
   ]);
   return nid;
 }
+/** Delivery settings (email subject/template, trigger, conditions, inline rating, redirect, background). */
+export async function saveSurveySettings(projectId: string, id: string, raw: unknown) {
+  await getSurvey(projectId, id);
+  const st = settingsInput.parse(raw);
+  await query("UPDATE cx_surveys SET settings=$3 WHERE id=$1 AND project_id=$2", [id, projectId, JSON.stringify(st)]);
+}
+
 export async function deleteSurvey(projectId: string, id: string) {
   await query("DELETE FROM cx_surveys WHERE id=$1 AND project_id=$2", [id, projectId]);
 }
@@ -129,37 +140,120 @@ export async function inviteForTicket(projectId: string, surveyId: string, ticke
   return row.token;
 }
 
-/**
- * Helper for the inbox module: the survey link to send after a ticket is solved (null when the brand has
- * no active auto-send survey). Path is relative unless APP_ORIGIN is set.
- */
-export async function surveyLinkForTicket(projectId: string, ticketId: string) {
-  const [s] = await query<Survey>(
-    "SELECT * FROM cx_surveys WHERE project_id=$1 AND status='active' AND auto_send ORDER BY (kind='csat') DESC, created_at LIMIT 1",
-    [projectId],
+type TicketCtx = { id: string; status: string; channel_kind: string; priority: string; tags: string[]; assignee_id: string | null; number: number; subject: string; contact_name: string | null; contact_email: string | null };
+async function ticketCtx(projectId: string, ticketId: string) {
+  const [t] = await query<TicketCtx>(
+    `SELECT t.id,t.status,t.channel_kind,t.priority,t.tags,t.assignee_id,t.number,t.subject,NULLIF(c.name,'') AS contact_name,c.email AS contact_email
+     FROM cx_tickets t LEFT JOIN cx_contacts c ON c.id=t.contact_id WHERE t.id=$1 AND t.project_id=$2`,
+    [ticketId, projectId],
   );
-  if (!s) return null;
-  const token = await inviteForTicket(projectId, s.id, ticketId, "auto");
-  const url = `${appOrigin()}/s/${s.id}?t=${token}`;
-  return { surveyId: s.id, url, text: `${s.question || "We'd love your feedback."}\n${url}` };
+  return t ?? null;
+}
+async function eligible(s: Survey, t: TicketCtx) {
+  const st = { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) };
+  const c = st.conditions;
+  const needFields = !!(c.classificationIds?.length || c.fields?.length);
+  const f = needFields ? await getTicketFields(t.id).catch(() => ({ classificationIds: [], values: {} })) : { classificationIds: [], values: {} };
+  return matchesConditions(c, { channel: t.channel_kind, priority: t.priority, tags: t.tags ?? [], classificationIds: f.classificationIds, values: f.values });
+}
+function surveyText(s: Survey, url: string, t: TicketCtx | null, brand = "") {
+  const st = { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) };
+  const rating = st.inline && s.kind !== "custom" ? inlineRatingLinks(s.kind, url) : "";
+  return fillSurveyTemplate(st.emailTemplate, { name: t?.contact_name ?? "", ticket: t?.number, brand, question: s.question || "We'd love your feedback.", link: url, ratingLinks: rating });
 }
 
-/** Creates invites for recently solved tickets of every auto-send survey (job cx.insights.survey-dispatch). */
-export async function dispatchSurveys(projectId: string) {
-  const surveys = await query<{ id: string }>("SELECT id FROM cx_surveys WHERE project_id=$1 AND status='active' AND auto_send", [projectId]);
-  let created = 0;
+/**
+ * Helper for the inbox module: the survey link to send after a ticket is solved (null when the brand has
+ * no active auto-send survey whose conditions match the ticket). Path is relative unless APP_ORIGIN is set.
+ * `text` contains inline rating links when the survey has inline rating on.
+ */
+export async function surveyLinkForTicket(projectId: string, ticketId: string) {
+  const surveys = await query<Survey & { brand: string }>(
+    "SELECT s.*, p.name AS brand FROM cx_surveys s JOIN projects p ON p.id=s.project_id WHERE s.project_id=$1 AND s.status='active' AND s.auto_send ORDER BY (s.kind='csat') DESC, s.created_at",
+    [projectId],
+  );
+  const t = await ticketCtx(projectId, ticketId);
+  if (!t) return null;
   for (const s of surveys) {
+    const st = { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) };
+    if (st.trigger === "closed" && t.status !== "closed") continue;
+    if (!(await eligible(s, t))) continue;
+    const token = await inviteForTicket(projectId, s.id, ticketId, "auto");
+    const url = `${appOrigin()}/s/${s.id}?t=${token}`;
+    return { surveyId: s.id, url, text: surveyText(s, url, t, s.brand), subject: fillSurveyTemplate(st.emailSubject, { brand: s.brand, ticket: t.number, name: t.contact_name ?? "" }) };
+  }
+  return null;
+}
+
+/**
+ * Hourly (job cx.insights.survey-dispatch): creates invites for resolved tickets matching each auto-send
+ * survey's trigger and conditions, and emails them itself where the inbox does not: tickets on social or
+ * other channels with a known contact email (when "email social tickets" is on) and, for the "closed"
+ * trigger, email tickets once closed.
+ */
+export async function dispatchSurveys(projectId: string) {
+  const surveys = await query<Survey & { brand: string }>("SELECT s.*, p.name AS brand FROM cx_surveys s JOIN projects p ON p.id=s.project_id WHERE s.project_id=$1 AND s.status='active' AND s.auto_send", [projectId]);
+  let created = 0, emailed = 0;
+  let mailer: Awaited<ReturnType<typeof brandMailer>> | undefined;
+  for (const s of surveys) {
+    const st = { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) };
+    const statuses = st.trigger === "closed" ? ["closed"] : ["solved", "closed"];
     const tickets = await query<{ id: string }>(
-      `SELECT t.id FROM cx_tickets t WHERE t.project_id=$1 AND t.status IN ('solved','closed') AND t.resolved_at > now() - interval '14 days'
-       AND NOT EXISTS (SELECT 1 FROM cx_survey_invites i WHERE i.survey_id=$2 AND i.ticket_id=t.id) LIMIT 500`,
-      [projectId, s.id],
+      `SELECT t.id FROM cx_tickets t LEFT JOIN cx_survey_invites i ON i.survey_id=$2 AND i.ticket_id=t.id
+       WHERE t.project_id=$1 AND t.status = ANY($3) AND t.resolved_at > now() - interval '14 days'
+       AND (i.token IS NULL OR (i.sent_at IS NULL AND i.responded_at IS NULL AND t.channel_kind NOT IN ('livechat','webform') AND NOT (t.channel_kind='email' AND $4<>'closed')))
+       LIMIT 500`,
+      [projectId, s.id, statuses, st.trigger],
     );
-    for (const t of tickets) {
-      await inviteForTicket(projectId, s.id, t.id, "auto");
+    for (const { id } of tickets) {
+      const t = await ticketCtx(projectId, id);
+      if (!t || !(await eligible(s, t))) continue;
+      const token = await inviteForTicket(projectId, s.id, id, "auto");
+      await query("UPDATE cx_survey_invites SET agent_id=COALESCE(agent_id,$2) WHERE token=$1", [token, t.assignee_id]);
       created++;
+      const inboxSends = ["email", "livechat", "webform"].includes(t.channel_kind) && !(st.trigger === "closed" && t.channel_kind === "email");
+      const wantEmail = t.contact_email && (st.trigger === "closed" && t.channel_kind === "email" ? true : !["email", "livechat", "webform"].includes(t.channel_kind) && st.socialEmail);
+      if (inboxSends || !wantEmail) continue;
+      mailer ??= await brandMailer(projectId);
+      if (!mailer) continue;
+      const url = `${appOrigin()}/s/${s.id}?t=${token}`;
+      try {
+        await mailer.send({ to: t.contact_email!, subject: fillSurveyTemplate(st.emailSubject, { brand: s.brand, ticket: t.number, name: t.contact_name ?? "" }), text: surveyText(s, url, t, s.brand) });
+        await query("UPDATE cx_survey_invites SET sent_at=now(), sent_via='email' WHERE token=$1", [token]);
+        emailed++;
+      } catch (e) {
+        console.error("[cx insights] survey email", e);
+      }
     }
   }
-  return { surveys: surveys.length, invites: created };
+  return { surveys: surveys.length, invites: created, emailed };
+}
+
+/** Agent-wise CSAT sent report (L27): invites, delivered, responses and average score per ticket assignee. */
+export async function agentSurveyReport(projectId: string, surveyId?: string, days = 90) {
+  const [inv, resp] = await Promise.all([
+    query<{ agent_id: string | null; agent: string | null; invites: number; delivered: number; responses: number }>(
+      `SELECT u.id AS agent_id, COALESCE(NULLIF(u.name,''),u.email) AS agent, count(*)::int AS invites,
+              count(*) FILTER (WHERE i.sent_at IS NOT NULL OR EXISTS (SELECT 1 FROM cx_messages m WHERE m.ticket_id=i.ticket_id AND m.direction='out' AND m.delivery='sent' AND position(i.token in m.body) > 0))::int AS delivered,
+              count(*) FILTER (WHERE i.responded_at IS NOT NULL)::int AS responses
+       FROM cx_survey_invites i LEFT JOIN cx_tickets t ON t.id=i.ticket_id LEFT JOIN users u ON u.id=COALESCE(i.agent_id,t.assignee_id)
+       WHERE i.project_id=$1 AND ($2::text IS NULL OR i.survey_id=$2) AND i.created_at > now() - ($3 * interval '1 day') GROUP BY 1,2`,
+      [projectId, surveyId ?? null, days],
+    ),
+    query<{ agent_id: string | null; n: number; avg: number | null; satisfied: number }>(
+      `SELECT t.assignee_id AS agent_id, count(*)::int AS n, avg(r.score)::float AS avg,
+              count(*) FILTER (WHERE (s.kind='csat' AND r.score>=4) OR (s.kind='nps' AND r.score>=9))::int AS satisfied
+       FROM cx_survey_responses r JOIN cx_surveys s ON s.id=r.survey_id LEFT JOIN cx_tickets t ON t.id=r.ticket_id
+       WHERE r.project_id=$1 AND ($2::text IS NULL OR r.survey_id=$2) AND r.ticket_id IS NOT NULL AND r.created_at > now() - ($3 * interval '1 day') GROUP BY 1`,
+      [projectId, surveyId ?? null, days],
+    ),
+  ]);
+  return inv
+    .map((i) => {
+      const r = resp.find((x) => (x.agent_id ?? "") === (i.agent_id ?? ""));
+      return { agent: i.agent ?? "Unassigned", invites: i.invites, delivered: i.delivered, responses: i.responses, responseRate: i.invites ? (i.responses / i.invites) * 100 : null, avg: r?.avg ?? null, satisfiedPct: r?.n ? (r.satisfied / r.n) * 100 : null };
+    })
+    .sort((a, b) => b.invites - a.invites);
 }
 
 export async function listInvites(projectId: string, surveyId: string) {
@@ -175,7 +269,7 @@ export async function listInvites(projectId: string, surveyId: string) {
 
 export async function publicSurvey(id: string) {
   const [s] = await query<Survey & { brand: string }>("SELECT s.*, p.name AS brand FROM cx_surveys s JOIN projects p ON p.id=s.project_id WHERE s.id=$1", [id]);
-  return s ?? null;
+  return s ? { ...s, settings: { ...DEFAULT_SETTINGS, ...(s.settings ?? {}) } as SurveySettings } : null;
 }
 
 export const responseInput = z.object({
@@ -227,6 +321,6 @@ export async function submitResponse(surveyId: string, raw: z.input<typeof respo
       "INSERT INTO cx_survey_responses(id,survey_id,project_id,ticket_id,contact_id,score,answers,comment,sentiment,sentiment_score) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
       [randomUUID(), surveyId, s.project_id, ticketId, contactId, score, JSON.stringify(answers), input.comment.trim(), sent?.label ?? null, sent?.score ?? null],
     );
-    return { thankYou: s.thank_you };
+    return { thankYou: s.thank_you, redirect: s.settings.redirectUrl || null };
   });
 }

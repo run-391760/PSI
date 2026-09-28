@@ -58,4 +58,61 @@ CREATE TABLE IF NOT EXISTS cx_crisis_notes (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS cx_crisis_notes_event ON cx_crisis_notes(event_id, created_at);
+
+-- WP3: crisis v2, reviews, trending, UGC, command centre, social analytics
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS auto_ticket boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS auto_ticket_all boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS rating_drop real NOT NULL DEFAULT 0.5;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS rating_alert_at timestamptz;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS trending_alerts boolean NOT NULL DEFAULT true;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS trending_sent jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS er_formula jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE cx_crisis_events ADD COLUMN IF NOT EXISTS risk jsonb NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS cx_listening_media (
+  mention_id text PRIMARY KEY REFERENCES cx_mentions(id) ON DELETE CASCADE,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  media jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_listening_media_project ON cx_listening_media(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cx_ugc_consent (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  mention_id text NOT NULL REFERENCES cx_mentions(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','granted','denied','withdrawn')),
+  request_text text NOT NULL DEFAULT '',
+  rights_note text NOT NULL DEFAULT '',
+  history jsonb NOT NULL DEFAULT '[]',
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  responded_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(project_id, mention_id)
+);
+
+CREATE TABLE IF NOT EXISTS cx_crisis_playbooks (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  auto_attach text NOT NULL DEFAULT 'none' CHECK (auto_attach IN ('none','any','critical')),
+  steps jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cx_crisis_checklists (
+  event_id text NOT NULL REFERENCES cx_crisis_events(id) ON DELETE CASCADE,
+  playbook_id text NOT NULL REFERENCES cx_crisis_playbooks(id) ON DELETE CASCADE,
+  items jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, playbook_id)
+);
+
+CREATE TABLE IF NOT EXISTS cx_command_boards (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  streams jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 `;

@@ -8,7 +8,9 @@ import { Page, PageHeader } from "@/components/shell/page";
 import { requirePageUser } from "@/lib/auth";
 import { aiConfigured } from "@/lib/cx/ai";
 import { AppError } from "@/lib/domain";
-import { connections, getPost, getSettings, listAssets, listCampaigns, listMembers, postComments, pubContext, statusCounts } from "@/lib/cx/publishing/data";
+import { connections, bestTimeData, getPost, getSettings, hashtagData, listAssets, listCampaigns, listMembers, postApprovals, postComments, pubContext, statusCounts } from "@/lib/cx/publishing/data";
+import { canDelete, imageGenConfigured } from "@/lib/cx/publishing/adapters";
+import { hashtagSuggestions } from "@/lib/cx/publishing/suggest";
 
 export const metadata: Metadata = { title: "Post composer" };
 
@@ -24,7 +26,7 @@ export default async function PostPage({ params, searchParams }: { params: Promi
         if (e instanceof AppError && e.status === 404) notFound();
         throw e;
       });
-  const [conns, assets, campaigns, members, settings, comments, counts] = await Promise.all([
+  const [conns, assets, campaigns, members, settings, comments, counts, decisions, bestTime, tagData] = await Promise.all([
     connections(brand.id),
     listAssets(brand.id),
     listCampaigns(brand.id),
@@ -32,7 +34,11 @@ export default async function PostPage({ params, searchParams }: { params: Promi
     getSettings(brand.id),
     post ? postComments(post.id) : Promise.resolve([]),
     statusCounts(brand.id),
+    post ? postApprovals(post.id) : Promise.resolve([]),
+    bestTimeData(brand.id),
+    hashtagData(brand.id),
   ]);
+  const hashtags = hashtagSuggestions({ mentions: tagData.mentions, posts: tagData.posts, brand: brand.name, limit: 30 });
   const h = await headers();
   const origin = (process.env.APP_URL || `${h.get("x-forwarded-proto") ?? "http"}://${h.get("x-forwarded-host") ?? h.get("host")}`).replace(/\/$/, "");
   const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : null;
@@ -73,18 +79,30 @@ export default async function PostPage({ params, searchParams }: { params: Promi
             published_at: iso(post.published_at),
             results: post.results,
             author: post.author,
+            post_type: post.post_type,
+            options: post.options,
+            approver_ids: post.approver_ids,
+            content_tags: post.content_tags,
           }
         }
         channels={conns.map((c) => ({ kind: c.kind, connected: c.connected, reason: c.reason, publishApi: c.publishApi }))}
-        assets={assets.map((a) => ({ id: a.id, filename: a.filename, mime: a.mime, tags: a.tags }))}
+        assets={assets.map((a) => ({ id: a.id, filename: a.filename, mime: a.mime, tags: a.tags, approval: a.approval }))}
         campaigns={campaigns.map((c) => ({ id: c.id, name: c.name }))}
-        approvers={members.filter((m) => !m.owner && m.roles.includes("approver")).map((m) => ({ user_id: m.user_id, name: m.name }))}
+        approvers={members.filter((m) => m.roles.includes("approver")).map((m) => ({ user_id: m.user_id, name: m.owner ? `${m.name} (owner)` : m.name }))}
         ai={aiConfigured()}
         canAuthor={access.canAuthor}
         canApprove={access.canApprove}
         requireApproval={settings.requireApproval}
         comments={comments.map((c) => ({ ...c, created_at: new Date(c.created_at).toISOString() }))}
         initialDate={date}
+        userId={user.id}
+        decisions={decisions.map((d) => ({ user_id: d.user_id, name: d.name, decision: d.decision, comment: d.comment ?? "", at: d.at ? new Date(d.at).toISOString() : "" }))}
+        requireAssetApproval={settings.requireAssetApproval}
+        tags={{ defined: settings.contentTags, canCreate: access.isTagManager, locked: settings.tagPolicy === "managers" && !access.isTagManager }}
+        bestTime={bestTime}
+        hashtags={hashtags}
+        imageAi={imageGenConfigured()}
+        deletable={conns.filter((c) => canDelete(c.kind) && (c.connected || c.kind === "youtube")).map((c) => c.kind)}
       />
     </Page>
   );

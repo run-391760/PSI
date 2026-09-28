@@ -14,7 +14,9 @@ import { Callout } from "@/components/ui/feedback";
 import { Metric, MetricStrip } from "@/components/ui/metric";
 import { requirePageUser } from "@/lib/auth";
 import { STATUS_LABEL, renderText, type PostStatus } from "@/lib/cx/publishing/core";
-import { connections, getSettings, listCampaigns, listLinks, listMembers, listPosts, pubContext, shortUrl, statusCounts } from "@/lib/cx/publishing/data";
+import { connections, getSettings, listCampaigns, listLinks, listMembers, listPosts, pubContext, shortUrl, statusCounts, typeCounts, usedContentTags } from "@/lib/cx/publishing/data";
+import { POST_TYPES, postTypeLabel } from "@/lib/cx/publishing/options";
+import { ContentSettingsPanel } from "@/components/cx/publishing/content-settings";
 import { headers } from "next/headers";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,8 @@ export default async function PublishingPage({ searchParams }: { searchParams: P
   if (!brand || !access) return <NoBrand title="Publishing" />;
   const tab = typeof sp.tab === "string" ? sp.tab : "posts";
   const status = typeof sp.status === "string" && (STATUSES as string[]).includes(sp.status) ? sp.status : undefined;
+  const type = typeof sp.type === "string" && POST_TYPES.some((t) => t.type === sp.type) ? sp.type : undefined;
+  const tag = typeof sp.tag === "string" && sp.tag ? sp.tag : undefined;
   const [counts, conns, settings] = await Promise.all([statusCounts(brand.id), connections(brand.id), getSettings(brand.id)]);
   const q = `brand=${brand.id}`;
   const connected = conns.filter((c) => c.connected && c.publishApi);
@@ -65,7 +69,7 @@ export default async function PublishingPage({ searchParams }: { searchParams: P
       {tab === "links" ? (
         <LinksTab brandId={brand.id} />
       ) : tab === "settings" ? (
-        <SettingsTab brand={brand} isOwner={access.isOwner} conns={conns} requireApproval={settings.requireApproval} />
+        <SettingsTab brand={brand} isOwner={access.isOwner} isTagManager={access.isTagManager} conns={conns} settings={settings} />
       ) : (
         <>
           <MetricStrip className="mb-4">
@@ -81,7 +85,7 @@ export default async function PublishingPage({ searchParams }: { searchParams: P
               <Link className="text-link hover:underline" href={`/cx/publishing?${q}&tab=settings`}>Channels & roles</Link> for what each network needs (Meta and LinkedIn are free with app review, X API is paid).
             </Callout>
           )}
-          {tab === "approvals" ? <ApprovalsTab brandId={brand.id} canApprove={access.canApprove} canAuthor={access.canAuthor} /> : <PostsTab brandId={brand.id} status={status} counts={counts} canAuthor={access.canAuthor} />}
+          {tab === "approvals" ? <ApprovalsTab brandId={brand.id} canApprove={access.canApprove} canAuthor={access.canAuthor} /> : <PostsTab brandId={brand.id} status={status} type={type} tag={tag} counts={counts} canAuthor={access.canAuthor} />}
         </>
       )}
     </Page>
@@ -102,17 +106,22 @@ function toItems(rows: Awaited<ReturnType<typeof listPosts>>) {
     updated_at: new Date(p.updated_at).toISOString(),
     results: p.results,
     media: p.media.length,
+    post_type: p.post_type,
+    content_tags: p.content_tags,
   }));
 }
 
-async function PostsTab({ brandId, status, counts, canAuthor }: { brandId: string; status?: string; counts: Partial<Record<PostStatus, number>>; canAuthor: boolean }) {
-  const rows = await listPosts(brandId, { status });
+async function PostsTab({ brandId, status, type, tag, counts, canAuthor }: { brandId: string; status?: string; type?: string; tag?: string; counts: Partial<Record<PostStatus, number>>; canAuthor: boolean }) {
+  const [rows, types, tags] = await Promise.all([listPosts(brandId, { status, type, tag }), typeCounts(brandId), usedContentTags(brandId)]);
+  const href = (patch: Record<string, string | undefined>) => {
+    const q = new URLSearchParams({ brand: brandId });
+    const cur = { status, type, tag, ...patch };
+    for (const [k, v] of Object.entries(cur)) if (v) q.set(k, v);
+    return `/cx/publishing?${q.toString()}`;
+  };
+  const pill = (active: boolean) => cn("rounded-full border px-2.5 py-1 text-[12.5px]", active ? "border-brand bg-brand-soft text-text" : "border-border text-text-2 hover:bg-surface-3");
   const chip = (s: string | undefined, label: string, n?: number) => (
-    <Link
-      key={label}
-      href={`/cx/publishing?brand=${brandId}${s ? `&status=${s}` : ""}`}
-      className={cn("rounded-full border px-2.5 py-1 text-[12.5px]", status === s ? "border-brand bg-brand-soft text-text" : "border-border text-text-2 hover:bg-surface-3")}
-    >
+    <Link key={label} href={href({ status: s })} className={pill(status === s)}>
       {label} {n != null && <span className="text-text-3">{n}</span>}
     </Link>
   );
@@ -125,7 +134,25 @@ async function PostsTab({ brandId, status, counts, canAuthor }: { brandId: strin
           <CalendarDays className="h-4 w-4" /> Calendar
         </ButtonLink>
       </div>
-      <PostsTable brandId={brandId} rows={toItems(rows)} canAuthor={canAuthor} empty={status ? `No ${STATUS_LABEL[status as PostStatus].toLowerCase()} posts.` : "No posts yet. Create your first post or bulk-schedule from a CSV."} />
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[12.5px]">
+        <span className="mr-1 text-text-3">Type</span>
+        <Link href={href({ type: undefined })} className={pill(!type)}>Any</Link>
+        {POST_TYPES.map((t) => (
+          <Link key={t.type} href={href({ type: t.type })} className={pill(type === t.type)}>
+            {t.label} <span className="text-text-3">{types[t.type] ?? 0}</span>
+          </Link>
+        ))}
+        {tags.length > 0 && (
+          <>
+            <span className="mr-1 ml-2 text-text-3">Tag</span>
+            {tag && <Link href={href({ tag: undefined })} className={pill(false)}>Any</Link>}
+            {tags.slice(0, 12).map((t) => (
+              <Link key={t.tag} href={href({ tag: t.tag })} className={pill(tag === t.tag)}>#{t.tag} <span className="text-text-3">{t.n}</span></Link>
+            ))}
+          </>
+        )}
+      </div>
+      <PostsTable brandId={brandId} rows={toItems(rows)} canAuthor={canAuthor} empty={status || type || tag ? `No posts match${type ? ` · ${postTypeLabel(type)}` : ""}${status ? ` · ${STATUS_LABEL[status as PostStatus]}` : ""}${tag ? ` · #${tag}` : ""}.` : "No posts yet. Create your first post or bulk-schedule from a spreadsheet."} />
     </>
   );
 }
@@ -161,13 +188,15 @@ async function LinksTab({ brandId }: { brandId: string }) {
   );
 }
 
-async function SettingsTab({ brand, isOwner, conns, requireApproval }: { brand: { id: string; name: string; domain: string; owner_id: string }; isOwner: boolean; conns: Awaited<ReturnType<typeof connections>>; requireApproval: boolean }) {
-  const members = await listMembers(brand);
+async function SettingsTab({ brand, isOwner, isTagManager, conns, settings }: { brand: { id: string; name: string; domain: string; owner_id: string }; isOwner: boolean; isTagManager: boolean; conns: Awaited<ReturnType<typeof connections>>; settings: Awaited<ReturnType<typeof getSettings>> }) {
+  const requireApproval = settings.requireApproval;
+  const [members, used] = await Promise.all([listMembers(brand), usedContentTags(brand.id)]);
   return (
     <div className="grid gap-5">
       {!isOwner && <Callout tone="info">Only the brand owner can link accounts and change roles.</Callout>}
       <ConnectionsPanel brandId={brand.id} items={conns.map((c) => ({ ...c, label: "" }))} canEdit={isOwner} />
       <RolesPanel brandId={brand.id} members={members} requireApproval={requireApproval} isOwner={isOwner} />
+      <ContentSettingsPanel brandId={brand.id} isOwner={isOwner} isTagManager={isTagManager} settings={{ tagPolicy: settings.tagPolicy, contentTags: settings.contentTags, failureEmail: settings.failureEmail, quotaMb: settings.quotaMb, requireAssetApproval: settings.requireAssetApproval }} usage={Object.fromEntries(used.map((u) => [u.tag, u.n]))} />
     </div>
   );
 }

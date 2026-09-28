@@ -4,8 +4,11 @@ import { cn } from "@/lib/utils";
 const ITEMS = [
   { href: "/cx/listening", label: "Mentions" },
   { href: "/cx/listening/dashboards", label: "Dashboards" },
+  { href: "/cx/listening/reviews", label: "Reviews" },
+  { href: "/cx/listening/ugc", label: "UGC" },
   { href: "/cx/listening/topics", label: "Topics & sources" },
   { href: "/cx/crisis", label: "Crisis" },
+  { href: "/cx/crisis/playbooks", label: "Playbooks" },
 ];
 
 /** Section nav shared by the listening and crisis pages (keeps ?brand=). */

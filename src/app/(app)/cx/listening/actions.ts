@@ -101,3 +101,29 @@ export async function createTicketAction(brandId: string, mentionId: string): Pr
     return actionError(e);
   }
 }
+
+// ------------------------------------------------------------------ UGC consent (WP3)
+
+export async function setConsentAction(brandId: string, input: { mentionId: string; status: "requested" | "granted" | "denied" | "withdrawn"; requestText?: string; note?: string }): Promise<ActionResult<null>> {
+  try {
+    const { user, project } = await brand(brandId);
+    const { setConsent } = await import("@/lib/cx/listening/ugc");
+    await setConsent(project.id, input, user.name || user.email);
+    revalidatePath("/cx/listening/ugc");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function clearConsentAction(brandId: string, mentionId: string): Promise<ActionResult<null>> {
+  try {
+    const { project } = await brand(brandId);
+    const { clearConsent } = await import("@/lib/cx/listening/ugc");
+    await clearConsent(project.id, mentionId);
+    revalidatePath("/cx/listening/ugc");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}

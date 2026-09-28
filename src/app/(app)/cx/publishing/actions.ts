@@ -5,8 +5,12 @@ import { headers } from "next/headers";
 import { requireUser } from "@/lib/auth";
 import { AppError } from "@/lib/domain";
 import { complete } from "@/lib/cx/ai";
-import { parseBulkCsv, pubChannel, type Utm } from "@/lib/cx/publishing/core";
+import { inflateRawSync } from "node:zlib";
+import { parseBulkCsv, parseBulkTable, pubChannel, type Utm } from "@/lib/cx/publishing/core";
 import * as d from "@/lib/cx/publishing/data";
+import { deletePublishedPost } from "@/lib/cx/publishing/dispatch";
+import { generateImage, imageGenConfigured } from "@/lib/cx/publishing/adapters";
+import { readXlsx } from "@/lib/cx/publishing/xlsx";
 
 type Result<T = null> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -61,14 +65,76 @@ export async function commentAction(brandId: string, postId: string, body: strin
     await d.addComment(postId, u, "comment", body.trim());
   });
 }
-export async function bulkUploadAction(brandId: string, csv: string, tzOffset: number) {
+export type BulkPreviewRow = { line: number; at: string; channels: string[]; text: string; postType: string; error: string | null };
+/**
+ * Bulk scheduling from CSV text or an .xlsx file (base64). `dryRun` validates and returns per-row status
+ * without creating posts; otherwise valid rows are created and invalid rows reported by line.
+ */
+export async function bulkUploadAction(brandId: string, file: { csv?: string; xlsx?: string } | string, tzOffset: number, dryRun = false) {
   return run(async (u) => {
     const a = await d.requireBrand(u.id, brandId, "author");
-    if (csv.length > 1_000_000) throw new AppError("The CSV is larger than 1 MB.");
-    const { rows, errors } = parseBulkCsv(csv, tzOffset);
+    const src = typeof file === "string" ? { csv: file } : file;
+    let parsed;
+    if (src.xlsx) {
+      if (src.xlsx.length > 7_000_000) throw new AppError("The spreadsheet is larger than 5 MB.");
+      let table: string[][];
+      try {
+        table = readXlsx(new Uint8Array(Buffer.from(src.xlsx, "base64")), (b) => new Uint8Array(inflateRawSync(b)));
+      } catch (e) {
+        throw new AppError(e instanceof Error ? `Could not read the spreadsheet: ${e.message}` : "Could not read the spreadsheet.");
+      }
+      parsed = parseBulkTable(table, tzOffset);
+    } else {
+      if ((src.csv ?? "").length > 1_000_000) throw new AppError("The CSV is larger than 1 MB.");
+      parsed = parseBulkCsv(src.csv ?? "", tzOffset);
+    }
+    const { rows, errors } = parsed;
     if (rows.length > 500) throw new AppError("Upload at most 500 posts at a time.");
-    const r = rows.length ? await d.bulkCreate(a, u.id, rows, await origin()) : { created: 0, pendingApproval: false };
-    return { ...r, errors };
+    const rowErrors = dryRun ? await d.bulkCheck(a, rows) : [];
+    const preview: BulkPreviewRow[] = [
+      ...rows.map((r) => ({ line: r.line, at: r.at, channels: r.channels, text: r.text.slice(0, 140), postType: r.postType, error: rowErrors.find((e) => e.line === r.line)?.error ?? null })),
+      ...errors.map((e) => ({ line: e.line, at: "", channels: [], text: "", postType: "", error: e.error })),
+    ].sort((x, y) => x.line - y.line);
+    if (dryRun) return { created: 0, pendingApproval: false, errors: [...errors, ...rowErrors].sort((x, y) => x.line - y.line), preview, valid: rows.length - rowErrors.length };
+    const r = rows.length ? await d.bulkCreate(a, u.id, rows, await origin()) : { created: 0, pendingApproval: false, errors: [] };
+    const all = [...errors, ...r.errors].sort((x, y) => x.line - y.line);
+    return { created: r.created, pendingApproval: r.pendingApproval, errors: all, preview: preview.map((p) => ({ ...p, error: p.error ?? r.errors.find((e) => e.line === p.line)?.error ?? null })), valid: rows.length };
+  });
+}
+
+export async function deletePublishedAction(brandId: string, postId: string, kind: string) {
+  return run(async (u) => deletePublishedPost(await d.requireBrand(u.id, brandId, "author"), u, postId, kind));
+}
+
+/** Prompt-based compose: a full post draft from a prompt (null data = no AI key configured). */
+export async function composeFromPromptAction(brandId: string, input: { prompt: string; channel: string; postType: string }) {
+  return run(async (u) => {
+    const a = await d.requireBrand(u.id, brandId, "author");
+    if (!input.prompt.trim()) throw new AppError("Describe the post you want.");
+    const ch = pubChannel(input.channel);
+    const out = await complete(
+      `You write social media posts for the brand "${a.brand.name}" (${a.brand.domain}). Write one ${input.postType === "poll" ? "poll question (the options go on separate lines after a line containing exactly ---)" : "post"} for ${ch?.name ?? "social media"} within ${Math.min(ch?.limit ?? 2200, 2200)} characters. Use only facts given in the prompt; never invent prices, dates, statistics or claims. Where a link belongs write {link}. Return only the post text.`,
+      input.prompt.slice(0, 4000),
+      900,
+    );
+    if (out === null) return null;
+    const [text, opts] = out.split(/\n\s*---\s*\n/);
+    return { text: text.trim(), pollOptions: opts ? opts.split("\n").map((s) => s.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 4) : [] };
+  });
+}
+
+/** AI image generation into the asset library (null data = no image API key configured). */
+export async function generateImageAction(brandId: string, input: { prompt: string; size: string }) {
+  return run(async (u) => {
+    const a = await d.requireBrand(u.id, brandId, "author");
+    if (!imageGenConfigured()) return null;
+    if (!input.prompt.trim()) throw new AppError("Describe the image.");
+    const png = await generateImage(input.prompt, input.size).catch((e) => {
+      throw new AppError(e instanceof Error ? e.message : "Image generation failed.");
+    });
+    if (!png) return null;
+    const name = `ai-${input.prompt.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40).replace(/-+$/, "")}.png`;
+    return d.storeAsset(a.brand.id, u.id, { name, type: "image/png", bytes: png }, ["ai-generated"], "ai");
   });
 }
 
@@ -109,6 +175,12 @@ export async function deleteCampaignAction(brandId: string, id: string) {
 export async function setAssetTagsAction(brandId: string, id: string, tags: string[]) {
   return run(async (u) => d.setAssetTags((await d.requireBrand(u.id, brandId, "author")).brand.id, id, tags));
 }
+export async function requestAssetApprovalAction(brandId: string, id: string, approverId: string | null, note: string) {
+  return run(async (u) => d.requestAssetApproval(await d.requireBrand(u.id, brandId, "author"), u, id, approverId, note));
+}
+export async function decideAssetAction(brandId: string, id: string, decision: "approved" | "rejected", note: string) {
+  return run(async (u) => d.decideAsset(await d.requireBrand(u.id, brandId, "approve"), u, id, decision, note));
+}
 export async function deleteAssetAction(brandId: string, id: string) {
   return run(async (u) => d.deleteAsset((await d.requireBrand(u.id, brandId, "author")).brand.id, id));
 }
@@ -121,7 +193,18 @@ export async function saveAccountAction(brandId: string, kind: string, externalI
 export async function removeAccountAction(brandId: string, kind: string) {
   return run(async (u) => d.removeAccount((await d.requireBrand(u.id, brandId, "owner")).brand.id, kind));
 }
-export async function addMemberAction(brandId: string, email: string, role: "author" | "approver") {
+export async function savePubSettingsAction(brandId: string, patch: { quotaMb?: number; requireAssetApproval?: boolean; tagPolicy?: "authors" | "managers"; failureEmail?: boolean }) {
+  return run(async (u) => d.saveSettings((await d.requireBrand(u.id, brandId, "owner")).brand.id, patch));
+}
+/** Content-tag list: tag managers (owner, team admins, 'tagger' role) only. */
+export async function saveContentTagsAction(brandId: string, tags: string[]) {
+  return run(async (u) => {
+    const a = await d.requireBrand(u.id, brandId);
+    if (!a.isTagManager) throw new AppError("Only content-tag managers can edit the tag list.", 403);
+    await d.saveSettings(a.brand.id, { contentTags: tags });
+  });
+}
+export async function addMemberAction(brandId: string, email: string, role: "author" | "approver" | "tagger") {
   return run(async (u) => d.addMember((await d.requireBrand(u.id, brandId, "owner")).brand, email, role));
 }
 export async function removeMemberAction(brandId: string, userId: string, role: string) {

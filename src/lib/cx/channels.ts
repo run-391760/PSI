@@ -19,6 +19,11 @@ export type ChannelKind =
   | "whatsapp"
   | "x"
   | "linkedin"
+  | "discord"
+  | "discourse"
+  | "telegram"
+  | "threads"
+  | "gbp"
   | "google-reviews";
 
 export type ChannelUse = "listening" | "inbox" | "publishing" | "analytics";
@@ -52,6 +57,11 @@ export const CHANNELS: ChannelInfo[] = [
   { kind: "whatsapp", name: "WhatsApp", uses: ["inbox"], api: "WhatsApp Business Cloud API", cost: "paid", costNote: "Meta per-conversation pricing; business verification", env: ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN"], setup: "Set up WhatsApp Business in Meta Business Manager and point the webhook to /api/cx/webhooks/whatsapp." },
   { kind: "x", name: "X (Twitter)", uses: ["listening", "inbox", "publishing", "analytics"], api: "X API v2", cost: "paid", costNote: "Paid: Basic tier or higher for search/mentions", env: ["X_BEARER_TOKEN"], setup: "Subscribe to an X API tier and create a bearer token." },
   { kind: "linkedin", name: "LinkedIn", uses: ["publishing", "analytics"], api: "LinkedIn Community Management API", cost: "free-approval", costNote: "Free; partner approval required", env: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"], setup: "Apply for Community Management API access." },
+  { kind: "discord", name: "Discord", uses: ["inbox"], api: "Discord bot (REST API)", cost: "free", costNote: "Free", env: [], setup: "Create a bot at discord.com/developers, invite it to your server and connect it in Settings → Channels → Connectors." },
+  { kind: "discourse", name: "Discourse", uses: ["inbox"], api: "Discourse API", cost: "free", costNote: "Free", env: [], setup: "Create an API key in your forum admin and connect it in Settings → Channels → Connectors." },
+  { kind: "telegram", name: "Telegram", uses: ["inbox"], api: "Telegram Bot API", cost: "free", costNote: "Free", env: [], setup: "Create a bot with @BotFather and connect its token in Settings → Channels → Connectors." },
+  { kind: "threads", name: "Threads", uses: ["publishing"], api: "Threads API", cost: "free-approval", costNote: "Free; needs a Meta app with threads_content_publish", env: ["THREADS_APP_ID", "THREADS_APP_SECRET"], setup: "Add the Threads use case to a Meta app and request threads_basic + threads_content_publish (+ threads_delete)." },
+  { kind: "gbp", name: "Google Business Profile", uses: ["publishing"], api: "Business Profile API (local posts)", cost: "free-approval", costNote: "Free; needs Google API access approval", env: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], setup: "Request Business Profile API access and authorize the business.manage scope for the location's owner." },
   { kind: "google-reviews", name: "Google reviews", uses: ["listening", "inbox"], api: "Business Profile API or DataForSEO", cost: "free-approval", costNote: "Business Profile API needs Google approval; DataForSEO is pay-per-use", env: ["DATAFORSEO_LOGIN"], setup: "Connect DataForSEO, or request Business Profile API access." },
 ];
 

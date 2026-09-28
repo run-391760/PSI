@@ -50,6 +50,7 @@ const SPECS: Record<Source, Spec> = {
           count(*) FILTER (WHERE fr_due IS NOT NULL AND (t.first_response_at IS NOT NULL OR fr_due < now()))
         + count(*) FILTER (WHERE rs_due IS NOT NULL AND (t.resolved_at IS NOT NULL OR rs_due < now())), 0)`,
       csat: "avg(t.csat)::float",
+      sentscale: "100.0 * (count(*) FILTER (WHERE t.sentiment='positive') + 0.5 * count(*) FILTER (WHERE t.sentiment='neutral')) / NULLIF(count(*) FILTER (WHERE t.sentiment IN ('positive','neutral','negative')),0)",
     },
   },
   messages: {
@@ -111,7 +112,8 @@ const SPECS: Record<Source, Spec> = {
   },
 };
 
-export function buildWidgetSql(w: Pick<Widget, "source" | "metric" | "groupBy" | "filters" | "range">, projectId: string, from: Date, to: Date, grouped: boolean) {
+/** `ticketIds` (optional) restricts ticket-based sources to tickets matching classification/field filters. */
+export function buildWidgetSql(w: Pick<Widget, "source" | "metric" | "groupBy" | "filters" | "range"> & { chart?: Widget["chart"] }, projectId: string, from: Date, to: Date, grouped: boolean, ticketIds?: string[] | null) {
   const spec = SPECS[w.source];
   if (!spec) throw new Error("Unknown data source");
   const metric = spec.metrics[w.metric] ?? spec.metrics.count;
@@ -124,6 +126,10 @@ export function buildWidgetSql(w: Pick<Widget, "source" | "metric" | "groupBy" |
     params.push(String(v));
     where.push(f(`$${params.length}`));
   }
+  if (ticketIds && w.source !== "mentions") {
+    params.push(ticketIds);
+    where.push(`t.id = ANY($${params.length})`);
+  }
   let from_ = spec.from;
   if (w.source === "tickets") {
     from_ += ` CROSS JOIN LATERAL (SELECT COALESCE(t.first_response_due, t.created_at + p.first_response_minutes * interval '1 minute') AS fr_due,
@@ -132,8 +138,8 @@ export function buildWidgetSql(w: Pick<Widget, "source" | "metric" | "groupBy" |
   const g = grouped ? w.groupBy : "none";
   if (g === "tag") from_ += ` LEFT JOIN LATERAL jsonb_array_elements_text(${w.source === "tickets" ? "t" : "x"}.tags) AS tg(tag) ON true`;
   let key: string | null = null;
-  if (g === "date") key = `to_char(date_trunc('${w.range > 120 ? "week" : "day"}', ${spec.date} AT TIME ZONE 'UTC'),'YYYY-MM-DD')`;
-  else if (g !== "none") key = spec.groups[g] ?? null;
+  if (g === "date") key = w.chart === "compare" ? `to_char(${spec.date} AT TIME ZONE 'UTC','YYYY-MM')` : `to_char(date_trunc('${w.range > 120 ? "week" : "day"}', ${spec.date} AT TIME ZONE 'UTC'),'YYYY-MM-DD')`;
+  else if (g !== "none") key = spec.groups[g as keyof Spec["groups"]] ?? null;
   if (grouped && g !== "none" && !key) throw new Error(`Cannot group ${SOURCES[w.source].label.toLowerCase()} by ${g}`);
   const sql = key
     ? `SELECT ${key} AS key, ${metric} AS value FROM ${from_} WHERE ${where.join(" AND ")} GROUP BY 1 ORDER BY ${g === "date" ? "1 ASC" : "2 DESC NULLS LAST"} LIMIT ${g === "date" ? 400 : 25}`

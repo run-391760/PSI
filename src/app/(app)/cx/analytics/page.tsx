@@ -20,6 +20,11 @@ import { clickAnalytics, connections, listLinks, pubContext, shortUrl } from "@/
 import { channelInsights, publishedSummary, statHistory, type InsightResult } from "@/lib/cx/publishing/dispatch";
 import { compact, dateLabel, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ErFormulaForm } from "@/components/cx/listening/er-formula";
+import { Heatmap } from "@/components/cx/listening/viz";
+import { NeedsData } from "@/components/seo/needs-data";
+import { formulaText } from "@/lib/cx/listening/social";
+import { contentTags, ga4Audience, getFormula, prevClickSeries, scorePosts, suggestionInputs } from "@/lib/cx/listening/social-data";
 
 export const metadata: Metadata = { title: "Social analytics" };
 
@@ -34,6 +39,12 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   if (!brand) return <NoBrand title="Social analytics" section="Analytics" redirect="/cx/analytics" />;
   const days = RANGES.includes(Number(sp.days)) ? Number(sp.days) : 30;
   const [clicks, links, insights, history, published, conns] = await Promise.all([clickAnalytics(brand.id, days), listLinks(brand.id), channelInsights(brand.id), statHistory(brand.id), publishedSummary(brand.id, days), connections(brand.id)]);
+  const formula = await getFormula(brand.id);
+  const scored = scorePosts(insights, formula);
+  const [sugg, prevClicks, tags, ga4] = await Promise.all([suggestionInputs(brand.id, scored), prevClickSeries(brand.id, days), contentTags(brand.id, days, scored), ga4Audience(brand.owner_id, brand.id, days)]);
+  const clickSeries = clicks.series.map((d, i) => ({ ...d, prev_clicks: prevClicks[i] ?? 0 }));
+  const hh = (x: number) => `${String(x).padStart(2, "0")}:00`;
+  const topPosts = [...scored].filter((p) => (formula.denominator === "none" ? p.engagements : p.rate) != null).sort((a, b) => ((formula.denominator === "none" ? b.engagements : b.rate) ?? 0) - ((formula.denominator === "none" ? a.engagements : a.rate) ?? 0)).slice(0, 8);
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("x-forwarded-host") ?? h.get("host")}`;
   const delta = clicks.prev > 0 ? ((clicks.clicks - clicks.prev) / clicks.prev) * 100 : null;
@@ -81,7 +92,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           <CardHeader title="Short-link clicks" description="Daily human clicks on all tracked links of this brand." />
           <CardBody>
             {clicks.clicks > 0 ? (
-              <TrendChart data={clicks.series} xKey="day" xFormat="day" type="area" series={[{ key: "clicks", label: "Clicks" }]} height={220} yFormat="number" />
+              <TrendChart data={clickSeries} xKey="day" xFormat="day" series={[{ key: "clicks", label: `Last ${days}d` }, { key: "prev_clicks", label: `Previous ${days}d`, dashed: true, color: "var(--chart-text)" }]} height={220} yFormat="number" showLegend />
             ) : (
               <p className="py-12 text-center text-[13px] text-text-3">
                 No clicks in the last {days} days. Add a link to a post or create one in <Link className="text-link hover:underline" href={`/cx/publishing?brand=${brand.id}&tab=links`}>Links</Link>.
@@ -124,11 +135,113 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         </Card>
       </Grid>
 
+      <h2 className="mb-3 text-[16px] font-semibold">Smart suggestions</h2>
+      <Grid cols={2} className="mb-6">
+        <Card>
+          <CardHeader title="Best time to post: engagement" description={`Engagements on connected channels' recent posts by weekday and hour (UTC), ${sugg.engagement.events} posts`} />
+          <CardBody>
+            {sugg.engagement.events >= 3 ? (
+              <>
+                <Heatmap grid={sugg.engagement.grid} unit="engagements" />
+                <p className="mt-2 text-[12.5px] text-text-2">Best days: {sugg.engagement.bestDays.join(", ") || "n/a"} · best hours: {sugg.engagement.bestHours.map(hh).join(", ") || "n/a"}{sugg.engagement.worstDay ? ` · weakest day: ${sugg.engagement.worstDay}` : ""} (average engagements per post)</p>
+              </>
+            ) : (
+              <p className="py-8 text-center text-[13px] text-text-3">Needs at least 3 recent posts with engagement from a connected channel (see Channels below).</p>
+            )}
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="When your audience clicks" description={`Human short-link clicks by weekday and hour (UTC), last 90 days: ${sugg.clicks.events} clicks`} />
+          <CardBody>
+            {sugg.clicks.events >= 5 ? (
+              <>
+                <Heatmap grid={sugg.clicks.grid} unit="clicks" />
+                <p className="mt-2 text-[12.5px] text-text-2">Most clicks on {[...sugg.clicks.dayTotals].sort((a, b) => b.value - a.value).slice(0, 2).map((d) => d.day).join(" and ")}; peak hours {sugg.clicks.bestHours.map(hh).join(", ")}. Schedule link posts shortly before these hours.</p>
+              </>
+            ) : (
+              <p className="py-8 text-center text-[13px] text-text-3">Needs at least 5 clicks on tracked links (first-party, no API needed).</p>
+            )}
+          </CardBody>
+        </Card>
+      </Grid>
+
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Engagement rate" description="Your formula, applied to every connected channel's recent posts" info="Konnect-style configurable engagement rate: weight each metric, pick the denominator. Unknown inputs give n/a." />
+          <CardBody className="grid gap-4">
+            <ErFormulaForm brandId={brand.id} initial={formula} />
+            <MiniTable
+              columns={[{ header: "Top posts" }, { header: "Engagements", align: "right" }, { header: formula.denominator === "none" ? "" : "Rate", align: "right" }]}
+              empty={`No scored posts: connect a channel below. Formula: ${formulaText(formula)}`}
+              rows={topPosts.map((p) => [
+                <span key="t" className="flex max-w-[280px] min-w-0 items-center gap-2"><ChannelChip kind={p.kind} />{p.url ? <a className="truncate text-link hover:underline" href={p.url} target="_blank" rel="noreferrer">{p.title || "(no text)"}</a> : <span className="truncate">{p.title}</span>}</span>,
+                n(p.engagements),
+                formula.denominator === "none" ? "" : p.rate == null ? "n/a" : `${p.rate.toFixed(2)}%`,
+              ])}
+            />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="Content tags" description={`Posts published here by campaign tag, last ${days}d vs previous ${days}d`} href={`/cx/publishing?brand=${brand.id}`} />
+          <CardBody>
+            <MiniTable
+              empty={tags.tags ? "No published posts in these periods." : "No campaign tags yet: tag posts with a campaign in Publishing."}
+              columns={[{ header: "Tag" }, { header: "Posts", align: "right" }, { header: "Before", align: "right" }, { header: "Clicks", align: "right" }, { header: "Before", align: "right" }, { header: "Clicks/post", align: "right" }, { header: "Eng. rate", align: "right" }]}
+              rows={tags.rows.map((t) => [
+                <span key="t" className="font-medium">{t.tag}</span>,
+                t.posts.toLocaleString("en-US"),
+                t.prevPosts.toLocaleString("en-US"),
+                t.clicks.toLocaleString("en-US"),
+                t.prevClicks.toLocaleString("en-US"),
+                t.clicksPerPost == null ? "n/a" : t.clicksPerPost.toFixed(1),
+                t.avgRate == null ? "n/a" : `${t.avgRate.toFixed(2)}%`,
+              ])}
+            />
+          </CardBody>
+        </Card>
+      </div>
+
+      <h2 className="mb-3 text-[16px] font-semibold">Website audience (GA4)</h2>
+      <div className="mb-6">
+        {ga4.state === "not-configured" ? (
+          <NeedsData compact providers={["google"]} shows={["Active users by country, city and language", "Device split and top acquisition channels", "Same period as the rest of this page"]} />
+        ) : ga4.state === "not-linked" ? (
+          <Callout tone="info" title="Link a GA4 property to this brand">Google is connected, but this brand&apos;s project has no GA4 property. Link one in the project&apos;s settings to see audience charts here.</Callout>
+        ) : ga4.state === "error" ? (
+          <Callout tone="critical" title="GA4 returned an error">{ga4.error}</Callout>
+        ) : (
+          <Grid cols={3}>
+            {([["Countries", ga4.data.byCountry], ["Cities", ga4.data.byCity], ["Languages", ga4.data.byLanguage], ["Devices", ga4.data.byDevice], ["Top channels", ga4.data.byChannel]] as const).map(([title, rows]) => (
+              <Card key={title}>
+                <CardHeader title={title} description={`Active users, last ${days}d · GA4 ${timeAgo(ga4.fetchedAt)}`} />
+                <CardBody>
+                  <BarChart layout="bars" data={rows.map((r) => ({ label: r.label, users: r.users }))} xKey="label" series={[{ key: "users", label: "Active users" }]} height={Math.max(120, rows.length * 30)} valueLabels categoryWidth={110} yFormat="number" />
+                </CardBody>
+              </Card>
+            ))}
+          </Grid>
+        )}
+      </div>
+
       <h2 className="mb-3 text-[16px] font-semibold">Channels</h2>
       <div className="grid gap-4 lg:grid-cols-2">
         {insights.map((i) => (
           <ChannelCard key={i.kind} i={i} brandId={brand.id} history={history.filter((h) => h.kind === i.kind)} conn={conns.find((c) => c.kind === i.kind)!} published={published.find((p) => p.kind === i.kind)} />
         ))}
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <NeedsData compact providers={["business-profile"]} title="Connect Google Business Profile for location insights" shows={["Star breakdown, new reviews and average rating per location", "Direction requests, website and call clicks", "Location filter"]} />
+        <Card className="p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-ink"><Plug className="h-4 w-4" /></span>
+            <div className="min-w-0 text-[13px]">
+              <h3 className="text-[14px] font-semibold">Competitor public profiles, stories and reels</h3>
+              <p className="mt-1 text-text-2">Per-network post types, stories/reels insights, organic vs paid and competitor public-profile benchmarks need the Meta Graph (business discovery), X API v2 and LinkedIn APIs with approved apps.</p>
+              <p className="mt-1 text-text-3">Once connected: followers growth, posting frequency and engagement rate per competitor, reel watch time, accounts engaged. Competitor share of voice is already available from listening topics.</p>
+              <Link href={`/cx/listening/dashboards?brand=${brand.id}`} className={cn(buttonClass("secondary", "sm"), "mt-3")}>Competitor share of voice</Link>
+            </div>
+          </div>
+        </Card>
       </div>
     </Page>
   );

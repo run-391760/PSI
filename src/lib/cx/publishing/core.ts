@@ -3,10 +3,10 @@
  * scheduler due logic and bulk CSV parsing. Unit-tested in tests/cx-publishing.test.ts.
  */
 
-export type PubChannel = "facebook" | "instagram" | "linkedin" | "x" | "youtube";
+export type PubChannel = "facebook" | "instagram" | "linkedin" | "x" | "youtube" | "threads" | "gbp";
 export type PostStatus = "draft" | "pending" | "approved" | "scheduled" | "published" | "failed";
 export type ChannelResult = {
-  status: "published" | "failed" | "not_connected" | "manual";
+  status: "published" | "failed" | "not_connected" | "manual" | "deleted";
   externalId?: string;
   url?: string;
   error?: string;
@@ -16,9 +16,11 @@ export type ChannelResult = {
 export const PUB_CHANNELS: { kind: PubChannel; name: string; limit: number; firstComment: boolean; needsMedia: boolean; publishApi: boolean; note?: string }[] = [
   { kind: "facebook", name: "Facebook Page", limit: 63206, firstComment: true, needsMedia: false, publishApi: true },
   { kind: "instagram", name: "Instagram", limit: 2200, firstComment: true, needsMedia: true, publishApi: true, note: "Needs an image or video; max 30 hashtags." },
-  { kind: "linkedin", name: "LinkedIn", limit: 3000, firstComment: false, needsMedia: false, publishApi: true },
+  { kind: "linkedin", name: "LinkedIn", limit: 3000, firstComment: true, needsMedia: false, publishApi: true },
   { kind: "x", name: "X", limit: 280, firstComment: true, needsMedia: false, publishApi: true, note: "Links count as 23 characters. First comment is posted as a reply." },
-  { kind: "youtube", name: "YouTube community", limit: 1500, firstComment: false, needsMedia: false, publishApi: false, note: "YouTube has no public API for community posts: publish manually, then mark it published." },
+  { kind: "youtube", name: "YouTube", limit: 1500, firstComment: false, needsMedia: false, publishApi: false, note: "Community posts have no public API: publish manually, then mark it published. Videos upload automatically when an upload token is linked." },
+  { kind: "threads", name: "Threads", limit: 500, firstComment: false, needsMedia: false, publishApi: true },
+  { kind: "gbp", name: "Google Business Profile", limit: 1500, firstComment: false, needsMedia: false, publishApi: true, note: "Local posts: updates, offers and events on your Business Profile." },
 ];
 export const pubChannel = (k: string) => PUB_CHANNELS.find((c) => c.kind === k);
 export const isPubChannel = (k: string): k is PubChannel => PUB_CHANNELS.some((c) => c.kind === k);
@@ -188,7 +190,17 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
-export type BulkRow = { line: number; at: string; channels: PubChannel[]; text: string; link: string | null; campaign: string | null; firstComment: string; media: string[] };
+export type BulkRow = { line: number; at: string; channels: PubChannel[]; text: string; link: string | null; campaign: string | null; firstComment: string; media: string[]; postType: string; tags: string[]; pollOptions: string[] };
+
+/** Excel stores dates/times as serial numbers (days since 1899-12-30); converts "46300.5" → "2026-10-05 12:00". */
+export function excelSerial(v: string): { date: string; time: string } | null {
+  if (!/^\d+(\.\d+)?$/.test(v.trim())) return null;
+  const n = Number(v);
+  const ms = Math.round(n * 86_400_000) + Date.UTC(1899, 11, 30);
+  const d = new Date(ms);
+  const p = (x: number) => String(x).padStart(2, "0");
+  return { date: n >= 1 ? `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` : "", time: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}` };
+}
 
 /**
  * CSV columns (header row, any order): date, time (or datetime), channels ("x|facebook" or "x;facebook"),
@@ -196,7 +208,13 @@ export type BulkRow = { line: number; at: string; channels: PubChannel[]; text: 
  * Times are local to `tzOffsetMinutes` (Date#getTimezoneOffset of the uploader's browser).
  */
 export function parseBulkCsv(text: string, tzOffsetMinutes: number, now: Date = new Date()): { rows: BulkRow[]; errors: { line: number; error: string }[] } {
-  const table = parseCsv(text.replace(/^﻿/, ""));
+  return parseBulkTable(parseCsv(text.replace(/^\uFEFF/, "")), tzOffsetMinutes, now);
+}
+
+const POST_TYPE_NAMES = ["text", "story", "reel", "poll", "document", "event"];
+
+/** Bulk rows from a parsed table (CSV or the first sheet of an .xlsx). Excel date/time serials are accepted. */
+export function parseBulkTable(table: string[][], tzOffsetMinutes: number, now: Date = new Date()): { rows: BulkRow[]; errors: { line: number; error: string }[] } {
   const errors: { line: number; error: string }[] = [];
   const rows: BulkRow[] = [];
   if (table.length < 2) return { rows, errors: [{ line: 1, error: "Add a header row and at least one post." }] };
@@ -210,7 +228,10 @@ export function parseBulkCsv(text: string, tzOffsetMinutes: number, now: Date = 
   };
   table.slice(1).forEach((r, idx) => {
     const line = idx + 2;
-    const dt = col(r, "datetime", "date_time", "scheduled_at") || `${col(r, "date")} ${col(r, "time") || "09:00"}`;
+    const serialDt = excelSerial(col(r, "datetime", "date_time", "scheduled_at"));
+    const date = excelSerial(col(r, "date"))?.date || col(r, "date");
+    const time = excelSerial(col(r, "time"))?.time || col(r, "time") || "09:00";
+    const dt = serialDt ? `${serialDt.date} ${serialDt.time}` : col(r, "datetime", "date_time", "scheduled_at") || `${date} ${time}`;
     const m = dt.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
     if (!m) return errors.push({ line, error: `Date "${dt.trim()}" is not YYYY-MM-DD HH:MM.` });
     const utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) + tzOffsetMinutes * 60_000;
@@ -226,6 +247,8 @@ export function parseBulkCsv(text: string, tzOffsetMinutes: number, now: Date = 
     if (bad.length) return errors.push({ line, error: `Unknown channel ${bad.join(", ")}.` });
     const text = col(r, "text", "message", "caption");
     if (!text) return errors.push({ line, error: "Text is empty." });
+    const postType = (col(r, "post_type", "type") || "text").toLowerCase();
+    if (!POST_TYPE_NAMES.includes(postType)) return errors.push({ line, error: `Unknown post type "${postType}" (use ${POST_TYPE_NAMES.join(", ")}).` });
     const link = col(r, "link", "url") || null;
     if (link && !/^https?:\/\//i.test(link)) return errors.push({ line, error: "Link must start with http(s)://" });
     rows.push({
@@ -237,12 +260,17 @@ export function parseBulkCsv(text: string, tzOffsetMinutes: number, now: Date = 
       campaign: col(r, "campaign") || null,
       firstComment: col(r, "first_comment", "comment"),
       media: col(r, "media", "assets").split("|").map((s) => s.trim()).filter(Boolean),
+      postType,
+      tags: col(r, "tags", "content_tags").split(/[|,]/).map((s) => s.trim().toLowerCase()).filter(Boolean),
+      pollOptions: col(r, "poll_options", "options").split("|").map((s) => s.trim()).filter(Boolean),
     });
   });
   return { rows, errors };
 }
 
-export const BULK_TEMPLATE = `date,time,channels,text,link,campaign,first_comment,media
-2026-10-05,09:30,x|linkedin,"Our autumn guide is live: {link}",https://example.com/guide,Autumn launch,,
-2026-10-06,18:00,facebook|instagram,"Behind the scenes of the launch 📸",,Autumn launch,"Tell us what you think!",team-photo.jpg
+export const BULK_COLUMNS = ["date", "time", "channels", "text", "link", "campaign", "first_comment", "media", "post_type", "tags", "poll_options"];
+export const BULK_TEMPLATE = `date,time,channels,text,link,campaign,first_comment,media,post_type,tags,poll_options
+2026-10-05,09:30,x|linkedin,"Our autumn guide is live: {link}",https://example.com/guide,Autumn launch,,,text,launch,
+2026-10-06,18:00,facebook,"Behind the scenes of the launch 📸",,Autumn launch,"Tell us what you think!",,text,,
+2026-10-07,12:00,x|linkedin,"Which feature should we ship next?",,Autumn launch,,,poll,,Dark mode|Exports
 `;

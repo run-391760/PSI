@@ -4,7 +4,8 @@ import nodemailer from "nodemailer";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { channelSecret, setChannelResult, type EmailConfig } from "./channels";
-import { addInbound, createTicket } from "./store";
+import { saveFile } from "./files";
+import { addInbound, canThreadInto, createTicket, type Attachment } from "./store";
 import { normalizeMessageId, parseMessageIds, resolveThread, stripQuoted, ticketNumberFromSubject, type ThreadCandidate } from "./threading";
 
 /** Email channel: IMAP import (threaded into tickets) and SMTP replies. */
@@ -131,10 +132,16 @@ export async function importParsed(ch: { id: string; project_id: string; config:
   const thread = resolveThread({ messageId, inReplyTo: m.inReplyTo, references: m.references as string | string[] | undefined, subject: m.subject, fromEmail }, known, candidates);
   const text = (m.text ?? (m.html ? htmlToText(m.html) : "")).trim();
   const body = thread ? stripQuoted(text) : text;
-  const attachments = (m.attachments ?? []).slice(0, 20).map((a) => ({ name: a.filename ?? "attachment", type: a.contentType, size: a.size }));
+  // Inbound files are stored under the data dir so agents can open and forward them (metadata only when too large).
+  const attachments: Attachment[] = [];
+  for (const a of (m.attachments ?? []).slice(0, 20)) {
+    const meta = { name: a.filename ?? "attachment", type: a.contentType, size: a.size };
+    if (!a.content?.length || a.size > 25 * 1024 * 1024 || a.related) { if (!a.related) attachments.push(meta); continue; }
+    attachments.push(await saveFile(ch.project_id, null, null, { name: meta.name, type: a.contentType, bytes: a.content }, { lenient: true }).catch(() => meta));
+  }
   const createdAt = m.date ? m.date.toISOString() : null;
   const target = thread ? candidates.find((c) => c.id === thread.ticketId) : null;
-  if (thread && target?.status !== "closed") {
+  if (thread && target?.status !== "closed" && (await canThreadInto(ch.project_id, thread.ticketId))) {
     await addInbound(ch.project_id, thread.ticketId, { body: body.slice(0, 50_000), html: typeof m.html === "string" ? m.html.slice(0, 200_000) : null, authorName: from?.name || fromEmail, attachments, externalId: messageId, createdAt });
     return "threaded";
   }
@@ -157,18 +164,33 @@ export function htmlToText(html: string) {
     .trim();
 }
 
+export type OutMail = {
+  to: string | string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  text: string;
+  html?: string | null;
+  inReplyTo?: string | null;
+  references?: string[];
+  attachments?: { filename: string; content: Buffer; contentType?: string; cid?: string }[];
+};
 /** Send an email through a channel's SMTP server; returns the normalized Message-ID. */
-export async function sendEmail(ch: { config: EmailConfig; secret_enc: string | null }, mail: { to: string; subject: string; text: string; inReplyTo?: string | null; references?: string[] }) {
+export async function sendEmail(ch: { config: EmailConfig; secret_enc: string | null }, mail: OutMail) {
   const pass = channelSecret(ch);
   if (!pass) throw new AppError("Mailbox password missing.");
   const c = ch.config;
   const info = await smtpTransport(c, pass).sendMail({
     from: { name: c.fromName || c.fromAddress || c.user, address: c.fromAddress || c.user },
     to: mail.to,
+    cc: mail.cc?.length ? mail.cc : undefined,
+    bcc: mail.bcc?.length ? mail.bcc : undefined,
     subject: mail.subject,
     text: mail.text,
+    html: mail.html ?? undefined,
     inReplyTo: mail.inReplyTo ? `<${mail.inReplyTo}>` : undefined,
     references: mail.references?.length ? mail.references.map((r) => `<${r}>`).join(" ") : undefined,
+    attachments: mail.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType, cid: a.cid })),
   });
   return normalizeMessageId(info.messageId);
 }

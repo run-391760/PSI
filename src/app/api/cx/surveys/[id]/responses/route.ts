@@ -12,7 +12,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") throw new AppError("Invalid request.", 400);
     const res = await submitResponse(id, body);
-    return NextResponse.json({ ok: true, thankYou: res.thankYou });
+    return NextResponse.json({ ok: true, thankYou: res.thankYou, redirect: res.redirect });
   } catch (e) {
     if (e instanceof AppError) return NextResponse.json({ ok: false, error: e.message }, { status: e.status });
     if (e && typeof e === "object" && "issues" in e) return NextResponse.json({ ok: false, error: "Please check your answers." }, { status: 400 });

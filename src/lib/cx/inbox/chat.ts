@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { DEFAULT_CHAT, DEFAULT_FORM, publicChannel, type ChatConfig, type FormConfig } from "./channels";
-import { addInbound, createTicket, iso } from "./store";
+import { chatFileLinks } from "./files";
+import { addInbound, canThreadInto, createTicket, iso } from "./store";
 
 /** Public live chat (visitor sessions, polled) and web form submissions. No user auth: token-scoped. */
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -45,10 +46,7 @@ export async function sendChat(channelId: string, token: string, text: string) {
   if (!body) throw new AppError("Type a message.");
   const s = await session(channelId, token);
   let ticketId = s.ticket_id;
-  if (ticketId) {
-    const [t] = await query<{ status: string }>("SELECT status FROM cx_tickets WHERE id=$1", [ticketId]);
-    if (!t || t.status === "closed") ticketId = null;
-  }
+  if (ticketId && !(await canThreadInto(s.project_id, ticketId))) ticketId = null;
   const name = s.name || (s.email ? s.email.split("@")[0] : "Visitor");
   if (ticketId) await addInbound(s.project_id, ticketId, { body, authorName: name });
   else {
@@ -67,10 +65,15 @@ export async function pollChat(channelId: string, token: string, typing = false)
   const s = await session(channelId, token);
   await query(`UPDATE cx_inbox_chat_sessions SET visitor_seen_at=now(), visitor_typing_at=CASE WHEN $2 THEN now() ELSE NULL END WHERE id=$1`, [s.id, typing]);
   if (!s.ticket_id) return { messages: [], agentTyping: false, status: "new" };
-  const messages = (await query<{ id: string; direction: string; author_name: string; body: string; created_at: string }>(
-    "SELECT id,direction,author_name,body,created_at FROM cx_messages WHERE ticket_id=$1 AND direction IN ('in','out') ORDER BY created_at, id",
+  const rows = await query<{ id: string; direction: string; author_name: string; body: string; created_at: string; attachments: { id?: string; name?: string }[] }>(
+    "SELECT id,direction,author_name,body,created_at,attachments FROM cx_messages WHERE ticket_id=$1 AND direction IN ('in','out') ORDER BY created_at, id",
     [s.ticket_id],
-  )).map((m) => ({ id: m.id, from: m.direction === "in" ? "visitor" : "agent", name: m.direction === "out" ? m.author_name.split(" ")[0] : "", body: m.body, at: iso(m.created_at)! }));
+  );
+  const links = await chatFileLinks(rows.filter((m) => m.direction === "out").flatMap((m) => (m.attachments ?? []).map((a) => a.id).filter((x): x is string => !!x)));
+  const messages = rows.map((m) => ({
+    id: m.id, from: m.direction === "in" ? "visitor" : "agent", name: m.direction === "out" ? m.author_name.split(" ")[0] : "", body: m.body, at: iso(m.created_at)!,
+    files: m.direction === "out" ? (m.attachments ?? []).filter((a) => a.id && links.has(a.id)).map((a) => ({ name: a.name ?? "file", path: links.get(a.id!)! })) : [],
+  }));
   const [t] = await query<{ status: string; typing: boolean }>(
     "SELECT t.status, EXISTS (SELECT 1 FROM cx_inbox_presence p WHERE p.ticket_id=t.id AND p.typing AND p.seen_at > now()-interval '8 seconds') AS typing FROM cx_tickets t WHERE t.id=$1",
     [s.ticket_id],

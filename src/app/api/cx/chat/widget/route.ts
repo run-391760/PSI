@@ -8,7 +8,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const channel = (url.searchParams.get("c") ?? "").replace(/[^a-zA-Z0-9-]/g, "");
   const mode = url.searchParams.get("mode") === "page" ? "page" : "widget";
-  const js = `(()=>{${WIDGET}})();`.replace("__CHANNEL__", channel).replace("__MODE__", mode).replace("__ORIGIN__", url.origin);
+  const js = `(()=>{${WIDGET}})();`.replace("__CHANNEL__", channel).replace("__MODE__", mode).replaceAll("__ORIGIN__", url.origin);
   return new Response(js, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=300", "access-control-allow-origin": "*" } });
 }
 
@@ -34,7 +34,7 @@ const css=(c)=>":host{all:initial}*{box-sizing:border-box;font-family:system-ui,
 ".t{font-size:11px;color:var(--mut);align-self:flex-start}.t.r{align-self:flex-end}.ty{font-size:12px;color:var(--mut);font-style:italic;padding:0 14px 6px}"+
 ".c{border-top:1px solid var(--bd);padding:10px;display:flex;gap:8px;align-items:flex-end}.c textarea,.i{flex:1;resize:none;border:1px solid var(--bd);background:var(--bg);color:var(--fg);border-radius:10px;padding:9px 11px;font-size:14px;max-height:120px;outline:none}"+
 ".c textarea:focus,.i:focus{border-color:"+c+"}.s{background:"+c+";color:#fff;border:0;border-radius:10px;padding:0 14px;height:38px;font-size:14px;cursor:pointer;font-weight:600}.s:disabled{opacity:.5}"+
-".st{padding:16px;display:flex;flex-direction:column;gap:10px;font-size:14px}.st p{margin:0;color:var(--mut);font-size:13px}.e{color:#dc2626;font-size:12.5px;padding:0 14px 6px}.pw{font-size:11px;color:var(--mut);text-align:center;padding:0 0 8px}";
+".st{padding:16px;display:flex;flex-direction:column;gap:10px;font-size:14px}.st p{margin:0;color:var(--mut);font-size:13px}.e{color:#dc2626;font-size:12.5px;padding:0 14px 6px}.pw{font-size:11px;color:var(--mut);text-align:center;padding:0 0 8px}.fl{color:inherit;text-decoration:underline;font-size:13px}";
 function el(t,a,k){const e=document.createElement(t);if(a)for(const x in a){if(x==="class")e.className=a[x];else if(x==="text")e.textContent=a[x];else e.setAttribute(x,a[x])}(k||[]).forEach(z=>z&&e.appendChild(z));return e}
 async function api(method,body,qs){const r=await fetch(API+(qs||""),{method,headers:body?{"content-type":"application/json"}:{},body:body?JSON.stringify(body):undefined});const d=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(d.error||"Error");e.status=r.status;throw e}return d}
 let err="";
@@ -48,7 +48,7 @@ function render(){
   p.appendChild(hd);
   const m=el("div",{class:"m"});m.appendChild(el("div",{class:"g a",text:cfg.config.greeting}));
   if(!cfg.agentsOnline&&!msgs.length&&cfg.config.offlineNote)m.appendChild(el("div",{class:"g a",text:cfg.config.offlineNote}));
-  for(const x of msgs){m.appendChild(el("div",{class:"g "+(x.from==="agent"?"a":"v"),text:x.body}));m.appendChild(el("div",{class:"t"+(x.from==="agent"?"":" r"),text:(x.from==="agent"&&x.name?x.name+" · ":"")+new Date(x.at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}))}
+  for(const x of msgs){const b=el("div",{class:"g "+(x.from==="agent"?"a":"v"),text:x.body});(x.files||[]).forEach(f=>{const a=el("a",{class:"fl",href:"__ORIGIN__"+f.path,target:"_blank",rel:"noopener",text:"\u{1F4CE} "+f.name});b.appendChild(el("br"));b.appendChild(a)});m.appendChild(b);m.appendChild(el("div",{class:"t"+(x.from==="agent"?"":" r"),text:(x.from==="agent"&&x.name?x.name+" · ":"")+new Date(x.at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}))}
   p.appendChild(m);
   if(state&&state.agentTyping)p.appendChild(el("div",{class:"ty",text:"Agent is typing…"}));
   if(err)p.appendChild(el("div",{class:"e",text:err}));

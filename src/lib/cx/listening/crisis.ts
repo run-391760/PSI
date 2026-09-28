@@ -4,6 +4,7 @@ import { AppError } from "@/lib/domain";
 import { notify } from "@/lib/jobs/queue";
 import type { Project } from "@/lib/projects";
 import { getSettings, listTopics, type Mention } from "./data";
+import { riskScore, type Risk } from "./crisis-math";
 import { bucketize, detectSpike, type Bucket, type SpikeResult } from "./spikes";
 
 /** Crisis management: spike detection over stored mentions, crisis events, timeline and notes. */
@@ -28,11 +29,12 @@ export type CrisisEvent = {
   resolved_at: string | null;
   mentions: number;
   negative: number;
+  risk: Risk | Record<string, never>;
 };
 export type CrisisNote = { id: string; author_name: string; kind: "note" | "status" | "system"; body: string; created_at: string };
-export type ScopeResult = { key: string; name: string; topicId: string | null; result: SpikeResult };
+export type ScopeResult = { key: string; name: string; topicId: string | null; result: SpikeResult; risk?: Risk };
 
-type Row = { id: string; topic_id: string | null; published_at: string | null; sentiment: string | null };
+type Row = { id: string; topic_id: string | null; published_at: string | null; sentiment: string | null; author_followers?: number | null };
 
 /**
  * Coverage start per topic: sources return only their latest N results, so history before a source's
@@ -59,20 +61,23 @@ export async function runDetection(project: Project) {
   const baselineWindows = Math.round((s.baselineDays * 24) / s.windowHours);
   const now = new Date();
   const since = new Date(now.getTime() - (baselineWindows + 1) * s.windowHours * 3600_000);
-  const rows = await query<Row>("SELECT id, topic_id, published_at, sentiment FROM cx_mentions WHERE project_id=$1 AND published_at > $2 AND published_at <= now() AND status <> 'ignored'", [project.id, since.toISOString()]);
+  const rows = await query<Row>("SELECT id, topic_id, published_at, sentiment, author_followers FROM cx_mentions WHERE project_id=$1 AND published_at > $2 AND published_at <= now() AND status <> 'ignored'", [project.id, since.toISOString()]);
   const since_ = await coverage(project.id);
   const scopes: { key: string; name: string; topicId: string | null; rows: Row[] }[] = topics.map((t) => ({ key: `topic:${t.id}`, name: t.name, topicId: t.id, rows: rows.filter((r) => r.topic_id === t.id) }));
   if (topics.length > 1) scopes.unshift({ key: "all", name: "All topics", topicId: null, rows });
 
   const results: ScopeResult[] = [];
   const opened: string[] = [];
+  const touched: { id: string; severity: "warning" | "critical"; opened: boolean }[] = [];
   for (const sc of scopes) {
     const buckets = bucketize(sc.rows, now, s.windowHours, baselineWindows, since_(sc.topicId ? [sc.topicId] : topics.map((t) => t.id)));
     const result = detectSpike(buckets, s);
-    results.push({ key: sc.key, name: sc.name, topicId: sc.topicId, result });
-    if (!result.triggered || !result.kind || !result.severity) continue;
     const winStart = new Date(result.window.start).getTime();
     const inWindow = sc.rows.filter((r) => r.published_at && new Date(r.published_at).getTime() > winStart);
+    const withReach = inWindow.filter((r) => r.author_followers != null);
+    const risk = riskScore({ volumeZ: result.ready ? result.volume.z : 0, negative: result.negative.value, mentions: result.volume.value, reach: withReach.length ? withReach.reduce((a, r) => a + (r.author_followers ?? 0), 0) : null });
+    results.push({ key: sc.key, name: sc.name, topicId: sc.topicId, result, risk });
+    if (!result.triggered || !result.kind || !result.severity) continue;
     const link = inWindow.filter((r) => result.kind !== "negative" || r.sentiment === "negative");
     const z = Math.max(result.volume.triggered ? result.volume.z : 0, result.negative.triggered ? result.negative.z : 0);
     const [existing] = await query<{ id: string; severity: string; peak_z: number }>("SELECT id, severity, peak_z FROM cx_crisis_events WHERE project_id=$1 AND scope_key=$2 AND status<>'resolved' ORDER BY detected_at DESC LIMIT 1", [project.id, sc.key]);
@@ -83,8 +88,8 @@ export async function runDetection(project: Project) {
     if (existing) {
       const escalate = existing.severity === "warning" && result.severity === "critical";
       await query(
-        "UPDATE cx_crisis_events SET metrics=$2::jsonb, window_end=now(), peak_z=GREATEST(peak_z,$3), severity=CASE WHEN $4 THEN 'critical' ELSE severity END, kind=CASE WHEN kind<>$5 THEN 'both' ELSE kind END, updated_at=now() WHERE id=$1",
-        [existing.id, JSON.stringify(result), z, escalate, result.kind],
+        "UPDATE cx_crisis_events SET metrics=$2::jsonb, window_end=now(), peak_z=GREATEST(peak_z,$3), severity=CASE WHEN $4 THEN 'critical' ELSE severity END, kind=CASE WHEN kind<>$5 THEN 'both' ELSE kind END, risk=CASE WHEN COALESCE((risk->>'score')::int,0) <= $6 THEN $7::jsonb ELSE risk END, updated_at=now() WHERE id=$1",
+        [existing.id, JSON.stringify(result), z, escalate, result.kind, risk.score, JSON.stringify(risk)],
       );
       if (escalate) {
         await addNote(existing.id, null, "System", `Escalated to critical. ${detail}`, "system");
@@ -93,8 +98,8 @@ export async function runDetection(project: Project) {
     } else {
       id = randomUUID();
       await query(
-        `INSERT INTO cx_crisis_events(id,project_id,topic_id,scope_key,title,kind,severity,owner,metrics,window_start,window_end,peak_z) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,now(),$11)`,
-        [id, project.id, sc.topicId, sc.key, title, result.kind, result.severity, s.escalationOwner, JSON.stringify(result), result.window.start, z],
+        `INSERT INTO cx_crisis_events(id,project_id,topic_id,scope_key,title,kind,severity,owner,metrics,window_start,window_end,peak_z,risk) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,now(),$11,$12::jsonb)`,
+        [id, project.id, sc.topicId, sc.key, title, result.kind, result.severity, s.escalationOwner, JSON.stringify(result), result.window.start, z, JSON.stringify(risk)],
       );
       await addNote(id, null, "System", `Spike detected. ${detail}${s.escalationOwner ? ` Escalation owner: ${s.escalationOwner}.` : ""}`, "system");
       opened.push(id);
@@ -102,6 +107,7 @@ export async function runDetection(project: Project) {
         await notify({ ownerId: project.owner_id, projectId: project.id, tool: "cx-crisis", severity: result.severity === "critical" ? "critical" : "warning", title, body: detail, link: `/cx/crisis?brand=${project.id}&event=${id}` });
     }
     for (const r of link.slice(0, 1000)) await query("INSERT INTO cx_crisis_mentions(event_id,mention_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [id, r.id]);
+    touched.push({ id: id!, severity: existing && existing.severity === "critical" ? "critical" : result.severity, opened: !existing });
   }
   const summary = { at: now.toISOString(), scopes: results, opened: opened.length };
   await query(
@@ -109,7 +115,7 @@ export async function runDetection(project: Project) {
      ON CONFLICT(project_id) DO UPDATE SET last_detect_at=now(), last_detect=$2::jsonb`,
     [project.id, JSON.stringify(summary)],
   );
-  return summary;
+  return { ...summary, touched };
 }
 
 export async function listEvents(projectId: string, status?: string) {

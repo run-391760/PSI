@@ -4,7 +4,11 @@ import { notFound } from "next/navigation";
 import { requirePageUser } from "@/lib/auth";
 import { AppError } from "@/lib/domain";
 import { cxContext } from "@/lib/cx/context";
-import { KIND_META, appOrigin, getSurvey, listInvites, listResponses, surveyStats } from "@/lib/cx/insights/surveys";
+import { KIND_META, agentSurveyReport, appOrigin, getSurvey, listInvites, listResponses, surveyStats } from "@/lib/cx/insights/surveys";
+import { getClassificationTree, getFieldDefs } from "@/lib/cx/admin/fields";
+import { query } from "@/lib/db";
+import { MiniTable } from "@/components/ui/mini-table";
+import { AgentReportCsv, SurveySettingsButton } from "@/components/cx/insights/survey-settings";
 import { num } from "@/lib/format";
 import { Grid, Page, PageHeader } from "@/components/shell/page";
 import { BarChart } from "@/components/charts/bar-chart";
@@ -28,7 +32,15 @@ export default async function SurveyPage({ params, searchParams }: PageProps<"/c
     if (e instanceof AppError && e.status === 404) notFound();
     throw e;
   });
-  const [rows, invites, h] = await Promise.all([listResponses(brand.id, id), listInvites(brand.id, id), headers()]);
+  const [rows, invites, h, agentRows, defs, tree, chans] = await Promise.all([
+    listResponses(brand.id, id),
+    listInvites(brand.id, id),
+    headers(),
+    agentSurveyReport(brand.id, id, 90),
+    getFieldDefs(brand.id).catch(() => []),
+    getClassificationTree(brand.id).catch(() => []),
+    query<{ k: string }>("SELECT DISTINCT channel_kind AS k FROM cx_tickets WHERE project_id=$1 ORDER BY 1", [brand.id]),
+  ]);
   const origin = appOrigin() || `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost"}`;
   const s = surveyStats(survey, rows, 90);
   const scoreLabel = survey.kind === "nps" ? "NPS" : survey.kind === "csat" ? "CSAT" : "Average score";
@@ -52,7 +64,21 @@ export default async function SurveyPage({ params, searchParams }: PageProps<"/c
             <Badge>Last 90 days</Badge>
           </BrandMeta>
         }
-        actions={<SurveyEditor brand={brand.id} survey={survey} />}
+        actions={
+          <>
+            <SurveySettingsButton
+              brand={brand.id}
+              surveyId={survey.id}
+              kind={survey.kind}
+              question={survey.question}
+              settings={survey.settings}
+              channels={chans.map((c) => c.k)}
+              classifications={tree.filter((n) => !n.hidden).map((n) => ({ id: n.id, label: n.label }))}
+              fields={defs.filter((f) => f.scope === "ticket" && !f.hidden).map((f) => ({ key: f.key, label: f.label }))}
+            />
+            <SurveyEditor brand={brand.id} survey={survey} />
+          </>
+        }
       />
       <Card className="mb-4">
         <CardBody className="py-4">
@@ -105,6 +131,16 @@ export default async function SurveyPage({ params, searchParams }: PageProps<"/c
           </Card>
         </Grid>
       )}
+      <Card className="mb-4">
+        <CardHeader title="Agent-wise CSAT sent" description="Per ticket assignee, last 90 days: survey links created, delivered by email/reply, answered, and scores." actions={agentRows.length ? <AgentReportCsv name={survey.name} rows={agentRows} /> : undefined} />
+        <CardBody className="pt-1">
+          <MiniTable
+            empty="No survey links sent yet."
+            columns={[{ header: "Agent" }, { header: "Sent", align: "right" }, { header: "Delivered", align: "right" }, { header: "Responses", align: "right" }, { header: "Response rate", align: "right" }, { header: "Avg score", align: "right" }, { header: "Satisfied", align: "right" }]}
+            rows={agentRows.map((r) => [<span key="a" className="font-medium text-text">{r.agent}</span>, num(r.invites), num(r.delivered), num(r.responses), r.responseRate == null ? "n/a" : `${r.responseRate.toFixed(0)}%`, r.avg == null ? "n/a" : r.avg.toFixed(2), r.satisfiedPct == null ? "n/a" : `${r.satisfiedPct.toFixed(0)}%`])}
+          />
+        </CardBody>
+      </Card>
       <SurveyResponsesTable brand={brand.id} survey={survey} rows={rows} />
     </Page>
   );

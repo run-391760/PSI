@@ -41,7 +41,7 @@ export function PubNav({ brandId, pending }: { brandId: string; pending?: number
   );
 }
 
-const MARK: Record<string, string> = { facebook: "f", instagram: "IG", linkedin: "in", x: "X", youtube: "YT" };
+const MARK: Record<string, string> = { facebook: "f", instagram: "IG", linkedin: "in", x: "X", youtube: "YT", threads: "@", gbp: "G" };
 
 /** Neutral channel mark (no third-party logos). */
 export function ChannelChip({ kind, className, withName }: { kind: string; className?: string; withName?: boolean }) {

@@ -54,6 +54,19 @@ const ROUTES = [
   "/cx/settings/channels",
   "/cx/settings/team",
   "/cx/settings/automation",
+  "/cx/listening/reviews",
+  "/cx/listening/ugc",
+  "/cx/crisis/playbooks",
+  "/cx/command",
+  "/cx/command/streams",
+  "/cx/reports",
+  "/cx/knowledge",
+  "/cx/ask",
+  "/cx/settings/fields",
+  "/cx/settings/queue",
+  "/cx/settings/roles",
+  "/cx/settings/alerts",
+  "/cx/settings/api",
 ];
 
 test.describe("signed out", () => {

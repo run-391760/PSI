@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /** Word cloud of top terms: size by document frequency, color by dominant sentiment (with legend). */
-export function TermCloud({ terms }: { terms: { term: string; count: number; tone: string }[] }) {
+export function TermCloud({ terms, legend = true }: { terms: { term: string; count: number; tone: string; prev?: number }[]; legend?: boolean }) {
   if (!terms.length) return <div className="px-4 py-8 text-center text-[13px] text-text-3">Not enough text yet.</div>;
   const max = Math.max(...terms.map((t) => t.count));
   const min = Math.min(...terms.map((t) => t.count));
@@ -13,7 +13,7 @@ export function TermCloud({ terms }: { terms: { term: string; count: number; ton
         {sorted.map((t) => (
           <span
             key={t.term}
-            title={`${t.term}: ${t.count} mentions (${t.tone})`}
+            title={`${t.term}: ${t.count} mentions (${t.tone})${t.prev != null ? `; previous period ${t.prev}` : ""}`}
             style={{ fontSize: `${size(t.count).toFixed(1)}px` }}
             className={cn("leading-tight font-medium", t.tone === "negative" ? "text-critical-ink" : t.tone === "positive" ? "text-good-ink" : "text-text-2")}
           >
@@ -21,11 +21,13 @@ export function TermCloud({ terms }: { terms: { term: string; count: number; ton
           </span>
         ))}
       </div>
+      {legend && (
       <div className="flex justify-center gap-4 pb-3 text-[11.5px] text-text-3">
         <span className="text-good-ink">Mostly positive</span>
         <span>Mixed / neutral</span>
         <span className="text-critical-ink">Mostly negative</span>
       </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { query, transaction } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { sentimentOf } from "@/lib/cx/ai";
-import { iso } from "./store";
+import { autoMergePhone, iso, mergeContactsQ } from "./store";
 
 /** Social CRM: contact list, profile (tickets, messages, mentions, sentiment trend), notes, merge. */
 export type ContactListRow = { id: string; name: string; email: string | null; phone: string | null; handles: Record<string, string>; tags: string[]; first_seen: string; last_seen: string; tickets: number; open: number; channels: string[]; sentiment: string | null };
@@ -41,7 +41,7 @@ export async function getContact(projectId: string, id: string) {
   )).map((t) => ({ ...t, created_at: iso(t.created_at)!, updated_at: iso(t.updated_at)! }));
   const messages = (await query<{ id: string; ticket_id: string; number: number; channel_kind: string; direction: string; author_name: string; body: string; created_at: string }>(
     `SELECT m.id,m.ticket_id,t.number,t.channel_kind,m.direction,m.author_name,left(m.body,600) AS body,m.created_at FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id
-      WHERE t.project_id=$1 AND t.contact_id=$2 AND m.direction<>'note' ORDER BY m.created_at DESC LIMIT 200`,
+      WHERE t.project_id=$1 AND t.contact_id=$2 AND m.direction<>'note' ORDER BY m.created_at DESC LIMIT 500`,
     [projectId, id],
   )).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
   const handleValues = Object.values(c.handles ?? {}).filter(Boolean);
@@ -87,6 +87,8 @@ export async function updateContact(projectId: string, id: string, p: { name?: s
     [id, projectId, p.name?.trim() || null, email !== undefined, email ?? null, p.phone !== undefined, p.phone?.trim() || null,
       p.tags ? JSON.stringify([...new Set(p.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))]) : null, attrs ? JSON.stringify(attrs) : null, p.notes ?? null],
   );
+  if (p.phone) return transaction((q) => autoMergePhone(q, projectId, id));
+  return 0;
 }
 
 export async function addContactNote(projectId: string, id: string, user: { id: string; name: string }, body: string) {
@@ -120,30 +122,8 @@ export async function duplicateCandidates(projectId: string, id: string) {
 
 /** Merge `sourceIds` into `targetId`: tickets and notes move; missing fields, handles, tags, attributes are combined. */
 export async function mergeContacts(projectId: string, targetId: string, sourceIds: string[]) {
-  const sources = sourceIds.filter((s) => s !== targetId);
-  if (!sources.length) throw new AppError("Choose contacts to merge.");
-  return transaction(async (q) => {
-    const [t] = await q<{ id: string }>("SELECT id FROM cx_contacts WHERE id=$1 AND project_id=$2", [targetId, projectId]);
-    if (!t) throw new AppError("Contact not found.", 404);
-    const src = await q<{ id: string; email: string | null; phone: string | null; handles: object; tags: string[]; attributes: object; notes: string; first_seen: string; name: string }>(
-      "SELECT id,email,phone,handles,tags,attributes,notes,first_seen,name FROM cx_contacts WHERE project_id=$1 AND id = ANY($2)",
-      [projectId, sources],
-    );
-    for (const s of src) {
-      await q("UPDATE cx_tickets SET contact_id=$1 WHERE contact_id=$2", [targetId, s.id]);
-      await q("UPDATE cx_contact_notes SET contact_id=$1 WHERE contact_id=$2", [targetId, s.id]);
-      await q("UPDATE cx_inbox_chat_sessions SET contact_id=$1 WHERE contact_id=$2", [targetId, s.id]);
-      await q("DELETE FROM cx_contacts WHERE id=$1", [s.id]);
-      await q(
-        `UPDATE cx_contacts SET email=COALESCE(email,$2), phone=COALESCE(phone,$3), handles=$4::jsonb || handles, attributes=$5::jsonb || attributes,
-                tags=(SELECT COALESCE(jsonb_agg(DISTINCT v),'[]') FROM jsonb_array_elements(tags || $6::jsonb) v),
-                notes=CASE WHEN $7='' THEN notes WHEN notes='' THEN $7 ELSE notes || E'\\n\\n' || $7 END,
-                first_seen=LEAST(first_seen,$8), name=CASE WHEN name='' OR lower(name)='visitor' THEN $9 ELSE name END WHERE id=$1`,
-        [targetId, s.email, s.phone, JSON.stringify(s.handles ?? {}), JSON.stringify(s.attributes ?? {}), JSON.stringify(s.tags ?? []), s.notes ?? "", s.first_seen, s.name],
-      );
-    }
-    return src.length;
-  });
+  if (!sourceIds.filter((s) => s !== targetId).length) throw new AppError("Choose contacts to merge.");
+  return transaction((q) => mergeContactsQ(q, projectId, targetId, sourceIds));
 }
 
 export async function deleteContact(projectId: string, id: string) {

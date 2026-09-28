@@ -8,6 +8,7 @@ import { enqueue } from "@/lib/jobs/queue";
 import { getCxBrand } from "@/lib/cx/context";
 import { saveSettings } from "@/lib/cx/listening/data";
 import { addNote, updateEvent } from "@/lib/cx/listening/crisis";
+import { attachPlaybook, deletePlaybook, draftStatement, saveExtraSettings, savePlaybook, ticketEventMentions, toggleChecklistItem } from "@/lib/cx/listening/crisis2";
 import { query } from "@/lib/db";
 
 async function brand(brandId: string) {
@@ -61,6 +62,84 @@ export async function addNoteAction(brandId: string, id: string, body: string): 
     const [e] = await query("SELECT id FROM cx_crisis_events WHERE id=$1 AND project_id=$2", [id, project.id]);
     if (!e) throw new AppError("Crisis event not found.", 404);
     await addNote(id, user.id, user.name || user.email, text);
+    revalidatePath("/cx/crisis");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+// ------------------------------------------------------------------ crisis v2 (WP3)
+
+export async function saveExtraSettingsAction(brandId: string, input: { autoTicket: boolean; autoTicketAll: boolean; ratingDrop: number; trendingAlerts: boolean }): Promise<ActionResult<null>> {
+  try {
+    const { project } = await brand(brandId);
+    await saveExtraSettings(project.id, input);
+    revalidatePath("/cx/crisis");
+    revalidatePath("/cx/listening/reviews");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function ticketEventAction(brandId: string, eventId: string, all: boolean): Promise<ActionResult<{ created: number }>> {
+  try {
+    const { user, project } = await brand(brandId);
+    const created = await ticketEventMentions(project.id, eventId, { all, limit: 100, by: user.name || user.email });
+    revalidatePath("/cx/crisis");
+    return { ok: true, data: { created } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function draftStatementAction(brandId: string, eventId: string): Promise<ActionResult<{ text: string | null }>> {
+  try {
+    const { project } = await brand(brandId);
+    return { ok: true, data: { text: await draftStatement(project, eventId) } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function savePlaybookAction(brandId: string, input: { name: string; description: string; autoAttach: "none" | "any" | "critical"; steps: string[] }, id?: string): Promise<ActionResult<{ id: string }>> {
+  try {
+    const { project } = await brand(brandId);
+    const pid = await savePlaybook(project.id, input, id);
+    revalidatePath("/cx/crisis", "layout");
+    return { ok: true, data: { id: pid } };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function deletePlaybookAction(brandId: string, id: string): Promise<ActionResult<null>> {
+  try {
+    const { project } = await brand(brandId);
+    await deletePlaybook(project.id, id);
+    revalidatePath("/cx/crisis", "layout");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function attachPlaybookAction(brandId: string, eventId: string, playbookId: string): Promise<ActionResult<null>> {
+  try {
+    const { user, project } = await brand(brandId);
+    await attachPlaybook(project.id, eventId, playbookId, user.name || user.email);
+    revalidatePath("/cx/crisis");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function toggleStepAction(brandId: string, eventId: string, playbookId: string, itemId: string, done: boolean): Promise<ActionResult<null>> {
+  try {
+    const { user, project } = await brand(brandId);
+    await toggleChecklistItem(project.id, eventId, playbookId, itemId, done, user.name || user.email);
     revalidatePath("/cx/crisis");
     return { ok: true, data: null };
   } catch (e) {
