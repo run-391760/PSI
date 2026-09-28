@@ -1,0 +1,379 @@
+import { XMLParser } from "fast-xml-parser";
+import { booleanQuery, hashtagsFor, parseAppId, simpleQueries, type ListenSource } from "./sources";
+
+/**
+ * Listening connectors: pure mappers (API response → RawMention, fixture-tested) and fetchers.
+ * Free: Google News RSS, Hacker News Algolia, Mastodon hashtag timelines, Apple customer reviews RSS.
+ * Keyed: Reddit (REDDIT_CLIENT_ID/SECRET), YouTube (YOUTUBE_API_KEY), Bluesky (BLUESKY_HANDLE/APP_PASSWORD).
+ * No database or AI imports here.
+ */
+export type RawMention = {
+  source: ListenSource;
+  externalId: string;
+  url: string | null;
+  author: string;
+  authorHandle: string | null;
+  authorFollowers: number | null;
+  title: string;
+  body: string;
+  language: string | null;
+  country: string | null;
+  publishedAt: string | null;
+  engagement: Record<string, number>;
+};
+
+type J = Record<string, any>;
+const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
+const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+const iso = (v: unknown) => {
+  if (v == null || v === "") return null;
+  const d = typeof v === "number" ? new Date(v * 1000) : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+const eng = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).flatMap(([k, v]) => (numOrNull(v) == null ? [] : [[k, numOrNull(v) as number]])));
+
+export function stripHtml(s: string) {
+  return s
+    .replace(/<br\s*\/?>|<\/p>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&quot;|&#x22;/g, '"')
+    .replace(/&#x2F;/g, "/")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ------------------------------------------------------------------ Google News RSS
+
+const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", textNodeName: "#text", htmlEntities: true, parseTagValue: false, trimValues: true });
+const xtext = (v: unknown): string => (v == null ? "" : typeof v === "object" ? str((v as J)["#text"]) : str(v));
+
+export function mapNewsRss(body: string): RawMention[] {
+  const doc = xml.parse(body) as J;
+  const raw = doc?.rss?.channel?.item;
+  const items: J[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const out: RawMention[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const link = xtext(it.link);
+    const guid = xtext(it.guid) || link;
+    if (!link || seen.has(guid)) continue;
+    seen.add(guid);
+    const publisher = xtext(it.source);
+    const publisherUrl = typeof it.source === "object" ? str(it.source?.["@_url"]) || null : null;
+    let title = stripHtml(xtext(it.title));
+    if (publisher && title.endsWith(` - ${publisher}`)) title = title.slice(0, -(publisher.length + 3)).trim();
+    let snippet = stripHtml(xtext(it.description));
+    if (snippet.startsWith(title)) snippet = snippet.slice(title.length).trim();
+    if (publisher && snippet.endsWith(publisher)) snippet = snippet.slice(0, -publisher.length).trim();
+    out.push({
+      source: "news",
+      externalId: guid,
+      url: link,
+      author: publisher || "Unknown publisher",
+      authorHandle: publisherUrl ? publisherUrl.replace(/^https?:\/\//, "").replace(/\/$/, "") : null,
+      authorFollowers: null,
+      title,
+      body: snippet,
+      language: null,
+      country: null,
+      publishedAt: iso(xtext(it.pubDate)),
+      engagement: {},
+    });
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ Hacker News (Algolia)
+
+export function mapHackerNews(json: J): RawMention[] {
+  return ((json?.hits ?? []) as J[]).flatMap((h) => {
+    const id = str(h.objectID);
+    if (!id) return [];
+    const isComment = !!h.comment_text;
+    const title = stripHtml(str(h.title) || (isComment ? `Comment on: ${str(h.story_title)}` : ""));
+    const body = stripHtml(str(h.comment_text) || str(h.story_text) || "");
+    return [
+      {
+        source: "hackernews" as const,
+        externalId: id,
+        url: `https://news.ycombinator.com/item?id=${id}`,
+        author: str(h.author) || "unknown",
+        authorHandle: str(h.author) || null,
+        authorFollowers: null,
+        title,
+        body: body || (h.url ? str(h.url) : ""),
+        language: null,
+        country: null,
+        publishedAt: iso(h.created_at) ?? iso(h.created_at_i),
+        engagement: eng({ points: h.points, comments: h.num_comments }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ Mastodon
+
+export function mapMastodon(statuses: J[], instance = "mastodon.social"): RawMention[] {
+  return (Array.isArray(statuses) ? statuses : []).flatMap((s) => {
+    const id = str(s.id);
+    if (!id) return [];
+    const acct = str(s.account?.acct);
+    return [
+      {
+        source: "mastodon" as const,
+        externalId: s.uri ? str(s.uri) : `${instance}:${id}`,
+        url: str(s.url) || str(s.uri) || null,
+        author: str(s.account?.display_name) || acct || "unknown",
+        authorHandle: acct ? `@${acct.includes("@") ? acct : `${acct}@${instance}`}` : null,
+        authorFollowers: numOrNull(s.account?.followers_count),
+        title: "",
+        body: stripHtml(str(s.content)) || stripHtml(str(s.spoiler_text)),
+        language: str(s.language) || null,
+        country: null,
+        publishedAt: iso(s.created_at),
+        engagement: eng({ likes: s.favourites_count, reposts: s.reblogs_count, replies: s.replies_count }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ Apple customer reviews RSS (JSON)
+
+export function mapAppStore(json: J, appId: string, country = "us"): RawMention[] {
+  const raw = json?.feed?.entry;
+  const entries: J[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return entries.flatMap((e) => {
+    const id = str(e.id?.label);
+    const rating = numOrNull(e["im:rating"]?.label);
+    // The first entry of older feeds is the app itself (no rating).
+    if (!id || rating == null) return [];
+    const body = str(e.content?.label);
+    return [
+      {
+        source: "appstore" as const,
+        externalId: `${appId}:${id}`,
+        url: `https://apps.apple.com/${country}/app/id${appId}?see-all=reviews`,
+        author: str(e.author?.name?.label) || "App Store user",
+        authorHandle: null,
+        authorFollowers: null,
+        title: str(e.title?.label),
+        body,
+        language: null,
+        country: country.toUpperCase(),
+        publishedAt: iso(e.updated?.label),
+        engagement: eng({ rating, votes: e["im:voteCount"]?.label }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ Reddit
+
+export function mapReddit(json: J): RawMention[] {
+  return ((json?.data?.children ?? []) as J[]).flatMap((c) => {
+    const d = c?.data ?? {};
+    const name = str(d.name) || (d.id ? `${c.kind ?? "t3"}_${d.id}` : "");
+    if (!name) return [];
+    return [
+      {
+        source: "reddit" as const,
+        externalId: name,
+        url: d.permalink ? `https://www.reddit.com${d.permalink}` : str(d.url) || null,
+        author: str(d.author) || "[deleted]",
+        authorHandle: d.author ? `u/${d.author}` : null,
+        authorFollowers: null,
+        title: str(d.title) ? `${d.subreddit_name_prefixed ? `${d.subreddit_name_prefixed}: ` : ""}${str(d.title)}` : "",
+        body: str(d.selftext) || str(d.body),
+        language: null,
+        country: null,
+        publishedAt: iso(numOrNull(d.created_utc)),
+        engagement: eng({ score: d.score, comments: d.num_comments }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ YouTube
+
+export function mapYouTubeSearch(json: J): RawMention[] {
+  return ((json?.items ?? []) as J[]).flatMap((it) => {
+    const vid = str(it.id?.videoId);
+    if (!vid) return [];
+    const s = it.snippet ?? {};
+    return [
+      {
+        source: "youtube" as const,
+        externalId: `video:${vid}`,
+        url: `https://www.youtube.com/watch?v=${vid}`,
+        author: stripHtml(str(s.channelTitle)) || "YouTube channel",
+        authorHandle: str(s.channelId) || null,
+        authorFollowers: null,
+        title: stripHtml(str(s.title)),
+        body: stripHtml(str(s.description)),
+        language: str(s.defaultLanguage) || null,
+        country: null,
+        publishedAt: iso(s.publishedAt),
+        engagement: {},
+      },
+    ];
+  });
+}
+
+export function mapYouTubeComments(json: J, videoTitle = ""): RawMention[] {
+  return ((json?.items ?? []) as J[]).flatMap((it) => {
+    const c = it.snippet?.topLevelComment?.snippet ?? {};
+    const id = str(it.snippet?.topLevelComment?.id) || str(it.id);
+    const vid = str(it.snippet?.videoId) || str(c.videoId);
+    if (!id) return [];
+    return [
+      {
+        source: "youtube" as const,
+        externalId: `comment:${id}`,
+        url: vid ? `https://www.youtube.com/watch?v=${vid}&lc=${id}` : null,
+        author: str(c.authorDisplayName) || "YouTube user",
+        authorHandle: str(c.authorChannelId?.value) || null,
+        authorFollowers: null,
+        title: videoTitle ? `Comment on: ${videoTitle}` : "",
+        body: str(c.textOriginal) || stripHtml(str(c.textDisplay)),
+        language: null,
+        country: null,
+        publishedAt: iso(c.publishedAt),
+        engagement: eng({ likes: c.likeCount, replies: it.snippet?.totalReplyCount }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ Bluesky
+
+export function mapBluesky(json: J): RawMention[] {
+  return ((json?.posts ?? []) as J[]).flatMap((p) => {
+    const uri = str(p.uri);
+    if (!uri) return [];
+    const handle = str(p.author?.handle);
+    const rkey = uri.split("/").pop();
+    const langs = p.record?.langs;
+    return [
+      {
+        source: "bluesky" as const,
+        externalId: uri,
+        url: handle && rkey ? `https://bsky.app/profile/${handle}/post/${rkey}` : null,
+        author: str(p.author?.displayName) || handle || "unknown",
+        authorHandle: handle ? `@${handle}` : null,
+        authorFollowers: numOrNull(p.author?.followersCount),
+        title: "",
+        body: str(p.record?.text),
+        language: Array.isArray(langs) && langs[0] ? str(langs[0]).slice(0, 2) : null,
+        country: null,
+        publishedAt: iso(p.record?.createdAt) ?? iso(p.indexedAt),
+        engagement: eng({ likes: p.likeCount, reposts: p.repostCount, replies: p.replyCount }),
+      },
+    ];
+  });
+}
+
+// ------------------------------------------------------------------ fetchers
+
+export type TopicQuery = { keywords: string[]; excluded: string[]; appIds: string[]; country: string; language: string };
+
+const UA = "Mozilla/5.0 (compatible; SynapseSEO-Listening/1.0)";
+async function get(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, { cache: "no-store", ...init, signal: AbortSignal.timeout(20_000), headers: { "User-Agent": UA, Accept: "application/json, application/rss+xml, */*;q=0.5", ...(init.headers ?? {}) } });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 160).replace(/\s+/g, " ");
+    throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+  }
+  return res;
+}
+const getJson = async (url: string, init?: RequestInit) => (await get(url, init)).json() as Promise<J>;
+
+let redditToken: { token: string; exp: number } | null = null;
+async function redditAuth() {
+  if (redditToken && redditToken.exp > Date.now() + 60_000) return redditToken.token;
+  const basic = Buffer.from(`${process.env.REDDIT_CLIENT_ID}:${process.env.REDDIT_CLIENT_SECRET}`).toString("base64");
+  const d = await getJson("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=client_credentials",
+  });
+  if (!d.access_token) throw new Error("Reddit did not return an access token (check REDDIT_CLIENT_ID/SECRET).");
+  redditToken = { token: String(d.access_token), exp: Date.now() + Number(d.expires_in ?? 3600) * 1000 };
+  return redditToken.token;
+}
+
+let bskySession: { jwt: string; at: number } | null = null;
+async function blueskyAuth() {
+  if (bskySession && Date.now() - bskySession.at < 60 * 60_000) return bskySession.jwt;
+  const d = await getJson("https://bsky.social/xrpc/com.atproto.server.createSession", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier: process.env.BLUESKY_HANDLE, password: process.env.BLUESKY_APP_PASSWORD }),
+  });
+  if (!d.accessJwt) throw new Error("Bluesky login failed (check BLUESKY_HANDLE/APP_PASSWORD).");
+  bskySession = { jwt: String(d.accessJwt), at: Date.now() };
+  return bskySession.jwt;
+}
+
+const MAX_RULES = 5;
+
+/** Fetch raw mentions of one topic from one source. Throws on transport/API errors. */
+export async function fetchSource(source: ListenSource, t: TopicQuery): Promise<RawMention[]> {
+  const rules = t.keywords.slice(0, MAX_RULES);
+  const out: RawMention[] = [];
+  const cc = (t.country || "US").toUpperCase();
+  switch (source) {
+    case "news":
+      for (const k of rules) {
+        const q = booleanQuery(k, t.excluded);
+        const res = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:30d`)}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`);
+        out.push(...mapNewsRss(await res.text()));
+      }
+      break;
+    case "hackernews":
+      for (const k of rules)
+        for (const q of simpleQueries(k, 2)) out.push(...mapHackerNews(await getJson(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(q)}&tags=(story,comment)&hitsPerPage=50`)));
+      break;
+    case "mastodon":
+      for (const tag of [...new Set(rules.flatMap(hashtagsFor))].slice(0, 6)) out.push(...mapMastodon((await getJson(`https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`)) as unknown as J[]));
+      break;
+    case "appstore":
+      for (const raw of t.appIds.slice(0, 5)) {
+        const app = parseAppId(raw);
+        if (!app) continue;
+        out.push(...mapAppStore(await getJson(`https://itunes.apple.com/${app.country}/rss/customerreviews/page=1/id=${app.id}/sortBy=mostRecent/json`), app.id, app.country));
+      }
+      break;
+    case "reddit": {
+      const token = await redditAuth();
+      for (const k of rules)
+        out.push(...mapReddit(await getJson(`https://oauth.reddit.com/search?q=${encodeURIComponent(booleanQuery(k, t.excluded))}&sort=new&t=month&limit=50&raw_json=1`, { headers: { Authorization: `Bearer ${token}` } })));
+      break;
+    }
+    case "youtube": {
+      const key = encodeURIComponent(process.env.YOUTUBE_API_KEY ?? "");
+      const after = new Date(Date.now() - 30 * 86400000).toISOString();
+      for (const k of rules.slice(0, 3)) {
+        const videos = mapYouTubeSearch(await getJson(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date&maxResults=25&publishedAfter=${after}&q=${encodeURIComponent(booleanQuery(k, t.excluded))}&key=${key}`));
+        out.push(...videos);
+        for (const v of videos.slice(0, 5)) {
+          const vid = v.externalId.slice(6);
+          const c = await getJson(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&order=time&maxResults=20&videoId=${vid}&key=${key}`).catch(() => null); // comments may be disabled
+          if (c) out.push(...mapYouTubeComments(c, v.title));
+        }
+      }
+      break;
+    }
+    case "bluesky": {
+      const jwt = await blueskyAuth();
+      for (const k of rules)
+        for (const q of simpleQueries(k, 2)) out.push(...mapBluesky(await getJson(`https://bsky.social/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&sort=latest&limit=50`, { headers: { Authorization: `Bearer ${jwt}` } })));
+      break;
+    }
+  }
+  return out;
+}

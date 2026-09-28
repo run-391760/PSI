@@ -38,6 +38,22 @@ const ROUTES = [
   "/reports",
   "/activity",
   "/settings",
+  "/cx",
+  "/cx/listening",
+  "/cx/listening/dashboards",
+  "/cx/listening/topics",
+  "/cx/crisis",
+  "/cx/inbox",
+  "/cx/contacts",
+  "/cx/publishing",
+  "/cx/publishing/calendar",
+  "/cx/analytics",
+  "/cx/dashboards",
+  "/cx/surveys",
+  "/cx/quality",
+  "/cx/settings/channels",
+  "/cx/settings/team",
+  "/cx/settings/automation",
 ];
 
 test.describe("signed out", () => {

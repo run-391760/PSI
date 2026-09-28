@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { NAV } from "./nav";
+import { CX_NAV } from "./cx-nav";
 import { Logo } from "./logo";
 
 export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolean; onClose: () => void; available?: Partial<Record<string, boolean>> }) {
@@ -25,7 +26,12 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
       return !c;
     });
   };
-  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const cx = pathname === "/cx" || pathname.startsWith("/cx/");
+  const groups = cx ? CX_NAV : NAV;
+  // Longest matching nav href wins, so a parent (/cx/listening) isn't highlighted on its sub-pages.
+  const hrefs = groups.flatMap((g) => g.items.map((i) => i.href));
+  const best = hrefs.filter((h) => pathname === h || pathname.startsWith(`${h}/`)).sort((a, b) => b.length - a.length)[0];
+  const isActive = (href: string) => href === best || (href === "/settings" && pathname.startsWith("/settings"));
 
   return (
     <>
@@ -40,10 +46,10 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
         aria-label="Main navigation"
       >
         <div className={cn("flex h-14 shrink-0 items-center border-b border-white/5 px-4", collapsed && "lg:justify-center lg:px-0")}>
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href={cx ? "/cx" : "/dashboard"} className="flex items-center gap-2">
             <Logo />
             <span className={cn("text-[15px] font-semibold tracking-tight text-white", collapsed && "lg:hidden")}>
-              Synapse<span className="text-[#a99dff]">SEO</span>
+              Synapse<span className="text-[#a99dff]">{cx ? "CX" : "SEO"}</span>
             </span>
           </Link>
           <button className="ml-auto rounded p-1 text-nav-muted hover:text-white lg:hidden" onClick={onClose} aria-label="Close navigation">
@@ -51,7 +57,7 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
           </button>
         </div>
         <nav className="nav-scroll flex-1 overflow-y-auto px-2 py-3">
-          {NAV.map((group) => (
+          {groups.map((group) => (
             <div key={group.id} className="mb-3">
               {group.label && (
                 <div className={cn("px-2.5 pt-1 pb-1.5 text-[10.5px] font-semibold tracking-wider text-nav-muted uppercase", collapsed && "lg:hidden")}>{group.label}</div>

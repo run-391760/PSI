@@ -9,6 +9,11 @@ import { monitoringSchema } from "./monitoring";
 import { aiVisibilitySchema } from "./ai-visibility";
 import { reportsSchema } from "./reports";
 import { integrationsSchema } from "./integrations";
+import { cxSchema } from "./cx";
+import { cxListeningSchema } from "./cx-listening";
+import { cxInboxSchema } from "./cx-inbox";
+import { cxPublishingSchema } from "./cx-publishing";
+import { cxInsightsSchema } from "./cx-insights";
 
 export const schema = [
   coreSchema,
@@ -22,4 +27,9 @@ export const schema = [
   aiVisibilitySchema,
   reportsSchema,
   integrationsSchema,
+  cxSchema,
+  cxListeningSchema,
+  cxInboxSchema,
+  cxPublishingSchema,
+  cxInsightsSchema,
 ].join("\n");

@@ -2,7 +2,7 @@
 
 import { Bell, LogOut, Menu as MenuIcon, Moon, Search, Settings, Sun, User } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyQuery } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -108,6 +108,27 @@ function GlobalSearch() {
   );
 }
 
+/** Switch between the SEO workspace and the CX (customer experience) workspace. */
+function WorkspaceSwitch() {
+  const pathname = usePathname();
+  const cx = pathname === "/cx" || pathname.startsWith("/cx/");
+  const item = (href: string, label: string, active: boolean) => (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn("rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors", active ? "bg-brand text-white shadow-card" : "text-text-2 hover:text-text")}
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <nav aria-label="Workspace" className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+      {item("/dashboard", "SEO", !cx)}
+      {item("/cx", "CX", cx)}
+    </nav>
+  );
+}
+
 function ThemeToggle() {
   const [dark, setDark] = useState(false);
   useEffect(() => {
@@ -134,6 +155,7 @@ export function Topbar({ user, unread, onMenu, logoutAction }: { user: { name: s
       <button onClick={onMenu} className="rounded-md p-2 text-text-2 hover:bg-surface-3 lg:hidden" aria-label="Open navigation">
         <MenuIcon className="h-5 w-5" />
       </button>
+      <WorkspaceSwitch />
       <GlobalSearch />
       <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />
