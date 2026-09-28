@@ -135,3 +135,32 @@ test("Meta Messenger / Instagram webhook → inbound messages (echoes skipped) a
   assert.ok(!wh.verifyMetaSignature("other", raw, sig));
   assert.ok(!wh.verifyMetaSignature("s3cret", raw, null));
 });
+
+test("Meta comments, visitor posts and mentions → threaded inbound items; own replies skipped", () => {
+  const page = { object: "page", entry: [{ id: "P1", changes: [
+    { field: "feed", value: { item: "comment", verb: "add", comment_id: "P1_c1", post_id: "P1_p1", parent_id: "P1_p1", from: { id: "U1", name: "Asha" }, message: "When do admissions open?", created_time: 1790000000 } },
+    { field: "feed", value: { item: "comment", verb: "add", comment_id: "P1_c2", post_id: "P1_p1", parent_id: "P1_c1", from: { id: "U2", name: "Ravi" }, message: "Same question" } },
+    { field: "feed", value: { item: "comment", verb: "add", comment_id: "P1_c3", post_id: "P1_p1", parent_id: "P1_c1", from: { id: "P1", name: "Page" }, message: "Our reply" } },
+    { field: "feed", value: { item: "comment", verb: "edited", comment_id: "P1_c1", post_id: "P1_p1", from: { id: "U1" }, message: "edit" } },
+    { field: "feed", value: { item: "status", verb: "add", post_id: "P1_p9", from: { id: "U3", name: "Neha" }, message: "Visitor post" } },
+    { field: "mention", value: { item: "post", verb: "add", post_id: "X_p5", sender_id: "U4", sender_name: "Dev", message: "Great campus @Page" } },
+  ] }] };
+  const r = wh.mapMetaChanges(page);
+  assert.deepEqual(r.items.map((i) => [i.messageId, i.thread?.key, i.senderName]), [
+    ["P1_c1", "fbc:P1_c1", "Asha"], ["P1_c2", "fbc:P1_c1", "Ravi"], ["P1_p9", "fbp:P1_p9", "Neha"], ["X_p5", "fbp:X_p5", "Dev"],
+  ]);
+  assert.equal(r.items[0].timestamp, new Date(1790000000 * 1000).toISOString());
+  const ig = { object: "instagram", entry: [{ id: "IG1", time: 1790000000, changes: [
+    { field: "comments", value: { id: "c9", text: "Fees?", from: { id: "IGU1", username: "asha" }, media: { id: "m1", media_product_type: "REELS" } } },
+    { field: "comments", value: { id: "c10", parent_id: "c9", text: "thanks", from: { id: "IG1", username: "brand" }, media: { id: "m1" } } },
+    { field: "mentions", value: { media_id: "m7", comment_id: "c77" } },
+    { field: "mentions", value: { media_id: "m8" } },
+  ] }] };
+  const g = wh.mapMetaChanges(ig);
+  assert.deepEqual(g.items.map((i) => [i.messageId, i.thread?.key, i.thread?.label, i.senderName]), [["c9", "igc:c9", "Comment on your reel", "@asha"]]);
+  assert.deepEqual(g.mentions, [{ accountId: "IG1", mediaId: "m7", commentId: "c77" }, { accountId: "IG1", mediaId: "m8", commentId: null }]);
+  assert.deepEqual(wh.parseMetaThread("igm:m7:c77"), { kind: "igm", id: "m7", commentId: "c77" });
+  assert.deepEqual(wh.parseMetaThread("igm:m8:"), { kind: "igm", id: "m8", commentId: null });
+  assert.equal(wh.parseMetaThread("<abc@mail>"), null);
+  assert.deepEqual(wh.mapMetaChanges({ object: "whatsapp_business_account" }), { items: [], mentions: [] });
+});

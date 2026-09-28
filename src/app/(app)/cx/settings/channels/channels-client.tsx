@@ -93,7 +93,7 @@ export function ChannelsClient({ brand, origin, channels, available, env }: Prop
         <CardBody className="space-y-3 text-[13px]">
           <WebhookRow name="WhatsApp Business Cloud API" url={`${origin}/api/cx/webhooks/whatsapp`} ok={env.whatsappVerify} items={[["WHATSAPP_VERIFY_TOKEN", env.whatsappVerify, "verify token you enter in Meta → WhatsApp → Configuration"], ["META_APP_SECRET", env.metaSecret, "enforces the X-Hub-Signature-256 check (recommended)"], ["WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID", env.whatsappSend, "needed to send replies"]]} />
           <WebhookRow name="Facebook Messenger & Instagram messaging" url={`${origin}/api/cx/webhooks/meta`} ok={env.metaVerify && env.metaSecret} items={[["META_VERIFY_TOKEN", env.metaVerify, "verify token for the Meta app's Webhooks product"], ["META_APP_SECRET", env.metaSecret, "required: every POST is signature-checked"]]} />
-          <p className="text-[12.5px] text-text-3">Subscribe to the <code>messages</code> field, then connect the channel above with the phone number id / Page id / Instagram account id. Inbound messages become tickets (one open ticket per sender).</p>
+          <p className="text-[12.5px] text-text-3">In the Meta app&apos;s Webhooks, subscribe Page fields <code>messages</code>, <code>feed</code>, <code>mention</code> and Instagram fields <code>messages</code>, <code>comments</code>, <code>mentions</code>, then connect the channel above with the phone number id / Page id / Instagram account id. Direct messages become one open ticket per sender; each comment thread, mention and tagged post becomes its own ticket, and replies are posted publicly on it. Posts you&apos;re tagged in on Instagram are checked every 15 minutes.</p>
         </CardBody>
       </Card>
 
@@ -320,13 +320,13 @@ function SocialDialog({ brand, kind, channel, onClose }: { brand: string; kind: 
   const [error, setError] = useState<string | null>(null);
   const label = kind === "whatsapp" ? "Phone number id" : kind === "facebook" ? "Facebook Page id" : "Instagram account id";
   return (
-    <Dialog open onClose={onClose} title={`Connect ${kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Messenger" : "Instagram"} inbox`} description="Messages arrive through the webhook; this maps them to this brand."
+    <Dialog open onClose={onClose} title={`Connect ${kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Messenger" : "Instagram"} inbox`} description={kind === "whatsapp" ? "Messages arrive through the webhook; this maps them to this brand." : "Messages, comments and mentions arrive through the webhook; this maps them to this brand."}
       footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={async () => { const r = await saveChannelAction(brand, kind, name, { accountId: accountId.trim() }, channel?.id, token || undefined); if (r.ok) { onClose(); router.refresh(); } else setError(r.error); }}>Save</Button></>}>
       <div className="space-y-3">
         <Field label="Channel name" htmlFor="s-n"><Input id="s-n" value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label={label} htmlFor="s-a"><Input id="s-a" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="font-mono" /></Field>
         {kind !== "whatsapp" && (
-          <Field label="Page access token (to send replies)" htmlFor="s-t" hint="Optional; stored encrypted. Without it replies are stored only.">
+          <Field label="Page access token (to send replies)" htmlFor="s-t" hint={kind === "facebook" ? "Long-lived Page token with pages_messaging, pages_manage_engagement, pages_read_user_content, pages_manage_metadata. Stored encrypted; saving it also subscribes the Page to the webhook. Without it replies are stored only." : "Page token of the Page linked to this Instagram account, with instagram_manage_messages and instagram_manage_comments. Needed to reply and to fetch mentions and tagged posts. Stored encrypted."}>
             <Input id="s-t" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
           </Field>
         )}

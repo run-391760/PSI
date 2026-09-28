@@ -43,6 +43,8 @@ export const jobs: Record<string, JobHandler> = {
     if (!job.project_id) return { alerts: 0 };
     // Ticket reminders ride on this 5-minute chain so they fire while nobody has the inbox open.
     await import("./workspace").then((w) => w.fireDueReminders(job.project_id!)).catch((e) => console.error("[cx] reminders", e));
+    // Instagram has no webhook for posts the account is tagged in; poll them (throttled to 15 minutes).
+    await import("./social").then((s) => s.pollInstagramTags(job.project_id!)).catch((e) => console.error("[cx] instagram tags", e));
     const rows = await query<{ id: string; number: number; subject: string; kind: "first_response" | "resolution" }>(
       `WITH due AS (
          SELECT t.id,t.number,t.subject,'first_response' AS kind FROM cx_tickets t

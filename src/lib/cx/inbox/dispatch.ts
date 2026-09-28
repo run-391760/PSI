@@ -9,6 +9,7 @@ import { getInboxSettings } from "./settings";
 import { insertMessage, iso, logEvent, setOverlay, type Status } from "./store";
 import { replySubject } from "./threading";
 import { notifyMentions, signatureParts } from "./workspace";
+import { parseMetaThread } from "./webhooks";
 
 /**
  * Agent replies and internal notes. Replies are delivered through the ticket's channel where this
@@ -26,8 +27,8 @@ export async function postReply(projectId: string, ticketId: string, user: { id:
   if (!body && !files.length) throw new AppError("Write a message first.");
   if (body.length > 20_000) throw new AppError("Message is too long.");
   const settings = await getInboxSettings(projectId);
-  const [t] = await query<{ id: string; number: number; subject: string; status: string; overlay: string | null; resolved_at: string | null; channel_kind: string; channel_id: string | null; contact_email: string | null; contact_phone: string | null; handles: Record<string, string> | null; first_response_at: string | null; open_children: number }>(
-    `SELECT t.id,t.number,t.subject,t.status,t.resolved_at,tm.crm_status AS overlay,t.channel_kind,t.channel_id,t.first_response_at,c.email AS contact_email,c.phone AS contact_phone,c.handles,
+  const [t] = await query<{ id: string; number: number; subject: string; status: string; overlay: string | null; resolved_at: string | null; channel_kind: string; channel_id: string | null; external_thread_id: string | null; contact_email: string | null; contact_phone: string | null; handles: Record<string, string> | null; first_response_at: string | null; open_children: number }>(
+    `SELECT t.id,t.number,t.subject,t.status,t.resolved_at,tm.crm_status AS overlay,t.channel_kind,t.channel_id,t.external_thread_id,t.first_response_at,c.email AS contact_email,c.phone AS contact_phone,c.handles,
             (SELECT count(*)::int FROM cx_inbox_ticket_meta k JOIN cx_tickets ct ON ct.id=k.ticket_id WHERE k.parent_id=t.id AND ct.status NOT IN ('solved','closed')) AS open_children
        FROM cx_tickets t LEFT JOIN cx_inbox_ticket_meta tm ON tm.ticket_id=t.id LEFT JOIN cx_contacts c ON c.id=t.contact_id WHERE t.id=$1 AND t.project_id=$2`,
     [ticketId, projectId],
@@ -86,7 +87,7 @@ export async function postReply(projectId: string, ticketId: string, user: { id:
   return result;
 }
 
-type T = { id: string; number: number; subject: string; channel_kind: string; channel_id: string | null; contact_email: string | null; contact_phone: string | null; handles: Record<string, string> | null };
+type T = { id: string; number: number; subject: string; channel_kind: string; channel_id: string | null; external_thread_id?: string | null; contact_email: string | null; contact_phone: string | null; handles: Record<string, string> | null };
 type Extra = { files?: FileRow[]; replyTo?: { external_id: string | null; author_name: string; created_at: string; body: string } | null; signatureUser?: string | null };
 
 async function deliver(projectId: string, t: T, body: string, extra: Extra = {}): Promise<{ result: Delivery; externalId: string | null }> {
@@ -124,8 +125,20 @@ async function deliver(projectId: string, t: T, body: string, extra: Extra = {})
     return { result: { delivery: "sent", note: null }, externalId: d.messages?.[0]?.id ?? null };
   }
   if ((kind === "facebook" || kind === "instagram") && t.channel_id) {
-    const [ch] = await query<{ secret_enc: string | null }>("SELECT secret_enc FROM cx_channels WHERE id=$1", [t.channel_id]);
+    const [ch] = await query<{ secret_enc: string | null; config: { accountId?: string } }>("SELECT secret_enc,config FROM cx_channels WHERE id=$1", [t.channel_id]);
     const token = ch ? channelSecret(ch) : null;
+    const thread = parseMetaThread(t.external_thread_id);
+    if (thread) {
+      // Public thread (comment, mention, tag): answer in public on the post, not by DM.
+      if (!token) return { result: { delivery: "stored", note: `Replying to ${kind === "facebook" ? "Facebook" : "Instagram"} comments needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
+      if (thread.kind === "igt") return { result: { delivery: "stored", note: "Instagram's API can't comment on posts you're only photo-tagged in. The reply was stored; answer on Instagram using the post link in the ticket." }, externalId: null };
+      const { graph } = await import("./social");
+      const d =
+        thread.kind === "fbc" || thread.kind === "fbp" ? await graph(`${thread.id}/comments`, token, { message: plain })
+        : thread.kind === "igc" ? await graph(`${thread.id}/replies`, token, { message: plain })
+        : await graph(`${ch.config?.accountId}/mentions`, token, { media_id: thread.id, ...(thread.commentId ? { comment_id: thread.commentId } : {}), message: plain });
+      return { result: { delivery: "sent", note: null }, externalId: d.id ? String(d.id) : null };
+    }
     const psid = t.handles?.[kind];
     if (!token || !psid) return { result: { delivery: "stored", note: `Sending ${kind === "facebook" ? "Messenger" : "Instagram"} replies needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
     const r = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recipient: { id: psid }, messaging_type: "RESPONSE", message: { text: plain } }), signal: AbortSignal.timeout(20_000) });

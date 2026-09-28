@@ -82,6 +82,12 @@ export async function saveChannelAction(brand: string, kind: "livechat" | "webfo
     if (id) await updateChannel(brand, id, { name, config: clean, secret: secret || null });
     else id = await createChannel(brand, kind, name, clean, secret || null);
     await ensureInboxJobs(brand, user.id, false);
+    if (kind === "facebook" && secret) {
+      // Subscribe the Page to messages, comments/posts and mentions; a failure is shown on the channel, not fatal.
+      const { subscribePage } = await import("@/lib/cx/inbox/social");
+      const { setChannelResult } = await import("@/lib/cx/inbox/channels");
+      await subscribePage(String(clean.accountId), secret).then(() => setChannelResult(id!, null), (e) => setChannelResult(id!, `Webhook subscription: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300)));
+    }
     done();
     return { ok: true, data: id };
   } catch (e) {

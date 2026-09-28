@@ -60,6 +60,9 @@ export function Composer(p: ComposerProps) {
   const uploads = useUploads(brand.id);
   const canSend = SENDS.has(t.channel_kind) || ["whatsapp", "facebook", "instagram", "discord", "discourse", "telegram"].includes(t.channel_kind);
   const isEmail = t.channel_kind === "email" || t.channel_kind === "webform";
+  // Comment / mention / tag threads on Facebook and Instagram are answered in public on the post.
+  const threadKey = (t as unknown as { external_thread_id?: string | null }).external_thread_id ?? "";
+  const publicReply = /^(fbc|fbp|igc|igm):/.test(threadKey);
   const [speechOk, setSpeechOk] = useState(false);
   useEffect(() => { const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }; setSpeechOk(!!(w.SpeechRecognition || w.webkitSpeechRecognition)); }, []);
   useEffect(() => { if (p.replyTo) setMode("reply"); }, [p.replyTo]);
@@ -203,7 +206,7 @@ export function Composer(p: ComposerProps) {
             if (e.metaKey || e.ctrlKey || (prefs.enterToSend && !e.shiftKey)) { e.preventDefault(); send(); }
           }}
           rows={4}
-          placeholder={p.disabled ? p.disabled : mode === "note" ? "Internal note — only your team sees this. Type @ to mention a teammate." : `Reply to ${t.contact_name || "the customer"}…  (${prefs.enterToSend ? "Enter to send, Shift+Enter for a new line" : "⌘/Ctrl + Enter to send"}; paste screenshots)`}
+          placeholder={p.disabled ? p.disabled : mode === "note" ? "Internal note — only your team sees this. Type @ to mention a teammate." : `${publicReply ? "Public reply on the post, visible to everyone" : `Reply to ${t.contact_name || "the customer"}`}…  (${prefs.enterToSend ? "Enter to send, Shift+Enter for a new line" : "⌘/Ctrl + Enter to send"}; paste screenshots)`}
           className={cn("text-[13.5px]", mode === "note" && "bg-warning-soft/40")}
           aria-label={mode === "note" ? "Internal note" : "Reply"}
         />

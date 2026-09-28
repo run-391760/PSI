@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { storeSocial } from "@/lib/cx/inbox/social";
-import { mapMeta, verifyMetaSignature } from "@/lib/cx/inbox/webhooks";
+import { storeMentions, storeSocial } from "@/lib/cx/inbox/social";
+import { mapMeta, mapMetaChanges, verifyMetaSignature } from "@/lib/cx/inbox/webhooks";
 
 /**
- * Meta webhook for Facebook Messenger (object "page") and Instagram messaging (object "instagram").
- * Setup (Meta App → Webhooks): Callback URL = https://<your-host>/api/cx/webhooks/meta, Verify token =
- * META_VERIFY_TOKEN, subscribe the Page / Instagram account to "messages". META_APP_SECRET is required
+ * Meta webhook for Facebook (object "page": Messenger, Page comments, visitor posts, mentions) and Instagram
+ * (object "instagram": DMs, comments, @mentions). Setup (Meta App → Webhooks): Callback URL =
+ * https://<your-host>/api/cx/webhooks/meta, Verify token = META_VERIFY_TOKEN; subscribe Page fields
+ * messages, feed, mention and Instagram fields messages, comments, mentions. META_APP_SECRET is required
  * (signature check). Connect a Facebook / Instagram channel in Settings → Channels with the Page / IG
  * account id (and a Page access token to send replies).
  */
@@ -28,6 +29,9 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const stored = await storeSocial(mapMeta(body as Record<string, unknown>)).catch((e) => (console.error("[meta webhook]", e), 0));
-  return NextResponse.json({ ok: true, stored });
+  const b = body as Record<string, unknown>;
+  const { items, mentions } = mapMetaChanges(b);
+  const stored = await storeSocial([...mapMeta(b), ...items]).catch((e) => (console.error("[meta webhook]", e), 0));
+  const resolved = mentions.length ? await storeMentions(mentions).catch((e) => (console.error("[meta webhook] mentions", e), 0)) : 0;
+  return NextResponse.json({ ok: true, stored: stored + resolved });
 }
