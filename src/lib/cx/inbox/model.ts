@@ -95,8 +95,12 @@ export type InboxPrefs = {
   enterToSend: boolean;
   emailCollapsed: boolean;
   translateTo: string;
+  /** "Change view": split list + conversation, or Konnect-style ticket cards. */
+  mode: "split" | "cards";
+  /** Right-hand filter/counter panel open. */
+  panel: boolean;
 };
-export const DEFAULT_PREFS: InboxPrefs = { layout: "ticket", align: "split", absoluteDates: false, soundNewTicket: false, soundNewMessage: false, enterToSend: false, emailCollapsed: true, translateTo: "English" };
+export const DEFAULT_PREFS: InboxPrefs = { layout: "ticket", align: "split", absoluteDates: false, soundNewTicket: false, soundNewMessage: false, enterToSend: false, emailCollapsed: true, translateTo: "English", mode: "split", panel: true };
 
 export function normSettings(v: Partial<InboxSettings> | null | undefined): InboxSettings {
   const s = { ...DEFAULT_SETTINGS, ...(v ?? {}) };
@@ -120,6 +124,8 @@ export function normPrefs(v: Partial<InboxPrefs> | null | undefined): InboxPrefs
     enterToSend: !!p.enterToSend,
     emailCollapsed: !!p.emailCollapsed,
     translateTo: String(p.translateTo || "English").slice(0, 40),
+    mode: p.mode === "cards" ? "cards" : "split",
+    panel: p.panel !== false,
   };
 }
 export function normDomains(v: unknown): string[] {

@@ -1,0 +1,25 @@
+/*
+ * Declutter preferences (WP-A). The app shell root carries data-focus="on|off" and
+ * data-density="comfortable|compact". Unlayered on purpose so it wins over Tailwind utilities.
+ *
+ * Focus mode: any element marked data-focus-hide (secondary KPI strips, right-hand side panels,
+ * secondary navigation) is hidden; <Page> goes full width (see shell/page.tsx).
+ */
+[data-focus="on"] [data-focus-hide] {
+  display: none !important;
+}
+
+/* Compact density: Tailwind 4 spacing utilities are calc(var(--spacing) * n), so one variable
+   tightens padding, gaps and control heights across cards, tables and lists in the content area. */
+[data-density="compact"] main {
+  --spacing: 0.2rem;
+}
+[data-density="compact"] main table {
+  font-size: 12.5px;
+}
+[data-density="compact"] main h1 {
+  font-size: 19px;
+}
+[data-density="compact"] main section > header h2 {
+  font-size: 13.5px;
+}

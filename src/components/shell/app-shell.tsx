@@ -1,19 +1,14 @@
-"use client";
+import type { ReactNode } from "react";
+import { requirePageUser } from "@/lib/auth";
+import { getUiPrefs } from "@/lib/cx/ui/prefs";
+import { AppShellClient } from "./app-shell-client";
 
-import { type ReactNode, useCallback, useState } from "react";
-import { Sidebar } from "./sidebar";
-import { Topbar } from "./topbar";
-
-export function AppShell({ user, unread, logoutAction, available, children }: { user: { name: string; email: string }; unread: number; logoutAction: () => Promise<void>; available?: Record<string, boolean>; children: ReactNode }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const close = useCallback(() => setMobileOpen(false), []);
-  return (
-    <div className="flex min-h-screen">
-      <Sidebar mobileOpen={mobileOpen} onClose={close} available={available} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} unread={unread} onMenu={() => setMobileOpen(true)} logoutAction={logoutAction} />
-        <main className="min-w-0 flex-1">{children}</main>
-      </div>
-    </div>
-  );
+/**
+ * App chrome (sidebar + topbar). Loads the user's display preferences on the server so focus mode,
+ * density, collapsed sidebar, menu customisation and hidden panels apply on first paint.
+ */
+export async function AppShell(props: { user: { name: string; email: string }; unread: number; logoutAction: () => Promise<void>; available?: Record<string, boolean>; children: ReactNode }) {
+  const user = await requirePageUser(); // cached per request (already resolved by the layout)
+  const prefs = await getUiPrefs(user.id);
+  return <AppShellClient {...props} prefs={prefs} />;
 }

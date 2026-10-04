@@ -6,6 +6,7 @@ import { cxContext } from "@/lib/cx/context";
 import { listDashboards } from "@/lib/cx/insights/dashboards";
 import { SOURCES } from "@/lib/cx/insights/widget-defs";
 import { dateLabel } from "@/lib/format";
+import { Hideable, ShowHidden } from "@/components/shell/hideable";
 import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -29,7 +30,12 @@ export default async function DashboardsPage({ searchParams }: PageProps<"/cx/da
         subject={brand.name}
         description="Build your own BI dashboards across tickets, messages, mentions, survey responses and quality reviews."
         meta={<BrandMeta switcher={switcher} current={brand.id} />}
-        actions={<NewDashboardButton brand={brand.id} />}
+        actions={
+          <>
+            <ShowHidden scope="cx-dashboards" />
+            <NewDashboardButton brand={brand.id} />
+          </>
+        }
       />
       {list.length === 0 ? (
         <Card>
@@ -40,21 +46,23 @@ export default async function DashboardsPage({ searchParams }: PageProps<"/cx/da
           {list.map((d) => {
             const sources = [...new Set(d.widgets.map((w) => SOURCES[w.source]?.label).filter(Boolean))];
             return (
-              <Link key={d.id} href={cxHref(`/cx/dashboards/${d.id}`, brand.id)} className="rounded-lg border border-border bg-surface p-4 shadow-card hover:border-border-strong">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-[14px] font-semibold text-text">{d.name}</div>
-                    <div className="mt-0.5 line-clamp-2 text-[12.5px] text-text-3">{d.description || "No description"}</div>
+              <Hideable key={d.id} id={`cx-dashboards.${d.id}`} label={d.name}>
+                <Link href={cxHref(`/cx/dashboards/${d.id}`, brand.id)} className="block h-full rounded-lg border border-border bg-surface p-4 shadow-card hover:border-border-strong">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-[14px] font-semibold text-text">{d.name}</div>
+                      <div className="mt-0.5 line-clamp-2 text-[12.5px] text-text-3">{d.description || "No description"}</div>
+                    </div>
+                    <Badge tone={d.shared ? "good" : "neutral"}>{d.shared ? "Shared" : "Private"}</Badge>
                   </div>
-                  <Badge tone={d.shared ? "good" : "neutral"}>{d.shared ? "Shared" : "Private"}</Badge>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {sources.length ? sources.map((s) => <Badge key={s}>{s}</Badge>) : <span className="text-[12px] text-text-3">No widgets</span>}
-                </div>
-                <div className="mt-3 text-[12px] text-text-3">
-                  {d.widgets.length} widget{d.widgets.length === 1 ? "" : "s"} · updated {dateLabel(d.updated_at)}{d.creator ? ` · by ${d.creator}` : ""}
-                </div>
-              </Link>
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {sources.length ? sources.map((s) => <Badge key={s}>{s}</Badge>) : <span className="text-[12px] text-text-3">No widgets</span>}
+                  </div>
+                  <div className="mt-3 text-[12px] text-text-3">
+                    {d.widgets.length} widget{d.widgets.length === 1 ? "" : "s"} · updated {dateLabel(d.updated_at)}{d.creator ? ` · by ${d.creator}` : ""}
+                  </div>
+                </Link>
+              </Hideable>
             );
           })}
         </div>

@@ -12,10 +12,15 @@ import { query } from "@/lib/db";
 import { listQuickActions } from "@/lib/cx/admin/quick-actions";
 import { ticketSignals } from "@/lib/cx/insights/signals";
 import { getInboxSettings, getPrefs } from "@/lib/cx/inbox/settings";
-import { listCanned, listAgents, listSeverities, listTags, listTeams, listTickets, getTicket, inboxStats, slaPolicyCount, viewCounts, VIEWS, type View } from "@/lib/cx/inbox/store";
+import { listCanned, listAgents, listSeverities, listTags, listTeams, listTickets, getTicket, inboxStats, panelCounts, slaPolicyCount, viewCounts, VIEWS, type View } from "@/lib/cx/inbox/store";
 import { emailChannel, emailSuggestions, fireDueReminders, getSignature } from "@/lib/cx/inbox/workspace";
 import { listChannels } from "@/lib/cx/inbox/channels";
 import { ensureInboxJobs } from "@/lib/cx/inbox/jobs";
+import { ticketBookmarks } from "@/lib/cx/ops/bookmarks";
+import { defaultGroupId, listGroups } from "@/lib/cx/ops/groups";
+import { ensureOpsJobs } from "@/lib/cx/ops/jobs";
+import { syncPostKeys } from "@/lib/cx/ops/media";
+import { fireDueTasks, listTasks } from "@/lib/cx/ops/tasks";
 
 export const metadata: Metadata = { title: "Inbox & tickets" };
 
@@ -30,14 +35,18 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const filters = {
     view, q: s("q"), channel: s("channel"), priority: s("priority"), status: s("status"), tag: s("tag"), team: s("team"), sentiment: s("sentiment"),
     from: s("from"), to: s("to"), profile: s("profile"), topic: s("topic"), escalated: s("escalated"), email: s("email"), severity: s("severity"), assignee: s("assignee"), sort: s("sort"),
+    // Profile group: ?group=<id>, "all" = every profile; without the param the brand's default group applies.
+    group: s("group") ?? (await defaultGroupId(brand.id).catch(() => null)) ?? undefined, media: s("media"), post: s("post"),
   };
   const channels = await listChannels(brand.id);
   await ensureInboxJobs(brand.id, user.id, channels.some((c) => c.kind === "email" && c.status !== "paused")).catch(() => {});
   await fireDueReminders(brand.id).catch(() => 0);
+  await Promise.all([syncPostKeys(brand.id).catch(() => 0), fireDueTasks(brand.id).catch(() => 0), ensureOpsJobs(brand.id).catch(() => {})]);
   const [defs, tree] = await Promise.all([getFieldDefs(brand.id).catch(() => []), getClassificationTree(brand.id).catch(() => [])]);
   const fieldDefs = defs.filter((d) => d.scope === "ticket");
+  const listFilters = { ...filters, group: filters.group === "all" ? undefined : filters.group };
   const [tickets, counts, stats, agents, teams, tags, canned, policies, prefs, settings, signature, usedSeverities, suggestions, mailCh, topics] = await Promise.all([
-    listTickets(brand.id, user.id, filters, 300, { fieldKeys: fieldDefs.map((d) => d.key) }),
+    listTickets(brand.id, user.id, listFilters, 300, { fieldKeys: fieldDefs.map((d) => d.key) }),
     viewCounts(brand.id, user.id),
     inboxStats(brand.id),
     listAgents(brand.id),
@@ -59,6 +68,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const ticketId = s("t") ?? s("ticket"); // ?ticket= is the deep link used by Listening
   const selected = ticketId ? await getTicket(brand.id, ticketId) : null;
   const signals = selected ? await ticketSignals(brand.id, selected.ticket.id).catch(() => null) : null;
+  const [groups, panel, ops] = await Promise.all([
+    listGroups(brand.id).catch(() => []),
+    panelCounts(brand.id, user.id, listFilters, { fieldKeys: fieldDefs.map((d) => d.key) }),
+    selected ? Promise.all([listTasks(brand.id, user.id, { ticketId: selected.ticket.id }), ticketBookmarks(user.id, selected.ticket.id)]).then(([tasks, bookmarks]) => ({ tasks, bookmarks })) : Promise.resolve(null),
+  ]);
   const quickActions = (await listQuickActions(brand.id).catch(() => [])).map((q) => ({ id: q.id, name: q.name, description: q.description }));
   return (
     <Page wide>
@@ -101,6 +115,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         tree={tree}
         signals={signals}
         quickActions={quickActions}
+        groups={groups.map((g) => ({ id: g.id, name: g.name }))}
+        panel={panel}
+        ops={ops}
+        act={s("act") ?? null}
       />
     </Page>
   );

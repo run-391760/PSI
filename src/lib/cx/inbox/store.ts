@@ -9,6 +9,9 @@ import { slaDueDates, slaTargetMap } from "@/lib/cx/insights/sla";
 import { withDefaults } from "./sla";
 import { crmLabel, effectiveStatus, fillTemplate as fill, isCrmStatus, isTicketLocked, parseSearch, phoneKey, reopenOnInbound, toStored, type CrmStatus, type SearchTerm } from "./model";
 import { getInboxSettings } from "./settings";
+import { groupScope, groupTicketSql } from "@/lib/cx/ops/groups";
+import { MEDIA_SQL } from "@/lib/cx/ops/media";
+import { parseMediaParam } from "@/lib/cx/ops/model";
 
 /**
  * Tickets, messages and contacts of the CX inbox (server only). All functions take a projectId the
@@ -30,6 +33,8 @@ export type TicketListRow = {
   csat: number | null; created_at: string; updated_at: string; last_body: string | null; last_direction: string | null; last_at: string | null; messages: number;
   crm_status: CrmStatus; overlay: string | null; severity: string | null; parent_id: string | null; children: number; escalated_at: string | null;
   has_attachment: boolean; next_reminder: string | null; emails_sent: number;
+  media_type: string; first_body: string | null; first_at: string | null; first_author: string | null; contact_handle: string | null;
+  post_key: string | null; post_url: string | null; post_tickets: number; bookmarked: boolean; tasks_open: number;
 };
 export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null };
 
@@ -64,10 +69,12 @@ function viewSql(view: View, userParam: string) {
   }
 }
 
-export type SortKey = "priority" | "sla" | "newest" | "oldest" | "updated";
+export type SortKey = "priority" | "sla" | "newest" | "oldest" | "updated" | "latest";
 export type TicketFilters = {
   view?: View; q?: string; channel?: string; priority?: string; status?: string; tag?: string; team?: string; assignee?: string; sentiment?: string;
   from?: string; to?: string; profile?: string; topic?: string; escalated?: string; email?: string; severity?: string; sort?: SortKey | string;
+  /** Profile group id (cx_ops_profile_groups), media types (comma list, see ops/model MEDIA_TYPES), post key (cx_ops_ticket_posts). */
+  group?: string; media?: string; post?: string;
 };
 const normStatus = (v: string) => { const s = v.toLowerCase().replace(/[- ]/g, "_"); return s === "resolved" ? "solved" : s === "work_in_progress" ? "wip" : s === "followup" ? "follow_up" : s; };
 const isDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -122,17 +129,22 @@ function termSql(term: SearchTerm, p: (v: unknown) => string, userParam: string,
   }
 }
 
-export async function listTickets(projectId: string, userId: string, f: TicketFilters, limit = 300, opts: { fieldKeys?: string[]; ids?: string[] } = {}) {
+type WhereOpts = { fieldKeys?: string[]; ids?: string[]; omit?: ("view" | "status" | "assignee" | "media")[] };
+/** WHERE clause for the ticket list and its facet counters (aliases t, tm, c, ch, u). `omit` drops facets for counters. */
+async function ticketWhere(projectId: string, userId: string, f: TicketFilters, opts: WhereOpts = {}) {
   const settings = await getInboxSettings(projectId);
+  const omit = new Set(opts.omit ?? []);
   const params: unknown[] = [projectId, userId, settings.lockDays];
   const p = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  const where = [`t.project_id=$1`, `$2::text IS NOT NULL`, `$3::int IS NOT NULL`, opts.ids ? `t.id = ANY(${p(opts.ids)})` : viewSql((f.view as View) ?? "open", "$2")];
+  const where = [`t.project_id=$1`, `$2::text IS NOT NULL`, `$3::int IS NOT NULL`];
+  if (opts.ids) where.push(`t.id = ANY(${p(opts.ids)})`);
+  else if (!omit.has("view")) where.push(viewSql((f.view as View) ?? "open", "$2"));
   if (f.channel) where.push(`t.channel_kind=${p(f.channel)}`);
   if (f.priority) where.push(`t.priority=${p(f.priority)}`);
-  if (f.status) where.push(`${CRM_SQL}=${p(normStatus(f.status))}`);
+  if (f.status && !omit.has("status")) where.push(`${CRM_SQL}=${p(normStatus(f.status))}`);
   if (f.team) where.push(`t.team=${p(f.team)}`);
   if (f.sentiment) where.push(`t.sentiment=${p(f.sentiment)}`);
-  if (f.assignee) where.push(f.assignee === "none" ? "t.assignee_id IS NULL" : `t.assignee_id=${p(f.assignee)}`);
+  if (f.assignee && !omit.has("assignee")) where.push(f.assignee === "none" ? "t.assignee_id IS NULL" : `t.assignee_id=${p(f.assignee)}`);
   if (f.tag) where.push(`t.tags ? ${p(f.tag)}`);
   if (f.severity) where.push(`lower(tm.severity)=${p(f.severity.toLowerCase())}`);
   if (isDate(f.from)) where.push(`t.created_at >= ${p(f.from)}::date`);
@@ -141,6 +153,13 @@ export async function listTickets(projectId: string, userId: string, f: TicketFi
   if (f.topic) where.push(`EXISTS (SELECT 1 FROM cx_mentions mn WHERE mn.ticket_id=t.id AND mn.topic_id=${p(f.topic)})`);
   if (f.escalated === "1") where.push("tm.escalated_at IS NOT NULL");
   if (f.escalated === "0") where.push("tm.escalated_at IS NULL");
+  if (f.group && f.group !== "all") {
+    const scope = await groupScope(projectId, f.group);
+    where.push(scope ? groupTicketSql(scope, p) : "false");
+  }
+  const media = parseMediaParam(f.media);
+  if (media.length && !omit.has("media")) where.push(`${MEDIA_SQL} = ANY(${p(media)}::text[])`);
+  if (f.post) where.push(`EXISTS (SELECT 1 FROM cx_ops_ticket_posts tp WHERE tp.ticket_id=t.id AND tp.post_key=${p(f.post)})`);
   const SENT = "EXISTS (SELECT 1 FROM cx_inbox_emails e WHERE e.ticket_id=t.id AND e.status='sent')";
   const RECEIVED = "EXISTS (SELECT 1 FROM cx_messages mi WHERE mi.ticket_id=t.id AND mi.direction='in' AND mi.created_at > (SELECT min(e.created_at) FROM cx_inbox_emails e WHERE e.ticket_id=t.id AND e.status='sent'))";
   if (f.email === "sent") where.push(`${SENT} AND NOT ${RECEIVED}`);
@@ -158,11 +177,22 @@ export async function listTickets(projectId: string, userId: string, f: TicketFi
     const x = p(`%${q}%`), n = p(/^\d{1,9}$/.test(q) ? Number(q) : -1);
     where.push(`(t.subject ILIKE ${x} OR c.name ILIKE ${x} OR c.email ILIKE ${x} OR c.phone ILIKE ${x} OR t.number=${n} OR EXISTS (SELECT 1 FROM cx_messages mm WHERE mm.ticket_id=t.id AND mm.body ILIKE ${x}))`);
   }
+  return { where, params, p, fieldTerms };
+}
+const FROM_TICKETS = `FROM cx_tickets t
+       LEFT JOIN cx_inbox_ticket_meta tm ON tm.ticket_id=t.id
+       LEFT JOIN cx_contacts c ON c.id=t.contact_id
+       LEFT JOIN cx_channels ch ON ch.id=t.channel_id
+       LEFT JOIN users u ON u.id=t.assignee_id`;
+
+export async function listTickets(projectId: string, userId: string, f: TicketFilters, limit = 300, opts: { fieldKeys?: string[]; ids?: string[] } = {}) {
+  const { where, params, p, fieldTerms } = await ticketWhere(projectId, userId, f, opts);
   const order =
     f.sort === "sla" ? `CASE WHEN t.status IN ${DONE} THEN 1 ELSE 0 END, LEAST(CASE WHEN t.first_response_at IS NULL THEN t.first_response_due END, t.resolution_due) ASC NULLS LAST, t.updated_at DESC`
     : f.sort === "newest" ? "t.created_at DESC"
     : f.sort === "oldest" ? "t.created_at ASC"
     : f.sort === "updated" ? "t.updated_at DESC"
+    : f.sort === "latest" ? "COALESCE(lm.created_at, t.updated_at) DESC"
     : "CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, t.updated_at DESC";
   const lim = p(fieldTerms.length ? Math.max(limit, 2000) : limit);
   const rows = await query<TicketListRow>(
@@ -174,13 +204,17 @@ export async function listTickets(projectId: string, userId: string, f: TicketFi
             (SELECT count(*)::int FROM cx_inbox_ticket_meta k WHERE k.parent_id=t.id) AS children,
             EXISTS (SELECT 1 FROM cx_messages ma WHERE ma.ticket_id=t.id AND ma.attachments <> '[]'::jsonb) AS has_attachment,
             (SELECT min(r.remind_at) FROM cx_inbox_reminders r WHERE r.ticket_id=t.id AND r.fired_at IS NULL) AS next_reminder,
-            (SELECT count(*)::int FROM cx_inbox_emails e WHERE e.ticket_id=t.id AND e.status='sent') AS emails_sent
-       FROM cx_tickets t
-       LEFT JOIN cx_inbox_ticket_meta tm ON tm.ticket_id=t.id
-       LEFT JOIN cx_contacts c ON c.id=t.contact_id
-       LEFT JOIN cx_channels ch ON ch.id=t.channel_id
-       LEFT JOIN users u ON u.id=t.assignee_id
+            (SELECT count(*)::int FROM cx_inbox_emails e WHERE e.ticket_id=t.id AND e.status='sent') AS emails_sent,
+            ${MEDIA_SQL} AS media_type, fm.body AS first_body, fm.created_at AS first_at, fm.author_name AS first_author,
+            (SELECT value FROM jsonb_each_text(COALESCE(c.handles,'{}'::jsonb)) LIMIT 1) AS contact_handle,
+            tp.post_key, tp.post_url,
+            (CASE WHEN tp.post_key IS NULL THEN 0 ELSE (SELECT count(*)::int FROM cx_ops_ticket_posts tq WHERE tq.project_id=t.project_id AND tq.post_key=tp.post_key) END) AS post_tickets,
+            EXISTS (SELECT 1 FROM cx_ops_bookmarks b WHERE b.ticket_id=t.id AND b.user_id=$2 AND b.message_id IS NULL) AS bookmarked,
+            (SELECT count(*)::int FROM cx_ops_tasks k WHERE k.ticket_id=t.id AND k.status NOT IN ('done','cancelled')) AS tasks_open
+       ${FROM_TICKETS}
+       LEFT JOIN cx_ops_ticket_posts tp ON tp.ticket_id=t.id
        LEFT JOIN LATERAL (SELECT body,direction,created_at FROM cx_messages m WHERE m.ticket_id=t.id AND m.direction<>'note' ORDER BY created_at DESC LIMIT 1) lm ON true
+       LEFT JOIN LATERAL (SELECT body,created_at,author_name FROM cx_messages m WHERE m.ticket_id=t.id AND m.direction<>'note' ORDER BY created_at, id LIMIT 1) fm ON true
       WHERE ${where.join(" AND ")}
       ORDER BY ${order}
       LIMIT ${lim}`,
@@ -199,9 +233,45 @@ export async function listTickets(projectId: string, userId: string, f: TicketFi
   }
   return out;
 }
+
+export type PanelCounts = {
+  total: number; responded: number;
+  status: { open: number; assigned: number; wip: number; pending: number; closed: number; resolved: number; new: number };
+  unassigned: number; agents: { id: string; name: string; n: number }[]; media: { id: string; n: number }[];
+};
+/**
+ * Counters of the filter panel (Konnect "Ticketing View / Ticket Status / Active Users / Media Type"): computed on the
+ * current scope (profile group, dates, search and other filters) without the view, status, assignee and media facets,
+ * so every counter stays clickable. Custom-field search terms are ignored here.
+ */
+export async function panelCounts(projectId: string, userId: string, f: TicketFilters, opts: { fieldKeys?: string[] } = {}): Promise<PanelCounts> {
+  const { where, params } = await ticketWhere(projectId, userId, f, { ...opts, omit: ["view", "status", "assignee", "media"] });
+  const w = where.join(" AND ");
+  const [r] = await query<{ total: number; responded: number; open: number; assigned: number; wip: number; pending: number; closed: number; resolved: number; new: number; unassigned: number }>(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE x.crm='responded')::int AS responded,
+            count(*) FILTER (WHERE x.status IN ('new','open'))::int AS open,
+            count(*) FILTER (WHERE x.crm='assigned')::int AS assigned,
+            count(*) FILTER (WHERE x.crm='wip')::int AS wip,
+            count(*) FILTER (WHERE x.status IN ('pending','on_hold'))::int AS pending,
+            count(*) FILTER (WHERE x.status='closed')::int AS closed,
+            count(*) FILTER (WHERE x.status='solved')::int AS resolved,
+            count(*) FILTER (WHERE x.status='new')::int AS new,
+            count(*) FILTER (WHERE x.assignee_id IS NULL AND x.status NOT IN ${DONE})::int AS unassigned
+       FROM (SELECT t.status, t.assignee_id, ${CRM_SQL} AS crm ${FROM_TICKETS} WHERE ${w}) x`,
+    params,
+  );
+  const agents = await query<{ id: string; name: string; n: number }>(
+    `SELECT t.assignee_id AS id, COALESCE(NULLIF(u.name,''),u.email) AS name, count(*)::int AS n ${FROM_TICKETS} WHERE ${w} AND t.assignee_id IS NOT NULL AND t.status NOT IN ${DONE} GROUP BY 1,2 ORDER BY 3 DESC, 2`,
+    params,
+  );
+  const media = await query<{ id: string; n: number }>(`SELECT ${MEDIA_SQL} AS id, count(*)::int AS n ${FROM_TICKETS} WHERE ${w} GROUP BY 1 ORDER BY 2 DESC`, params);
+  return { total: r.total, responded: r.responded, status: { open: r.open, assigned: r.assigned, wip: r.wip, pending: r.pending, closed: r.closed, resolved: r.resolved, new: r.new }, unassigned: r.unassigned, agents, media };
+}
+
 function normTicket<T extends Record<string, unknown>>(r: T) {
   const o: Record<string, unknown> = { ...r };
-  for (const k of ["first_response_due", "resolution_due", "first_response_at", "resolved_at", "created_at", "updated_at", "last_at", "escalated_at", "next_reminder"]) if (k in o) o[k] = iso(o[k]);
+  for (const k of ["first_response_due", "resolution_due", "first_response_at", "resolved_at", "created_at", "updated_at", "last_at", "escalated_at", "next_reminder", "first_at"]) if (k in o) o[k] = iso(o[k]);
   return o as T;
 }
 

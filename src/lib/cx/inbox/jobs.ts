@@ -43,6 +43,8 @@ export const jobs: Record<string, JobHandler> = {
     if (!job.project_id) return { alerts: 0 };
     // Ticket reminders ride on this 5-minute chain so they fire while nobody has the inbox open.
     await import("./workspace").then((w) => w.fireDueReminders(job.project_id!)).catch((e) => console.error("[cx] reminders", e));
+    // CRM task reminders / overdue alerts (WP-B ops module) ride on the same chain.
+    await import("@/lib/cx/ops/tasks").then(async (t) => { await t.fireDueTasks(job.project_id!); await t.sendDailyDigests(job.project_id!); }).catch((e) => console.error("[cx] task reminders", e));
     // Instagram has no webhook for posts the account is tagged in; poll them (throttled to 15 minutes).
     await import("./social").then((s) => s.pollInstagramTags(job.project_id!)).catch((e) => console.error("[cx] instagram tags", e));
     const rows = await query<{ id: string; number: number; subject: string; kind: "first_response" | "resolution" }>(
@@ -67,7 +69,10 @@ export const jobs: Record<string, JobHandler> = {
         body: r.subject.slice(0, 200), link: `/cx/inbox?brand=${job.project_id}&t=${r.id}`,
       });
     }
-    const [open] = await query<{ n: number }>("SELECT count(*)::int AS n FROM cx_tickets WHERE project_id=$1 AND status NOT IN ('solved','closed')", [job.project_id]);
+    const [open] = await query<{ n: number }>(
+      "SELECT ((SELECT count(*) FROM cx_tickets WHERE project_id=$1 AND status NOT IN ('solved','closed')) + (SELECT count(*) FROM cx_ops_tasks WHERE project_id=$1 AND due_at IS NOT NULL AND status NOT IN ('done','cancelled') AND overdue_notified_at IS NULL))::int AS n",
+      [job.project_id],
+    );
     if (open?.n && p && !(job.payload as { ticketId?: string }).ticketId) {
       const next = Date.now() + EVERY;
       await enqueue({ kind: "cx.inbox.sla-check", ownerId: p.owner_id, projectId: job.project_id, payload: {}, dedupeKey: `cx.inbox.sla-check:${job.project_id}:${slot(next)}`, runAfter: new Date(next) });

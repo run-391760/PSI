@@ -40,7 +40,8 @@ import {
 import type { Provider } from "@/lib/data-mode";
 
 /** `requires`: providers that can power the tool (any one is enough). Omitted = works without an API. */
-export type NavItem = { href: string; label: string; icon: LucideIcon; description: string; badge?: string; requires?: Provider[] };
+/** `defaultHidden`: not in the sidebar unless the user shows it via "Customize menu" (still in search). */
+export type NavItem = { href: string; label: string; icon: LucideIcon; description: string; badge?: string; requires?: Provider[]; defaultHidden?: boolean };
 export type NavGroup = { id: string; label: string; items: NavItem[] };
 
 export const NAV: NavGroup[] = [

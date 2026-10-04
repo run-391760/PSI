@@ -1,37 +1,30 @@
 "use client";
 
-import { ChevronsLeft, ChevronsRight, Settings, X } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Settings, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { activeHref, applyNavPrefs } from "@/lib/cx/ui/prefs-logic";
 import { cn } from "@/lib/utils";
 import { NAV } from "./nav";
 import { CX_NAV } from "./cx-nav";
+import { CustomizeMenuDialog } from "./customize-menu";
 import { Logo } from "./logo";
+import { useUiPrefs } from "./ui-prefs";
 
 export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolean; onClose: () => void; available?: Partial<Record<string, boolean>> }) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem("synapse.nav.collapsed") === "1");
-    } catch {}
-  }, []);
+  const { prefs, update } = useUiPrefs();
+  const [customizing, setCustomizing] = useState(false);
   useEffect(() => onClose(), [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-  const toggle = () => {
-    setCollapsed((c) => {
-      try {
-        localStorage.setItem("synapse.nav.collapsed", c ? "0" : "1");
-      } catch {}
-      return !c;
-    });
-  };
+  // Focus mode reduces the sidebar to an icon rail; the user's own collapse choice is kept underneath.
+  const collapsed = prefs.collapsed || prefs.focus;
   const cx = pathname === "/cx" || pathname.startsWith("/cx/");
-  const groups = cx ? CX_NAV : NAV;
-  // Longest matching nav href wins, so a parent (/cx/listening) isn't highlighted on its sub-pages.
-  const hrefs = groups.flatMap((g) => g.items.map((i) => i.href));
-  const best = hrefs.filter((h) => pathname === h || pathname.startsWith(`${h}/`)).sort((a, b) => b.length - a.length)[0];
+  const groups = useMemo(() => (cx ? applyNavPrefs(CX_NAV, prefs.nav) : NAV), [cx, prefs.nav]);
+  const settingsHref = cx ? "/cx/settings" : "/settings";
+  const best = activeHref(pathname, [...groups.flatMap((g) => g.items.map((i) => i.href)), settingsHref]);
   const isActive = (href: string) => href === best || (href === "/settings" && pathname.startsWith("/settings"));
+  const footerItem = "flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-white/5 hover:text-white";
 
   return (
     <>
@@ -97,22 +90,29 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
         </nav>
         <div className="shrink-0 border-t border-white/5 p-2">
           <Link
-            href="/settings"
-            className={cn(
-              "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-white/5 hover:text-white",
-              isActive("/settings") && "bg-nav-active text-white",
-              collapsed && "lg:justify-center lg:px-0",
-            )}
+            href={settingsHref}
+            title={collapsed ? "Settings" : undefined}
+            className={cn(footerItem, isActive(settingsHref) && "bg-nav-active text-white", collapsed && "lg:justify-center lg:px-0")}
+            aria-current={isActive(settingsHref) ? "page" : undefined}
           >
             <Settings className="h-4 w-4 shrink-0 text-nav-muted" />
             <span className={cn(collapsed && "lg:hidden")}>Settings</span>
           </Link>
-          <button onClick={toggle} className={cn("mt-0.5 hidden h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[12.5px] text-nav-muted hover:bg-white/5 hover:text-white lg:flex", collapsed && "lg:justify-center lg:px-0")}>
-            {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
-            <span className={cn(collapsed && "lg:hidden")}>Collapse</span>
-          </button>
+          {cx && (
+            <button type="button" onClick={() => setCustomizing(true)} title={collapsed ? "Customize menu" : undefined} className={cn(footerItem, "text-[12.5px] text-nav-muted", collapsed && "lg:justify-center lg:px-0")}>
+              <SlidersHorizontal className="h-4 w-4 shrink-0" />
+              <span className={cn(collapsed && "lg:hidden")}>Customize menu</span>
+            </button>
+          )}
+          {!prefs.focus && (
+            <button type="button" onClick={() => update({ collapsed: !prefs.collapsed })} className={cn(footerItem, "hidden text-[12.5px] text-nav-muted lg:flex", collapsed && "lg:justify-center lg:px-0")} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+              {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+              <span className={cn(collapsed && "lg:hidden")}>Collapse</span>
+            </button>
+          )}
         </div>
       </aside>
+      {cx && <CustomizeMenuDialog open={customizing} onClose={() => setCustomizing(false)} />}
     </>
   );
 }

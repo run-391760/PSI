@@ -2,7 +2,7 @@
 
 import {
   AlarmClock, AlertTriangle, Zap, ArrowLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, CornerDownRight, Download, ExternalLink, Eye, FileText, Forward, GitBranch, GitMerge,
-  Languages, Lock, Mail, MoreHorizontal, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X,
+  Languages, Lock, Mail, MoreHorizontal, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X, Bookmark, BookmarkCheck, ClipboardList, MessagesSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -19,6 +19,11 @@ import type { Attachment, MessageRow, TicketDetail } from "@/lib/cx/inbox/store"
 import { slaStatus } from "@/lib/cx/inbox/sla";
 import { dateTimeLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { toggleBookmarkAction } from "@/app/(app)/cx/bookmarks/actions";
+import { updateTaskAction } from "@/app/(app)/cx/tasks/actions";
+import { TaskDialog } from "@/components/cx/ops/task-dialog";
+import { taskDueState, taskStatusLabel } from "@/lib/cx/ops/model";
+import type { Task } from "@/lib/cx/ops/tasks";
 import { Composer } from "./composer";
 import type { InboxProps } from "./inbox-client";
 import { playAlert, usePrefs } from "./prefs";
@@ -29,7 +34,8 @@ import { Avatar, ChannelIcon, channelLabel, KeyValue, SentimentBadge, statusLabe
 type Props = InboxProps & { detail: TicketDetail; backHref: string };
 const INTENTS: Record<string, string> = { complaint: "Complaint", query: "Query", feedback: "Feedback", praise: "Praise", purchase: "Purchase intent", cancellation: "Cancellation / churn risk", spam: "Spam", other: "Other" };
 type Live = { viewers: { name: string; typing: boolean }[]; lockedBy: { id: string; name: string } | null; visitorOnline: boolean | null; visitorTyping: boolean };
-type DialogState = null | { kind: "reminder"; existing?: TicketDetail["reminders"][number] } | { kind: EmailKind } | { kind: "assign" | "child" | "parent" | "merge" };
+type DialogState = null | { kind: "reminder"; existing?: TicketDetail["reminders"][number] } | { kind: EmailKind } | { kind: "assign" | "child" | "parent" | "merge" } | { kind: "task"; existing?: Task };
+const initialDialog = (act: string | null, readOnly: boolean): DialogState => (readOnly ? null : act === "compose" ? { kind: "compose" } : act === "child" ? { kind: "child" } : act === "task" ? { kind: "task" } : null);
 type Item = MessageRow & { from_ticket?: number | null };
 
 export function Conversation(props: Props) {
@@ -41,7 +47,24 @@ export function Conversation(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"all" | "public" | "private">("all");
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
-  const [dialog, setDialog] = useState<DialogState>(null);
+  const readOnlyRole = props.role === "viewer";
+  const [dialog, setDialog] = useState<DialogState>(() => initialDialog(props.act, readOnlyRole));
+  const [bm, setBm] = useState<{ ticket: boolean; messages: string[] }>(props.ops?.bookmarks ?? { ticket: false, messages: [] });
+  useEffect(() => setBm(props.ops?.bookmarks ?? { ticket: false, messages: [] }), [props.ops?.bookmarks]);
+  const toggleBm = async (messageId?: string) => {
+    const r = await toggleBookmarkAction(brand.id, { ticketId: t.id, messageId: messageId ?? null });
+    if (!r.ok) return setError(r.error);
+    setBm((x) => messageId ? { ...x, messages: r.data.bookmarked ? [...x.messages, messageId] : x.messages.filter((m) => m !== messageId) } : { ...x, ticket: r.data.bookmarked });
+  };
+  const tasks = props.ops?.tasks ?? [];
+  // A card action (?act=compose|child|task) opened a dialog on mount: drop the param so refreshes don't reopen it.
+  useEffect(() => {
+    if (!props.act) return;
+    const u = new URL(window.location.href);
+    u.searchParams.delete("act");
+    router.replace(`${u.pathname}?${u.searchParams.toString()}`, { scroll: false });
+  }, [props.act, router]);
+  const listRow = props.tickets.find((x) => x.id === t.id);
   const [summary, setSummary] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const lastTyped = useRef(0);
@@ -122,6 +145,9 @@ export function Conversation(props: Props) {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => toggleBm()} className="rounded-md border border-border-strong p-1.5 text-text-2 hover:bg-surface-3" aria-label={bm.ticket ? "Remove bookmark" : "Bookmark ticket"} title={bm.ticket ? "Bookmarked (see Bookmarks)" : "Bookmark ticket"}>
+            {bm.ticket ? <BookmarkCheck className="h-4 w-4 text-link" /> : <Bookmark className="h-4 w-4" />}
+          </button>
           <StatusBadge status={t.crm_status} />
           {!readOnly && !detail.locked && (!done ? <Button size="sm" disabled={editDisabled} onClick={() => patch({ status: "solved" })}><Check className="h-3.5 w-3.5" />Resolve</Button> : <Button size="sm" disabled={editDisabled} onClick={() => patch({ status: "reopened" })}>Reopen</Button>)}
           <Menu align="right" trigger={() => <span className="inline-flex h-8 items-center gap-1 rounded-md border border-border-strong px-2 text-[12.5px] text-text-2 hover:bg-surface-3" aria-label="More actions"><MoreHorizontal className="h-4 w-4" /></span>}>
@@ -138,6 +164,8 @@ export function Conversation(props: Props) {
                     <div className="my-1 border-t border-border" />
                   </>}
                   <MI icon={<AlarmClock className="h-3.5 w-3.5" />} label="Set reminder" off={readOnly} onClick={go({ kind: "reminder" })} />
+                  <MI icon={<ClipboardList className="h-3.5 w-3.5" />} label="Create task" off={readOnly} onClick={go({ kind: "task" })} />
+                  {listRow?.post_key && <MI icon={<MessagesSquare className="h-3.5 w-3.5" />} label={`View all comments on this post${listRow.post_tickets > 1 ? ` (${listRow.post_tickets})` : ""}`} href={`/cx/inbox?brand=${brand.id}&view=all&post=${encodeURIComponent(listRow.post_key)}`} />}
                   <MI icon={<UserPlus className="h-3.5 w-3.5" />} label="Assign with note / media" off={editDisabled} onClick={go({ kind: "assign" })} />
                   <div className="my-1 border-t border-border" />
                   <MI icon={<ArrowUpRight className="h-3.5 w-3.5" />} label="Escalate via email" off={readOnly} onClick={go({ kind: "escalate" })} />
@@ -192,6 +220,7 @@ export function Conversation(props: Props) {
                 replyTo={m.reply_to ? byId.get(m.reply_to) ?? null : null}
                 mentionNames={(m.mentions ?? []).map(agentName).filter(Boolean)}
                 onReply={isEmail && m.direction === "in" && !disabled ? () => setReplyTo(m) : undefined}
+                bookmarked={bm.messages.includes(m.id)} onBookmark={m.from_ticket ? undefined : () => toggleBm(m.id)}
               />
             ))}
             {live.visitorTyping && <div className="text-[12px] text-text-3 italic">Visitor is typing…</div>}
@@ -244,6 +273,29 @@ export function Conversation(props: Props) {
           <Prop label="Tags" className="mt-2">
             <TagEditor tags={t.tags ?? []} disabled={editDisabled} onAdd={(v) => patch({ addTags: [v] })} onRemove={(v) => patch({ removeTags: [v] })} />
           </Prop>
+
+          <Section title={`Tasks${tasks.length ? ` (${tasks.filter((k) => !["done", "cancelled"].includes(k.status)).length} open)` : ""}`} action={!readOnly && <SmallBtn onClick={() => setDialog({ kind: "task" })}><Plus className="h-3 w-3" />Task</SmallBtn>}>
+            {tasks.length === 0 ? <p className="text-[12px] text-text-3">No tasks. Create one to follow up on this ticket.</p> : (
+              <ul className="space-y-1">
+                {tasks.map((k) => {
+                  const ds = taskDueState(k);
+                  const done = ["done", "cancelled"].includes(k.status);
+                  return (
+                    <li key={k.id} className="flex items-start gap-1.5 text-[12px]">
+                      <input type="checkbox" checked={done} disabled={readOnly} onChange={async (e) => { const r = await updateTaskAction(brand.id, k.id, { status: e.target.checked ? "done" : "open" }); if (!r.ok) setError(r.error); router.refresh(); }} className="mt-0.5 h-3.5 w-3.5 accent-[var(--brand)]" aria-label={`Mark T-${k.number} done`} />
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/cx/tasks?brand=${brand.id}&view=all&task=${k.id}`} className={cn("block truncate font-medium hover:underline", done ? "text-text-3 line-through" : "text-text")}>T-{k.number} {k.title}</Link>
+                        <span className={cn("block", ds === "overdue" ? "text-critical-ink" : ds === "today" ? "text-warning-ink" : "text-text-3")} suppressHydrationWarning>
+                          {taskStatusLabel(k.status)}{k.due_at ? ` · due ${dateTimeLabel(k.due_at)}` : ""}{k.assignee_name ? ` · ${k.assignee_name}` : ""}
+                        </span>
+                      </div>
+                      {!readOnly && <button className="rounded p-0.5 text-text-3 hover:bg-surface-3 hover:text-text" aria-label="Edit task" onClick={() => setDialog({ kind: "task", existing: k })}><Pencil className="h-3 w-3" /></button>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
 
           <Section title="Reminders" action={!readOnly && <SmallBtn onClick={() => setDialog({ kind: "reminder" })}><Plus className="h-3 w-3" />Add</SmallBtn>}>
             {detail.reminders.length === 0 ? <p className="text-[12px] text-text-3">No reminders.</p> : (
@@ -369,6 +421,7 @@ export function Conversation(props: Props) {
       {dialog?.kind === "assign" && <AssignDialog brand={brand.id} detail={detail} agents={agents} me={me} onClose={() => setDialog(null)} />}
       {dialog?.kind === "child" && <ChildDialog brand={brand.id} detail={detail} agents={agents} onClose={() => setDialog(null)} onCreated={(id) => { setDialog(null); router.push(`/cx/inbox?brand=${brand.id}&view=all&t=${id}`); }} />}
       {dialog?.kind === "parent" && <ParentDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "task" && <TaskDialog brand={brand.id} agents={agents} tree={props.tree} me={me} ticket={dialog.existing ? null : { id: t.id, number: t.number, subject: t.subject }} existing={dialog.existing ?? null} onClose={() => setDialog(null)} />}
       {dialog?.kind === "merge" && <MergeDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); router.refresh(); }} />}
     </div>
   );
@@ -380,7 +433,7 @@ function Body({ text }: { text: string }) {
   return <>{linkSegments(text).map((s, i) => (s.href ? <a key={i} href={s.href} target="_blank" rel="noreferrer noopener" className="text-link underline">{s.text}</a> : <span key={i}>{s.text}</span>))}</>;
 }
 
-function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void }) {
+function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply, bookmarked, onBookmark }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void; bookmarked?: boolean; onBookmark?: () => void }) {
   const [open, setOpen] = useState(defaultOpen);
   const [tr, setTr] = useState<string | null>(null);
   const [trBusy, setTrBusy] = useState(false);
@@ -404,6 +457,7 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
           <span className="font-medium text-text-2">{m.author_name || (out ? "Agent" : "Customer")}</span>
           {note && <span className="inline-flex items-center gap-0.5 text-warning-ink"><Lock className="h-3 w-3" />{m.from_ticket ? `Note from #${m.from_ticket}` : "Private"}</span>}
           <time title={dateTimeLabel(m.created_at)} suppressHydrationWarning>{dateTimeLabel(m.created_at)}</time>
+          {onBookmark && <button type="button" onClick={onBookmark} className={cn("inline-flex items-center gap-0.5 hover:underline", bookmarked ? "text-link" : "text-text-3")} aria-label={bookmarked ? "Remove message bookmark" : "Bookmark message"} title={bookmarked ? "Bookmarked" : "Bookmark this message"}>{bookmarked ? <BookmarkCheck className="h-3 w-3" /> : <Bookmark className="h-3 w-3" />}{bookmarked ? "Saved" : ""}</button>}
           {onReply && <button type="button" onClick={onReply} className="inline-flex items-center gap-0.5 text-link hover:underline"><CornerDownRight className="h-3 w-3" />Reply to this</button>}
           {ai && m.direction === "in" && (
             <button type="button" disabled={trBusy} onClick={async () => { if (tr) return setTr(null); setTrBusy(true); const r = await translateMessageAction(brand, m.id, lang); setTrBusy(false); setTr(r.ok ? r.data ?? "No translation returned." : r.error); }} className="inline-flex items-center gap-0.5 text-link hover:underline">

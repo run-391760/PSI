@@ -16,7 +16,7 @@ type SP = Record<string, string | string[] | undefined>;
 export async function adminPage(sp: SP, opts: { title: string; path: string; perm: PagePerm }) {
   const user = await requirePageUser();
   const { brand, switcher } = await cxContext(user.id, sp);
-  const crumbs = [{ label: "CX" }, { label: "Settings" }, { label: opts.title }];
+  const crumbs = [{ label: "CX" }, { label: "Settings", href: brand ? `/cx/settings?brand=${brand.id}` : "/cx/settings" }, { label: opts.title }];
   if (!brand) return { el: <NoBrand title={opts.title} breadcrumbs={crumbs} redirect={opts.path} />, ctx: null };
   const { perms } = await permissionsFor(brand.id, user.id);
   if (!perms.includes(opts.perm))

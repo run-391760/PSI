@@ -1,6 +1,6 @@
 "use client";
 
-import { AlarmClock, ArrowUpRight, Download, GitBranch, Inbox, Paperclip, Plus, Search, Settings2, SlidersHorizontal, X } from "lucide-react";
+import { AlarmClock, ArrowUpRight, Download, Filter, GitBranch, Inbox, ListOrdered, MessagesSquare, Paperclip, Plus, Search, Settings2, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -15,11 +15,14 @@ import { runQuickActionAction } from "@/app/(app)/cx/settings/automation/admin-a
 import type { Signals } from "@/lib/cx/insights/signals";
 import type { ClassificationNode, FieldDef } from "@/lib/cx/admin/fields";
 import { applySuggestion, CRM_STATUSES, crmLabel, searchSuggestions, SETTABLE_STATUSES, toPlainText, type InboxPrefs, type InboxSettings } from "@/lib/cx/inbox/model";
-import type { Agent, Canned, TicketDetail, TicketFilters, TicketListRow, View } from "@/lib/cx/inbox/store";
+import type { Agent, Canned, PanelCounts, TicketDetail, TicketFilters, TicketListRow, View } from "@/lib/cx/inbox/store";
+import type { Task } from "@/lib/cx/ops/tasks";
 import { formatSpan } from "@/lib/cx/inbox/sla";
 import { dateTimeLabel, num } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Conversation } from "./conversation";
+import { FilterPanel, type ViewKind } from "./filter-panel";
+import { TicketCard } from "./ticket-card";
 import { playAlert, PrefsProvider, useNewItems, usePrefs } from "./prefs";
 import { SettingsDialog } from "./ticket-dialogs";
 import { Ago, SlaChip } from "./time";
@@ -34,7 +37,7 @@ const VIEW_LABELS: { id: View; label: string }[] = [
   { id: "solved", label: "Resolved" },
   { id: "all", label: "All" },
 ];
-const SORTS: [string, string][] = [["", "Priority, then latest"], ["sla", "SLA priority – highest first"], ["updated", "Last updated"], ["newest", "Newest first"], ["oldest", "Oldest first"]];
+const SORTS: [string, string][] = [["", "Priority, then latest"], ["latest", "Date – Latest first"], ["sla", "SLA priority – highest first"], ["updated", "Last updated"], ["newest", "Newest first"], ["oldest", "Oldest first"]];
 const MORE_KEYS = ["from", "to", "profile", "topic", "severity", "escalated", "email", "assignee"] as const;
 
 type Stats = { open: number; unassigned: number; breached: number; created_7d: number; solved_7d: number; frt_min: number | null; csat: number | null; csat_n: number };
@@ -65,6 +68,11 @@ export type InboxProps = {
   tree: ClassificationNode[];
   signals: Signals | null;
   quickActions: { id: string; name: string; description: string }[];
+  /** WP-B: profile groups, filter-panel counters, the selected ticket's tasks/bookmarks, a card action to open (?act=). */
+  groups: { id: string; name: string }[];
+  panel: PanelCounts;
+  ops: { tasks: Task[]; bookmarks: { ticket: boolean; messages: string[] } } | null;
+  act: string | null;
 };
 
 export function InboxClient(props: InboxProps) {
@@ -85,15 +93,24 @@ function InboxInner(props: InboxProps) {
   const [error, setError] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [drawer, setDrawer] = useState(false);
   const activeMore = MORE_KEYS.filter((k) => filters[k]);
   const [moreOpen, setMoreOpen] = useState(activeMore.length > 0);
+  const cards = prefs.mode === "cards";
+  const viewKind: ViewKind = cards ? "cards" : prefs.layout;
 
   const href = (patch: Record<string, string | null>) => {
     const p = new URLSearchParams(search.toString());
     for (const [k, v] of Object.entries(patch)) if (v) p.set(k, v); else p.delete(k);
+    if (!("act" in patch)) p.delete("act");
     return `${pathname}?${p.toString()}`;
   };
-  const go = (patch: Record<string, string | null>) => router.push(href(patch));
+  const go = (patch: Record<string, string | null>) => router.push(href(patch), { scroll: false });
+  const setView = (v: ViewKind) => setPrefs(v === "cards" ? { mode: "cards" } : { mode: "split", layout: v });
+  const toggleFilters = () => {
+    if (cards && !selected && window.matchMedia("(min-width: 1024px)").matches) setPrefs({ panel: !prefs.panel });
+    else setDrawer(true);
+  };
 
   // Live list: refresh every 20 s (new chats / emails / SLA changes).
   useEffect(() => {
@@ -113,9 +130,122 @@ function InboxInner(props: InboxProps) {
     router.refresh();
   };
   const channelKinds = useMemo(() => [...new Set([...props.channels.map((c) => c.kind), ...tickets.map((t) => t.channel_kind)])], [props.channels, tickets]);
-  const activeFilters = (["channel", "priority", "status", "team", "tag", "sentiment", ...MORE_KEYS] as const).filter((k) => filters[k]);
-  const exportQs = new URLSearchParams([...search.entries()].filter(([k]) => !["t", "ticket"].includes(k)));
+  const activeFilters = (["channel", "priority", "status", "team", "tag", "sentiment", "group", "media", "post", ...MORE_KEYS] as const).filter((k) => filters[k] && !(k === "group" && filters[k] === "all"));
+  const exportQs = new URLSearchParams([...search.entries()].filter(([k]) => !["t", "ticket", "act"].includes(k)));
   exportQs.set("brand", brand.id);
+  const onCheck = (id: string) => (v: boolean) => setChecked((c) => { const n = new Set(c); if (v) n.add(id); else n.delete(id); return n; });
+  const groupName = props.groups.find((g) => g.id === filters.group)?.name;
+  const panelProps = { counts: props.panel, filters, groups: props.groups, brand: brand.id, view: viewKind, onView: setView, href, go, moreActive: activeMore.length };
+  const staticPanel = cards && !selected && prefs.panel;
+
+  const header = (
+    <div className="space-y-2 border-b border-border p-3">
+      <div className="flex items-center gap-1.5">
+        <SearchBox initial={filters.q ?? ""} fields={props.fieldDefs} onSearch={(q) => go({ q: q || null, t: null })} />
+        <Button size="sm" variant="primary" onClick={() => setNewOpen(true)} aria-label="New ticket" disabled={props.role === "viewer"}><Plus className="h-3.5 w-3.5" /><span className="hidden sm:inline">New</span></Button>
+        <button onClick={toggleFilters} className={cn("inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[12.5px]", staticPanel ? "border-link text-link" : "border-border-strong text-text-2 hover:bg-surface-3")} aria-label="Filter panel" title="Filter panel: profile group, dates, media types, counters">
+          <Filter className="h-3.5 w-3.5" /><span className="hidden xl:inline">Filters</span>
+        </button>
+        <button onClick={() => setSettingsOpen(true)} className="rounded-md border border-border-strong p-1.5 text-text-2 hover:bg-surface-3" aria-label="Inbox settings" title="Inbox settings (view, sounds, signature, ticket settings)"><Settings2 className="h-4 w-4" /></button>
+      </div>
+      <nav className="scroll-thin flex gap-1 overflow-x-auto pb-0.5 sm:flex-wrap" aria-label="Views">
+        {VIEW_LABELS.map((v) => (
+          <Link key={v.id} href={href({ view: v.id === "open" ? null : v.id, t: null })} scroll={false} className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px]", (filters.view ?? "open") === v.id ? "border-link bg-brand-soft font-medium text-link" : "border-border text-text-2 hover:bg-surface-3")}>
+            {v.label}
+            <span className={cn("tabular-nums", v.id === "breached" && counts[v.id] > 0 ? "text-critical-ink" : "text-text-3")}>{counts[v.id] ?? 0}</span>
+          </Link>
+        ))}
+        <Link href={`/cx/inbox/queued?brand=${brand.id}`} className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-border-strong px-2.5 py-1 text-[12px] text-text-2 hover:bg-surface-3"><ListOrdered className="h-3 w-3" />Queued</Link>
+      </nav>
+      <div className="flex flex-wrap gap-1.5">
+        {props.groups.length > 0 && <FilterSelect label="All profiles" value={filters.group && filters.group !== "all" ? filters.group : undefined} onChange={(v) => go({ group: v ?? "all", t: null })} options={props.groups.map((g) => [g.id, g.name])} />}
+        <FilterSelect label="Channel" value={filters.channel} onChange={(v) => go({ channel: v, t: null })} options={channelKinds.map((k) => [k, channelLabel(k)])} />
+        <FilterSelect label="Status" value={filters.status} onChange={(v) => go({ status: v, t: null })} options={CRM_STATUSES.map((s) => [s.id, s.label])} />
+        <FilterSelect label="Priority" value={filters.priority} onChange={(v) => go({ priority: v, t: null })} options={[["urgent", "Urgent"], ["high", "High"], ["normal", "Normal"], ["low", "Low"]]} />
+        <FilterSelect label="Sentiment" value={filters.sentiment} onChange={(v) => go({ sentiment: v, t: null })} options={[["negative", "Negative"], ["neutral", "Neutral"], ["positive", "Positive"], ["mixed", "Mixed"]]} />
+        {props.teams.length > 0 && <FilterSelect label="Team" value={filters.team} onChange={(v) => go({ team: v, t: null })} options={props.teams.map((t) => [t, t])} />}
+        {props.tags.length > 0 && <FilterSelect label="Tag" value={filters.tag} onChange={(v) => go({ tag: v, t: null })} options={props.tags.map((t) => [t, t])} />}
+        <button onClick={() => setMoreOpen((x) => !x)} className={cn("inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12px]", moreOpen || activeMore.length ? "border-link text-link" : "border-border-strong text-text-2 hover:bg-surface-3")} aria-expanded={moreOpen}>
+          <SlidersHorizontal className="h-3 w-3" />More filters{activeMore.length ? ` (${activeMore.length})` : ""}
+        </button>
+        {(activeFilters.length > 0 || filters.q) && (
+          <button className="inline-flex items-center gap-1 px-1 text-[12px] text-link hover:underline" onClick={() => go({ channel: null, priority: null, status: null, team: null, tag: null, sentiment: null, q: null, t: null, group: props.groups.length ? "all" : null, media: null, post: null, ...Object.fromEntries(MORE_KEYS.map((k) => [k, null])) })}>
+            <X className="h-3 w-3" />Clear
+          </button>
+        )}
+      </div>
+      {moreOpen && (
+        <div className={cn("grid grid-cols-2 gap-1.5 rounded-md bg-surface-2 p-2", cards && "sm:grid-cols-4")}>
+          <label className="text-[11.5px] text-text-3">From<Input type="date" value={filters.from ?? ""} onChange={(e) => go({ from: e.target.value || null, t: null })} className="h-7 text-[12px]" /></label>
+          <label className="text-[11.5px] text-text-3">To<Input type="date" value={filters.to ?? ""} onChange={(e) => go({ to: e.target.value || null, t: null })} className="h-7 text-[12px]" /></label>
+          <FilterSelect label="Any profile" value={filters.profile} onChange={(v) => go({ profile: v, t: null })} options={props.channels.map((c) => [c.id, `${c.name} (${channelLabel(c.kind)})`])} />
+          <FilterSelect label="Any topic" value={filters.topic} onChange={(v) => go({ topic: v, t: null })} options={props.topics.map((t) => [t.id, t.name])} />
+          <FilterSelect label="Any severity" value={filters.severity} onChange={(v) => go({ severity: v, t: null })} options={props.severities.map((s) => [s, s])} />
+          <FilterSelect label="Any assignee" value={filters.assignee} onChange={(v) => go({ assignee: v, t: null })} options={[["none", "Unassigned"], ...props.agents.map((a) => [a.id, a.name] as [string, string])]} />
+          <FilterSelect label="Escalated or not" value={filters.escalated} onChange={(v) => go({ escalated: v, t: null })} options={[["1", "Escalated"], ["0", "Not escalated"]]} />
+          <FilterSelect label="Any email state" value={filters.email} onChange={(v) => go({ email: v, t: null })} options={[["sent", "Email sent, no reply"], ["received", "Reply received"], ["not_sent", "No email sent"]]} />
+          <Select value={filters.sort ?? ""} onChange={(e) => go({ sort: e.target.value || null, t: null })} className={cn("col-span-2 h-7 py-0 text-[12px]", filters.sort && "border-link text-link")} aria-label="Sort">
+            {SORTS.map(([v, l]) => <option key={v} value={v}>Sort: {l}</option>)}
+          </Select>
+        </div>
+      )}
+      {filters.post && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-info-soft px-2.5 py-1.5 text-[12.5px] text-text-2">
+          <MessagesSquare className="h-3.5 w-3.5 text-link" />
+          <span className="flex-1">All comments and tickets on this post ({tickets.length}).</span>
+          {tickets.find((t) => t.post_key === filters.post)?.post_url && <a href={tickets.find((t) => t.post_key === filters.post)!.post_url!} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-link hover:underline">Open post<ArrowUpRight className="h-3 w-3" /></a>}
+          <Link href={href({ post: null, t: null })} className="inline-flex items-center gap-0.5 text-link hover:underline"><X className="h-3 w-3" />Clear</Link>
+        </div>
+      )}
+      {groupName && <div className="text-[11.5px] text-text-3">Profile group: <span className="font-medium text-text-2">{groupName}</span></div>}
+    </div>
+  );
+
+  const bulkBar = checked.size > 0 && props.role !== "viewer" && (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-2 text-[12.5px]">
+      <span className="font-medium text-text">{checked.size} selected</span>
+      <Button size="sm" variant="ghost" onClick={() => bulk({ assignee_id: props.me.id })}>Assign to me</Button>
+      <Button size="sm" variant="ghost" onClick={() => bulk({ status: "solved" })}>Resolve</Button>
+      <BulkSelect label="Status" onPick={(v) => bulk({ status: v as TicketListRow["crm_status"] })} options={SETTABLE_STATUSES.filter((s) => s.id !== "new").map((s) => [s.id, s.label])} />
+      <BulkSelect label="Priority" onPick={(v) => bulk({ priority: v as TicketListRow["priority"] })} options={[["urgent", "Urgent"], ["high", "High"], ["normal", "Normal"], ["low", "Low"]]} />
+      {props.severities.length > 0 && <BulkSelect label="Severity" onPick={(v) => bulk({ severity: v === "-" ? null : v })} options={[["-", "Not set"], ...props.severities.map((s) => [s, s] as [string, string])]} />}
+      <BulkSelect label="Assign" onPick={(v) => bulk({ assignee_id: v === "-" ? null : v })} options={[["-", "Unassigned"], ...props.agents.map((a) => [a.id, a.name] as [string, string])]} />
+      {props.teams.length > 0 && <BulkSelect label="Team" onPick={(v) => bulk({ team: v === "-" ? null : v })} options={[["-", "No team"], ...props.teams.map((t) => [t, t] as [string, string])]} />}
+      <BulkTag onAdd={(tag) => bulk({ addTags: [tag] })} />
+      {props.quickActions.length > 0 && <BulkSelect label="Quick action" onPick={async (id) => {
+        setError(null);
+        const r = await runQuickActionAction(brand.id, id, [...checked]);
+        if (!r.ok) setError(r.error); else { if (r.data.failed) setError(`${r.data.failed} of ${r.data.tickets + r.data.failed} tickets could not be updated.`); setChecked(new Set()); }
+        router.refresh();
+      }} options={props.quickActions.map((q) => [q.id, q.name] as [string, string])} />}
+      {sel.length >= 2 && (
+        <Button size="sm" variant="ghost" onClick={async () => {
+          const target = [...sel].sort((a, b) => a.number - b.number)[0];
+          const r = await mergeAction(brand.id, target.id, sel.filter((t) => t.id !== target.id).map((t) => t.id));
+          if (!r.ok) setError(r.error); else { setChecked(new Set()); go({ t: target.id }); }
+        }}>Merge into #{Math.min(...sel.map((t) => t.number))}</Button>
+      )}
+      <a className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] text-text-2 hover:bg-surface-3" href={`/api/cx/inbox/export?brand=${brand.id}&ids=${[...checked].join(",")}`}><Download className="h-3.5 w-3.5" />Excel</a>
+      <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>Clear</Button>
+    </div>
+  );
+
+  const listToolbar = (
+    <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-[12px] text-text-3">
+      <Checkbox checked={tickets.length > 0 && checked.size === tickets.length} onChange={(e) => setChecked(e.target.checked ? new Set(tickets.map((t) => t.id)) : new Set())} aria-label="Select all" />
+      <span className="flex-1">{tickets.length} ticket{tickets.length === 1 ? "" : "s"}{tickets.length >= 300 ? " (first 300)" : ""}</span>
+      <Segmented value={viewKind} onChange={(v) => setView(v)} options={[{ value: "ticket", label: "Ticket" }, { value: "chat", label: "Chat" }, { value: "cards", label: "Cards" }]} />
+      <Menu align="right" trigger={() => <span className="inline-flex h-6 items-center rounded px-1 hover:bg-surface-3" title="Export"><Download className="h-3.5 w-3.5" /></span>}>
+        {(close) => (
+          <div className="w-56 p-1 text-[12.5px]">
+            <a onClick={close} href={`/api/cx/inbox/export?${exportQs.toString()}`} className="block rounded px-2 py-1.5 text-text hover:bg-surface-3">Export matching tickets (Excel)</a>
+            <a onClick={close} href={`/api/cx/inbox/export?${exportQs.toString()}&format=csv`} className="block rounded px-2 py-1.5 text-text hover:bg-surface-3">Export matching tickets (CSV)</a>
+          </div>
+        )}
+      </Menu>
+    </div>
+  );
+  const empty = <EmptyState icon={<Inbox className="h-5 w-5" />} title={filters.q || activeFilters.length ? "No tickets match" : "Nothing here"} description={props.channels.length ? "New conversations from your channels appear here." : "Connect email, live chat or a web form to start receiving conversations."} action={props.channels.length ? undefined : <Link className="text-[13px] text-link hover:underline" href={`/cx/settings/channels?brand=${brand.id}`}>Connect a channel →</Link>} />;
 
   return (
     <div className="space-y-4">
@@ -128,124 +258,63 @@ function InboxInner(props: InboxProps) {
         <Metric label="CSAT" value={stats.csat == null ? "n/a" : `${stats.csat.toFixed(1)} / 5`} size="sm" sub={stats.csat_n ? `${stats.csat_n} ratings` : "no ratings yet"} />
       </MetricStrip>
 
-      <div className="flex min-h-[600px] overflow-hidden rounded-lg border border-border bg-surface shadow-card lg:h-[calc(100dvh-260px)]">
-        {/* ---------------------------------------------------------------- list */}
-        <section className={cn("flex w-full min-w-0 flex-col border-border lg:w-[410px] lg:shrink-0 lg:border-r", selected && "hidden lg:flex")} aria-label="Tickets">
-          <div className="space-y-2 border-b border-border p-3">
-            <div className="flex items-center gap-1.5">
-              <SearchBox initial={filters.q ?? ""} fields={props.fieldDefs} onSearch={(q) => go({ q: q || null, t: null })} />
-              <Button size="sm" variant="primary" onClick={() => setNewOpen(true)} aria-label="New ticket" disabled={props.role === "viewer"}><Plus className="h-3.5 w-3.5" /><span className="hidden sm:inline">New</span></Button>
-              <button onClick={() => setSettingsOpen(true)} className="rounded-md border border-border-strong p-1.5 text-text-2 hover:bg-surface-3" aria-label="Inbox settings" title="Inbox settings (view, sounds, signature, ticket settings)"><Settings2 className="h-4 w-4" /></button>
-            </div>
-            <nav className="scroll-thin flex gap-1 overflow-x-auto pb-0.5 sm:flex-wrap" aria-label="Views">
-              {VIEW_LABELS.map((v) => (
-                <Link key={v.id} href={href({ view: v.id === "open" ? null : v.id, t: null })} className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px]", (filters.view ?? "open") === v.id ? "border-link bg-brand-soft font-medium text-link" : "border-border text-text-2 hover:bg-surface-3")}>
-                  {v.label}
-                  <span className={cn("tabular-nums", v.id === "breached" && counts[v.id] > 0 ? "text-critical-ink" : "text-text-3")}>{counts[v.id] ?? 0}</span>
-                </Link>
-              ))}
-            </nav>
-            <div className="flex flex-wrap gap-1.5">
-              <FilterSelect label="Channel" value={filters.channel} onChange={(v) => go({ channel: v, t: null })} options={channelKinds.map((k) => [k, channelLabel(k)])} />
-              <FilterSelect label="Status" value={filters.status} onChange={(v) => go({ status: v, t: null })} options={CRM_STATUSES.map((s) => [s.id, s.label])} />
-              <FilterSelect label="Priority" value={filters.priority} onChange={(v) => go({ priority: v, t: null })} options={[["urgent", "Urgent"], ["high", "High"], ["normal", "Normal"], ["low", "Low"]]} />
-              <FilterSelect label="Sentiment" value={filters.sentiment} onChange={(v) => go({ sentiment: v, t: null })} options={[["negative", "Negative"], ["neutral", "Neutral"], ["positive", "Positive"], ["mixed", "Mixed"]]} />
-              {props.teams.length > 0 && <FilterSelect label="Team" value={filters.team} onChange={(v) => go({ team: v, t: null })} options={props.teams.map((t) => [t, t])} />}
-              {props.tags.length > 0 && <FilterSelect label="Tag" value={filters.tag} onChange={(v) => go({ tag: v, t: null })} options={props.tags.map((t) => [t, t])} />}
-              <button onClick={() => setMoreOpen((x) => !x)} className={cn("inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12px]", moreOpen || activeMore.length ? "border-link text-link" : "border-border-strong text-text-2 hover:bg-surface-3")} aria-expanded={moreOpen}>
-                <SlidersHorizontal className="h-3 w-3" />More filters{activeMore.length ? ` (${activeMore.length})` : ""}
-              </button>
-              {(activeFilters.length > 0 || filters.q) && (
-                <button className="inline-flex items-center gap-1 px-1 text-[12px] text-link hover:underline" onClick={() => go({ channel: null, priority: null, status: null, team: null, tag: null, sentiment: null, q: null, t: null, ...Object.fromEntries(MORE_KEYS.map((k) => [k, null])) })}>
-                  <X className="h-3 w-3" />Clear
-                </button>
-              )}
-            </div>
-            {moreOpen && (
-              <div className="grid grid-cols-2 gap-1.5 rounded-md bg-surface-2 p-2">
-                <label className="text-[11.5px] text-text-3">From<Input type="date" value={filters.from ?? ""} onChange={(e) => go({ from: e.target.value || null, t: null })} className="h-7 text-[12px]" /></label>
-                <label className="text-[11.5px] text-text-3">To<Input type="date" value={filters.to ?? ""} onChange={(e) => go({ to: e.target.value || null, t: null })} className="h-7 text-[12px]" /></label>
-                <FilterSelect label="Any profile" value={filters.profile} onChange={(v) => go({ profile: v, t: null })} options={props.channels.map((c) => [c.id, `${c.name} (${channelLabel(c.kind)})`])} />
-                <FilterSelect label="Any topic" value={filters.topic} onChange={(v) => go({ topic: v, t: null })} options={props.topics.map((t) => [t.id, t.name])} />
-                <FilterSelect label="Any severity" value={filters.severity} onChange={(v) => go({ severity: v, t: null })} options={props.severities.map((s) => [s, s])} />
-                <FilterSelect label="Any assignee" value={filters.assignee} onChange={(v) => go({ assignee: v, t: null })} options={[["none", "Unassigned"], ...props.agents.map((a) => [a.id, a.name] as [string, string])]} />
-                <FilterSelect label="Escalated or not" value={filters.escalated} onChange={(v) => go({ escalated: v, t: null })} options={[["1", "Escalated"], ["0", "Not escalated"]]} />
-                <FilterSelect label="Any email state" value={filters.email} onChange={(v) => go({ email: v, t: null })} options={[["sent", "Email sent, no reply"], ["received", "Reply received"], ["not_sent", "No email sent"]]} />
-                <Select value={filters.sort ?? ""} onChange={(e) => go({ sort: e.target.value || null, t: null })} className={cn("col-span-2 h-7 py-0 text-[12px]", filters.sort && "border-link text-link")} aria-label="Sort">
-                  {SORTS.map(([v, l]) => <option key={v} value={v}>Sort: {l}</option>)}
-                </Select>
-              </div>
-            )}
-          </div>
-
-          {checked.size > 0 && props.role !== "viewer" && (
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-2 text-[12.5px]">
-              <span className="font-medium text-text">{checked.size} selected</span>
-              <Button size="sm" variant="ghost" onClick={() => bulk({ assignee_id: props.me.id })}>Assign to me</Button>
-              <Button size="sm" variant="ghost" onClick={() => bulk({ status: "solved" })}>Resolve</Button>
-              <BulkSelect label="Status" onPick={(v) => bulk({ status: v as TicketListRow["crm_status"] })} options={SETTABLE_STATUSES.filter((s) => s.id !== "new").map((s) => [s.id, s.label])} />
-              <BulkSelect label="Priority" onPick={(v) => bulk({ priority: v as TicketListRow["priority"] })} options={[["urgent", "Urgent"], ["high", "High"], ["normal", "Normal"], ["low", "Low"]]} />
-              {props.severities.length > 0 && <BulkSelect label="Severity" onPick={(v) => bulk({ severity: v === "-" ? null : v })} options={[["-", "Not set"], ...props.severities.map((s) => [s, s] as [string, string])]} />}
-              <BulkSelect label="Assign" onPick={(v) => bulk({ assignee_id: v === "-" ? null : v })} options={[["-", "Unassigned"], ...props.agents.map((a) => [a.id, a.name] as [string, string])]} />
-              {props.teams.length > 0 && <BulkSelect label="Team" onPick={(v) => bulk({ team: v === "-" ? null : v })} options={[["-", "No team"], ...props.teams.map((t) => [t, t] as [string, string])]} />}
-              <BulkTag onAdd={(tag) => bulk({ addTags: [tag] })} />
-              {props.quickActions.length > 0 && <BulkSelect label="Quick action" onPick={async (id) => {
-                setError(null);
-                const r = await runQuickActionAction(brand.id, id, [...checked]);
-                if (!r.ok) setError(r.error); else { if (r.data.failed) setError(`${r.data.failed} of ${r.data.tickets + r.data.failed} tickets could not be updated.`); setChecked(new Set()); }
-                router.refresh();
-              }} options={props.quickActions.map((q) => [q.id, q.name] as [string, string])} />}
-              {sel.length >= 2 && (
-                <Button size="sm" variant="ghost" onClick={async () => {
-                  const target = [...sel].sort((a, b) => a.number - b.number)[0];
-                  const r = await mergeAction(brand.id, target.id, sel.filter((t) => t.id !== target.id).map((t) => t.id));
-                  if (!r.ok) setError(r.error); else { setChecked(new Set()); go({ t: target.id }); }
-                }}>Merge into #{Math.min(...sel.map((t) => t.number))}</Button>
-              )}
-              <a className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] text-text-2 hover:bg-surface-3" href={`/api/cx/inbox/export?brand=${brand.id}&ids=${[...checked].join(",")}`}><Download className="h-3.5 w-3.5" />Excel</a>
-              <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>Clear</Button>
-            </div>
-          )}
-          {error && <Callout tone="critical" className="m-2">{error}</Callout>}
-
-          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-            {tickets.length === 0 ? (
-              <EmptyState icon={<Inbox className="h-5 w-5" />} title={filters.q || activeFilters.length ? "No tickets match" : "Nothing here"} description={props.channels.length ? "New conversations from your channels appear here." : "Connect email, live chat or a web form to start receiving conversations."} action={props.channels.length ? undefined : <Link className="text-[13px] text-link hover:underline" href={`/cx/settings/channels?brand=${brand.id}`}>Connect a channel →</Link>} />
-            ) : (
-              <>
-                <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-[12px] text-text-3">
-                  <Checkbox checked={checked.size === tickets.length} onChange={(e) => setChecked(e.target.checked ? new Set(tickets.map((t) => t.id)) : new Set())} aria-label="Select all" />
-                  <span className="flex-1">{tickets.length} ticket{tickets.length === 1 ? "" : "s"}{tickets.length >= 300 ? " (first 300)" : ""}</span>
-                  <Segmented value={prefs.layout} onChange={(v) => setPrefs({ layout: v })} options={[{ value: "ticket", label: "Ticket view" }, { value: "chat", label: "Chat view" }]} />
-                  <Menu align="right" trigger={() => <span className="inline-flex h-6 items-center rounded px-1 hover:bg-surface-3" title="Export"><Download className="h-3.5 w-3.5" /></span>}>
-                    {(close) => (
-                      <div className="w-56 p-1 text-[12.5px]">
-                        <a onClick={close} href={`/api/cx/inbox/export?${exportQs.toString()}`} className="block rounded px-2 py-1.5 text-text hover:bg-surface-3">Export matching tickets (Excel)</a>
-                        <a onClick={close} href={`/api/cx/inbox/export?${exportQs.toString()}&format=csv`} className="block rounded px-2 py-1.5 text-text hover:bg-surface-3">Export matching tickets (CSV)</a>
-                      </div>
-                    )}
-                  </Menu>
-                </div>
-                <ul>
-                  {tickets.map((t) => {
-                    const p = { t, active: selected?.ticket.id === t.id, checked: checked.has(t.id), onCheck: (v: boolean) => setChecked((c) => { const n = new Set(c); if (v) n.add(t.id); else n.delete(t.id); return n; }), href: href({ t: t.id, ticket: null }) };
-                    return prefs.layout === "chat" ? <ChatItem key={t.id} {...p} /> : <TicketItem key={t.id} {...p} />;
-                  })}
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          {cards && !selected ? (
+            /* ---------------------------------------------------------------- card view */
+            <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-card" aria-label="Tickets">
+              {header}
+              {bulkBar}
+              {error && <Callout tone="critical" className="m-2">{error}</Callout>}
+              {listToolbar}
+              {tickets.length === 0 ? empty : (
+                <ul className="space-y-3 bg-bg p-2 sm:p-3">
+                  {tickets.map((t) => <TicketCard key={t.id} t={t} brand={brand.id} href={href} checked={checked.has(t.id)} onCheck={onCheck(t.id)} readOnly={props.role === "viewer"} />)}
                 </ul>
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* ---------------------------------------------------------------- conversation */}
-        <section className={cn("min-w-0 flex-1 flex-col", selected ? "flex" : "hidden lg:flex")} aria-label="Conversation">
-          {selected ? (
-            <Conversation key={selected.ticket.id} {...props} detail={selected} backHref={href({ t: null, ticket: null })} />
+              )}
+            </section>
           ) : (
-            <EmptyState className="my-auto" icon={<Inbox className="h-5 w-5" />} title="Select a conversation" description="Pick a ticket on the left to read the thread, reply, add notes and update its status." />
+            <div className="flex min-h-[600px] overflow-hidden rounded-lg border border-border bg-surface shadow-card lg:h-[calc(100dvh-260px)]">
+              {/* ---------------------------------------------------------------- list */}
+              <section className={cn("flex w-full min-w-0 flex-col border-border lg:w-[410px] lg:shrink-0 lg:border-r", selected && "hidden lg:flex", cards && selected && "lg:hidden")} aria-label="Tickets">
+                {header}
+                {bulkBar}
+                {error && <Callout tone="critical" className="m-2">{error}</Callout>}
+                <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+                  {tickets.length === 0 ? empty : (
+                    <>
+                      {listToolbar}
+                      <ul>
+                        {tickets.map((t) => {
+                          const p = { t, active: selected?.ticket.id === t.id, checked: checked.has(t.id), onCheck: onCheck(t.id), href: href({ t: t.id, ticket: null }) };
+                          return prefs.layout === "chat" ? <ChatItem key={t.id} {...p} /> : <TicketItem key={t.id} {...p} />;
+                        })}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              </section>
+
+              {/* ---------------------------------------------------------------- conversation */}
+              <section className={cn("min-w-0 flex-1 flex-col", selected ? "flex" : "hidden lg:flex")} aria-label="Conversation">
+                {selected ? (
+                  <Conversation key={selected.ticket.id} {...props} detail={selected} backHref={href({ t: null, ticket: null })} />
+                ) : (
+                  <EmptyState className="my-auto" icon={<Inbox className="h-5 w-5" />} title="Select a conversation" description="Pick a ticket on the left to read the thread, reply, add notes and update its status." />
+                )}
+              </section>
+            </div>
           )}
-        </section>
+        </div>
+        {staticPanel && (
+          <FilterPanel {...panelProps} onMore={() => setMoreOpen(true)} onClose={() => setPrefs({ panel: false })} className="sticky top-4 hidden max-h-[calc(100dvh-100px)] w-[290px] shrink-0 overflow-hidden rounded-lg border border-border shadow-card lg:flex" />
+        )}
       </div>
+      {drawer && (
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={(e) => e.target === e.currentTarget && setDrawer(false)}>
+          <FilterPanel {...panelProps} onMore={() => { setMoreOpen(true); setDrawer(false); }} onClose={() => setDrawer(false)} className="h-full w-[320px] max-w-[92vw] border-l border-border shadow-modal" />
+        </div>
+      )}
       {newOpen && <NewTicket brand={brand.id} onClose={() => setNewOpen(false)} onCreated={(id) => { setNewOpen(false); go({ t: id }); }} />}
       {settingsOpen && <SettingsDialog brand={brand.id} canAdmin={["owner", "admin"].includes(props.role)} settings={props.settings} signature={props.signature} onClose={() => setSettingsOpen(false)} />}
       <ReminderPopup brand={brand.id} />

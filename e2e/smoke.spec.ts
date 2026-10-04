@@ -67,6 +67,18 @@ const ROUTES = [
   "/cx/settings/roles",
   "/cx/settings/alerts",
   "/cx/settings/api",
+  "/cx/settings",
+  "/cx/inbox/queued",
+  "/cx/messages",
+  "/cx/bookmarks",
+  "/cx/tasks",
+  "/cx/search",
+  "/cx/compose",
+  "/cx/mentions-tracker",
+  "/cx/ab-testing",
+  "/cx/profile",
+  "/cx/plan",
+  "/cx/settings/profile-groups",
 ];
 
 test.describe("signed out", () => {

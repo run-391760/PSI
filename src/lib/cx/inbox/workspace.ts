@@ -18,7 +18,12 @@ import { slaStatus } from "./sla";
  * escalate / forward / compose mail, signatures, assignment with attachments, AI helpers, exports.
  */
 
-const notifyUser = async (n: { ownerId: string; projectId: string; title: string; body?: string; link?: string; severity?: "info" | "warning" }) => {
+const notifyUser = async ({ pref, ...n }: { ownerId: string; projectId: string; title: string; body?: string; link?: string; severity?: "info" | "warning"; pref?: "mentions" | "ticketAssigned" }) => {
+  // My Profile → notification preferences (WP-B): skip when the person turned this kind off.
+  if (pref) {
+    const prefs = await import("@/lib/cx/ops/tasks").then((t) => t.notifyPrefsOf(n.ownerId)).catch(() => null);
+    if (prefs && !prefs[pref]) return;
+  }
   const { notify } = await import("@/lib/jobs/queue");
   await notify({ ...n, tool: "CX Inbox" }).catch(() => {});
 };
@@ -43,7 +48,7 @@ export async function notifyMentions(projectId: string, t: { id: string; number:
   const names = agents.filter((a) => ids.includes(a.id)).map((a) => a.name);
   await transaction((q) => logEvent(q, t.id, author.name, "mention", `mentioned ${names.join(", ")} in a note`));
   for (const id of ids)
-    await notifyUser({ ownerId: id, projectId, title: `${author.name} mentioned you on #${t.number}`, body: body.slice(0, 300), link: ticketLink(projectId, t.id) });
+    await notifyUser({ ownerId: id, projectId, title: `${author.name} mentioned you on #${t.number}`, body: body.slice(0, 300), link: ticketLink(projectId, t.id), pref: "mentions" });
   return names;
 }
 
@@ -124,7 +129,7 @@ export async function createChildTicket(projectId: string, parentId: string, use
     await q("UPDATE cx_tickets SET updated_at=now() WHERE id=$1", [parentId]);
     return { id, number: n };
   });
-  if (assignee && assignee !== user.id) await notifyUser({ ownerId: assignee, projectId, title: `${user.name} assigned you child ticket #${r.number}`, body: input.subject, link: ticketLink(projectId, r.id) });
+  if (assignee && assignee !== user.id) await notifyUser({ ownerId: assignee, projectId, title: `${user.name} assigned you child ticket #${r.number}`, body: input.subject, link: ticketLink(projectId, r.id), pref: "ticketAssigned" });
   return r;
 }
 export async function linkParent(projectId: string, childId: string, parentNumber: number, actor: string) {
@@ -293,7 +298,7 @@ export async function assignWithNote(projectId: string, ticketId: string, user: 
     await transaction((q) => insertMessage(q, ticketId, { direction: "note", authorName: user.name, authorUserId: user.id, body: `Assigned to ${who}${input.note.trim() ? `: ${input.note.trim()}` : ""}`, attachments: files.map(asAttachment) }));
   await claimFiles(projectId, ticketId, input.attachmentIds);
   if (input.assigneeId && input.assigneeId !== user.id)
-    await notifyUser({ ownerId: input.assigneeId, projectId, title: `${user.name} assigned you #${t.number}`, body: `${t.subject}${input.note.trim() ? `\n${input.note.trim()}` : ""}`.slice(0, 300), link: ticketLink(projectId, ticketId) });
+    await notifyUser({ ownerId: input.assigneeId, projectId, title: `${user.name} assigned you #${t.number}`, body: `${t.subject}${input.note.trim() ? `\n${input.note.trim()}` : ""}`.slice(0, 300), link: ticketLink(projectId, ticketId), pref: "ticketAssigned" });
 }
 
 // ---------------------------------------------------------------- AI helpers (null when no key)

@@ -46,3 +46,46 @@ built-in channels (Google News, Hacker News, Mastodon, App Store RSS, live chat,
 you create through the UI. Put API-row → record mapping in pure functions with fixture tests
 (`tests/cx-<module>.test.ts`). Screenshots: `node scripts/shot.mjs <dir> <paths>` with your own EMAIL.
 Light/dark, 390px, zero console errors, `tsc` clean for your files.
+
+## Navigation and declutter (WP-A)
+
+The CX sidebar (`src/components/shell/cx-nav.ts`) is short and task-oriented: Overview, Inbox, Listen,
+Publish, Insights (about 5 visible items per group). Administration is NOT in the sidebar: every admin
+page is a card on the Settings hub `/cx/settings` (sidebar footer "Settings"), defined in `CX_SETTINGS`.
+New admin pages go into `CX_SETTINGS`; new day-to-day pages go into a `CX_NAV` group, with
+`defaultHidden: true` for secondary pages (they stay in search, on the hub's "Not in your menu" list and
+can be shown via "Customize menu"). Ask the orchestrator before adding nav entries.
+
+Per-user display preferences (table `cx_ui_prefs`, one jsonb doc, loaded server-side in `AppShell` so
+there is no flash) apply to both workspaces:
+
+- **Focus mode** (topbar button, Display menu, Ctrl/⌘ + `\`, Esc exits; a "Focus mode ×" pill shows
+  while on): sidebar becomes an icon rail, `<Page>` goes full width and every element with the
+  `data-focus-hide` attribute is hidden. **Mark secondary KPI strips, right-hand side panels and
+  secondary navigation in your pages with `data-focus-hide`** (wrap in a `<div data-focus-hide>` if needed).
+  Primary content must never carry it.
+- **Density** comfortable/compact: `data-density="compact"` on the shell shrinks Tailwind's `--spacing`
+  inside `<main>` (all `p-*`, `gap-*`, `h-*` utilities) and table/heading text. Use spacing utilities
+  rather than arbitrary px values so your page follows it. CSS: `src/components/shell/declutter.css`.
+- **Customize menu**: pin, hide and reorder CX sidebar items; "Reset to default".
+- **Hideable panels**: let users collapse or hide optional widgets.
+
+```tsx
+import { Hideable, ShowHidden } from "@/components/shell/hideable";
+
+<PageHeader ... actions={<ShowHidden scope="cx-reports" />} />   // "Show hidden (n)" restore menu
+<Hideable id="cx-reports.agent-table" label="Agent table">       // id = "<scope>.<name>", stable
+  <Card>...</Card>
+</Hideable>
+<Hideable id="cx-reports.trends" label="Trends" defaultState="collapsed" refreshOnExpand>
+  {open ? <Charts /> : null}
+</Hideable>
+```
+
+Hover (or tap on touch screens) shows a small collapse/hide control on the panel's top edge. Collapsed
+panels render as a one-line bar; hidden ones disappear and are listed by `<ShowHidden scope>`. To skip
+expensive queries for panels that aren't open, read the state on the server:
+`panelState((await getUiPrefs(user.id)).panels, id, defaultState) === "open"` (`@/lib/cx/ui/prefs`,
+`@/lib/cx/ui/prefs-logic`) and pass `refreshOnExpand` so expanding re-renders with data. Examples:
+`src/app/(app)/cx/page.tsx` (overview sections) and `src/app/(app)/cx/dashboards/page.tsx` (cards).
+Client code can read/update preferences with `useUiPrefs()` from `@/components/shell/ui-prefs`.

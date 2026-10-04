@@ -5,7 +5,8 @@ import { cn } from "@/lib/utils";
 
 /** Page container with consistent padding and max width. */
 export function Page({ children, className, wide }: { children: ReactNode; className?: string; wide?: boolean }) {
-  return <div className={cn("mx-auto w-full px-4 py-5 sm:px-6", wide ? "max-w-[1600px]" : "max-w-[1400px]", className)}>{children}</div>;
+  // Focus mode (data-focus="on" on the app shell) lets content use the full width.
+  return <div className={cn("mx-auto w-full px-4 py-5 sm:px-6", wide ? "max-w-[1600px]" : "max-w-[1400px]", "group-data-[focus=on]/shell:max-w-none", className)}>{children}</div>;
 }
 
 /**
