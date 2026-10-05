@@ -80,6 +80,8 @@ CADDY
 # 4. Build, then replace the running containers (the old app keeps serving if the build fails)
 docker network inspect synapse >/dev/null 2>&1 || docker network create synapse
 docker build -t synapseseo:latest "$APP_DIR"
+# Graceful stop first: the embedded database must flush before the container goes (rm -f alone is a hard kill).
+docker stop -t 30 synapseseo >/dev/null 2>&1 || true
 docker rm -f synapseseo >/dev/null 2>&1 || true
 docker run -d --name synapseseo --restart unless-stopped --init --network synapse \
   --env-file "$CONF_DIR/env" -v "$DATA_DIR:/data" --stop-timeout 30 synapseseo:latest
