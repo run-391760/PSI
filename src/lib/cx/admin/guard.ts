@@ -9,6 +9,8 @@ export async function adminAction<T>(brand: string, perm: Permission, path: stri
   try {
     const { user, project } = await brandUser(brand);
     await requirePermission(brand, user.id, perm, "change these settings");
+    const { assertIpAllowed } = await import("./ip");
+    await assertIpAllowed(brand, user.id);
     const data = await fn(user);
     revalidatePath(path);
     const { ensureAdminJobs } = await import("./jobs");

@@ -12,7 +12,7 @@ export const jobs: Record<string, JobHandler> = {
   "cx.listening.fetch": async (job, ctx) => {
     const project = await findCxBrand(job.owner_id ?? "", job.project_id ?? "");
     if (!project) throw new Error("Brand not found.");
-    const report = await ingestBrand(project, (d, t, m) => ctx.progress(d, t, m), () => ctx.cancelled());
+    const report = await ingestBrand(project, (d, t, m) => ctx.progress(d, t, m), () => ctx.cancelled(), { manual: !!(job.payload as { manual?: boolean } | null)?.manual });
     await enqueue({ kind: "cx.listening.detect", ownerId: project.owner_id, projectId: project.id, dedupeKey: `cx.listening.detect:${job.id}` });
     return report;
   },

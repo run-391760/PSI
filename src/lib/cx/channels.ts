@@ -24,7 +24,8 @@ export type ChannelKind =
   | "telegram"
   | "threads"
   | "gbp"
-  | "google-reviews";
+  | "google-reviews"
+  | "phone";
 
 export type ChannelUse = "listening" | "inbox" | "publishing" | "analytics";
 
@@ -63,6 +64,7 @@ export const CHANNELS: ChannelInfo[] = [
   { kind: "threads", name: "Threads", uses: ["publishing"], api: "Threads API", cost: "free-approval", costNote: "Free; needs a Meta app with threads_content_publish", env: ["THREADS_APP_ID", "THREADS_APP_SECRET"], setup: "Add the Threads use case to a Meta app and request threads_basic + threads_content_publish (+ threads_delete)." },
   { kind: "gbp", name: "Google Business Profile", uses: ["publishing"], api: "Business Profile API (local posts)", cost: "free-approval", costNote: "Free; needs Google API access approval", env: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], setup: "Request Business Profile API access and authorize the business.manage scope for the location's owner." },
   { kind: "google-reviews", name: "Google reviews", uses: ["listening", "inbox"], api: "Business Profile API or DataForSEO", cost: "free-approval", costNote: "Business Profile API needs Google approval; DataForSEO is pay-per-use", env: ["DATAFORSEO_LOGIN"], setup: "Connect DataForSEO, or request Business Profile API access." },
+  { kind: "phone", name: "Calls (telephony)", uses: ["inbox", "analytics"], api: "Twilio Voice or Exotel call webhooks + recordings", cost: "paid", costNote: "Paid per minute (Twilio ≈ $0.0085/min inbound US; Exotel plans in India)", env: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"], setup: "Connect a Twilio or Exotel number and point its call-status webhook at the CX API so calls become tickets and power Calls Analytics." },
 ];
 
 export const channelInfo = (kind: string) => CHANNELS.find((c) => c.kind === kind);

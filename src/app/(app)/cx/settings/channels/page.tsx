@@ -1,52 +1,49 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
-import { BrandSwitcher } from "@/components/cx/brand-switcher";
-import { NoBrand } from "@/components/cx/inbox/ui";
-import { Page, PageHeader } from "@/components/shell/page";
 import { Badge } from "@/components/ui/badge";
-import { requirePageUser } from "@/lib/auth";
-import { cxContext } from "@/lib/cx/context";
-import { listChannels } from "@/lib/cx/inbox/channels";
-import { availableChannels } from "@/lib/cx/providers";
-import { cardConfigured, CONNECT_CARDS, CONNECTORS, listConnectorChannels } from "@/lib/cx/admin/connectors";
-import { ChannelsClient } from "./channels-client";
-import { ConnectorsSection } from "./connectors-client";
+import { Page } from "@/components/shell/page";
+import { CHANNELS } from "@/lib/cx/channels";
+import { CONNECT_CARDS, CONNECTORS, cardConfigured } from "@/lib/cx/admin/connectors";
+import { listProfiles } from "@/lib/cx/admin/profiles";
+import { requestOrigin, settingsPage, SettingsHeader } from "../_admin/settings-page";
+import { ProfilesClient, type ApiInfo } from "./profiles-client";
 
-export const metadata: Metadata = { title: "Channels" };
+export const metadata: Metadata = { title: "Omni-Channel Setup" };
 
-export default async function Page_({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const user = await requirePageUser();
-  const sp = await searchParams;
-  const { brand, switcher } = await cxContext(user.id, sp);
-  const crumbs = [{ label: "CX" }, { label: "Settings" }, { label: "Channels" }];
-  if (!brand) return <NoBrand title="Channels" breadcrumbs={crumbs} redirect="/cx/settings/channels" />;
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3200";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https");
-  const [channels, connectorRows] = await Promise.all([listChannels(brand.id), listConnectorChannels(brand.id)]);
+/** Omni-Channel Setup: every connected profile, grouped by network, with ADD PROFILE for every connect flow. */
+export default async function ChannelsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const { el, ctx } = await settingsPage(await searchParams, { title: "Omni-Channel Setup", path: "/cx/settings/channels", perm: "page:settings.channels" });
+  if (!ctx) return el;
+  const [profiles, origin] = await Promise.all([listProfiles(ctx.brand.id), requestOrigin()]);
   const env = {
     whatsappVerify: !!process.env.WHATSAPP_VERIFY_TOKEN,
     whatsappSend: !!process.env.WHATSAPP_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID,
     metaVerify: !!process.env.META_VERIFY_TOKEN,
     metaSecret: !!process.env.META_APP_SECRET,
   };
+  const apiInfo: ApiInfo[] = ["x", "youtube", "gbp"].map((kind) => {
+    const c = CHANNELS.find((x) => x.kind === kind);
+    const card = CONNECT_CARDS.find((x) => x.kind === kind);
+    const envVars = [...(card?.env ?? c?.env ?? [])];
+    return { kind, name: c?.name ?? card?.name ?? kind, api: card?.api ?? c?.api ?? "", cost: card?.cost ?? c?.cost ?? "free-approval", costNote: card?.costNote ?? c?.costNote ?? "", env: envVars, setup: c?.setup ?? "", configured: envVars.length > 0 && cardConfigured(envVars) };
+  });
+  const active = profiles.filter((p) => p.status === "active" && !p.last_error).length;
   return (
     <Page>
-      <PageHeader
-        title="Channels"
-        subject={brand.name}
-        breadcrumbs={crumbs}
-        description="Connect the channels your customers use. Email, live chat and web forms are built in and free; social and messaging channels need their platform's API."
-        meta={
-          <>
-            <Badge tone="good">{channels.filter((c) => c.status !== "paused").length} active</Badge>
-            <Badge>{channels.length} connected</Badge>
-          </>
-        }
-        actions={<BrandSwitcher brands={switcher} current={brand.id} />}
+      <SettingsHeader
+        title="Omni-Channel Setup"
+        ctx={ctx}
+        description="The profiles your team answers from. Conversations from them arrive in Tickets; each profile's color identifies it in reports and filters."
+        meta={<><Badge tone="good">{active} active</Badge><Badge>{profiles.length} profile{profiles.length === 1 ? "" : "s"}</Badge></>}
       />
-      <ChannelsClient brand={brand.id} origin={`${proto}://${host}`} channels={channels} available={availableChannels()} env={env} />
-      <ConnectorsSection brand={brand.id} connectors={[...CONNECTORS]} cards={CONNECT_CARDS.map((c) => ({ ...c, configured: cardConfigured(c.env) }))} rows={connectorRows} />
+      <ProfilesClient
+        brand={ctx.brand.id}
+        origin={origin}
+        env={env}
+        profiles={profiles}
+        connectors={CONNECTORS.map((c) => ({ ...c }))}
+        apiInfo={apiInfo}
+        canEdit={ctx.canEdit}
+      />
     </Page>
   );
 }

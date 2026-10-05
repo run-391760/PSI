@@ -9,6 +9,7 @@ import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
 import type { PagePerm } from "@/lib/cx/admin/pure/permissions";
 import { permissionsFor } from "@/lib/cx/admin/roles";
+import { ipBlocked } from "@/lib/cx/admin/ip";
 
 type SP = Record<string, string | string[] | undefined>;
 
@@ -18,6 +19,17 @@ export async function adminPage(sp: SP, opts: { title: string; path: string; per
   const { brand, switcher } = await cxContext(user.id, sp);
   const crumbs = [{ label: "CX" }, { label: "Settings", href: brand ? `/cx/settings?brand=${brand.id}` : "/cx/settings" }, { label: opts.title }];
   if (!brand) return { el: <NoBrand title={opts.title} breadcrumbs={crumbs} redirect={opts.path} />, ctx: null };
+  const blocked = await ipBlocked(brand.id, user.id);
+  if (blocked)
+    return {
+      el: (
+        <Page>
+          <PageHeader title={opts.title} subject={brand.name} breadcrumbs={crumbs} actions={<BrandSwitcher brands={switcher} current={brand.id} />} />
+          <Card><EmptyState icon={<ShieldAlert className="h-5 w-5" />} title="Your IP address isn't allowed for this brand" description={`This brand only accepts access from approved IP addresses. Your address is ${blocked}. Ask a brand admin to add it under Settings → Users → IP whitelisting.`} /></Card>
+        </Page>
+      ),
+      ctx: null,
+    };
   const { perms } = await permissionsFor(brand.id, user.id);
   if (!perms.includes(opts.perm))
     return {

@@ -1,27 +1,24 @@
 "use client";
 
-import { ChevronsLeft, ChevronsRight, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { activeHref, applyNavPrefs } from "@/lib/cx/ui/prefs-logic";
+import { useEffect } from "react";
+import { activeHref } from "@/lib/cx/ui/prefs-logic";
 import { cn } from "@/lib/utils";
 import { NAV } from "./nav";
-import { CX_NAV } from "./cx-nav";
-import { CustomizeMenuDialog } from "./customize-menu";
 import { Logo } from "./logo";
 import { useUiPrefs } from "./ui-prefs";
 
+/** SEO workspace sidebar (the CX workspace uses CxSidebar / CxMenu). */
 export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolean; onClose: () => void; available?: Partial<Record<string, boolean>> }) {
   const pathname = usePathname();
   const { prefs, update } = useUiPrefs();
-  const [customizing, setCustomizing] = useState(false);
   useEffect(() => onClose(), [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   // Focus mode reduces the sidebar to an icon rail; the user's own collapse choice is kept underneath.
   const collapsed = prefs.collapsed || prefs.focus;
-  const cx = pathname === "/cx" || pathname.startsWith("/cx/");
-  const groups = useMemo(() => (cx ? applyNavPrefs(CX_NAV, prefs.nav) : NAV), [cx, prefs.nav]);
-  const settingsHref = cx ? "/cx/settings" : "/settings";
+  const groups = NAV;
+  const settingsHref = "/settings";
   const best = activeHref(pathname, [...groups.flatMap((g) => g.items.map((i) => i.href)), settingsHref]);
   const isActive = (href: string) => href === best || (href === "/settings" && pathname.startsWith("/settings"));
   const footerItem = "flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-white/5 hover:text-white";
@@ -39,10 +36,10 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
         aria-label="Main navigation"
       >
         <div className={cn("flex h-14 shrink-0 items-center border-b border-white/5 px-4", collapsed && "lg:justify-center lg:px-0")}>
-          <Link href={cx ? "/cx" : "/dashboard"} className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <Logo />
             <span className={cn("text-[15px] font-semibold tracking-tight text-white", collapsed && "lg:hidden")}>
-              Synapse<span className="text-[#a99dff]">{cx ? "CX" : "SEO"}</span>
+              Synapse<span className="text-[#a99dff]">SEO</span>
             </span>
           </Link>
           <button className="ml-auto rounded p-1 text-nav-muted hover:text-white lg:hidden" onClick={onClose} aria-label="Close navigation">
@@ -98,12 +95,6 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
             <Settings className="h-4 w-4 shrink-0 text-nav-muted" />
             <span className={cn(collapsed && "lg:hidden")}>Settings</span>
           </Link>
-          {cx && (
-            <button type="button" onClick={() => setCustomizing(true)} title={collapsed ? "Customize menu" : undefined} className={cn(footerItem, "text-[12.5px] text-nav-muted", collapsed && "lg:justify-center lg:px-0")}>
-              <SlidersHorizontal className="h-4 w-4 shrink-0" />
-              <span className={cn(collapsed && "lg:hidden")}>Customize menu</span>
-            </button>
-          )}
           {!prefs.focus && (
             <button type="button" onClick={() => update({ collapsed: !prefs.collapsed })} className={cn(footerItem, "hidden text-[12.5px] text-nav-muted lg:flex", collapsed && "lg:justify-center lg:px-0")} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
               {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
@@ -112,7 +103,6 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
           )}
         </div>
       </aside>
-      {cx && <CustomizeMenuDialog open={customizing} onClose={() => setCustomizing(false)} />}
     </>
   );
 }

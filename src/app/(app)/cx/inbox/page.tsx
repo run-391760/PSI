@@ -12,12 +12,15 @@ import { query } from "@/lib/db";
 import { listQuickActions } from "@/lib/cx/admin/quick-actions";
 import { ticketSignals } from "@/lib/cx/insights/signals";
 import { getInboxSettings, getPrefs } from "@/lib/cx/inbox/settings";
+import { SETTABLE_STATUSES } from "@/lib/cx/inbox/model";
 import { listCanned, listAgents, listSeverities, listTags, listTeams, listTickets, getTicket, inboxStats, panelCounts, slaPolicyCount, viewCounts, VIEWS, type View } from "@/lib/cx/inbox/store";
 import { emailChannel, emailSuggestions, fireDueReminders, getSignature } from "@/lib/cx/inbox/workspace";
 import { listChannels } from "@/lib/cx/inbox/channels";
 import { ensureInboxJobs } from "@/lib/cx/inbox/jobs";
 import { ticketBookmarks } from "@/lib/cx/ops/bookmarks";
-import { defaultGroupId, listGroups } from "@/lib/cx/ops/groups";
+import { listGroups } from "@/lib/cx/ops/groups";
+import { streamPageData } from "@/lib/cx/inbox/page-data";
+import { parseDate } from "@/lib/cx/inbox/stream";
 import { ensureOpsJobs } from "@/lib/cx/ops/jobs";
 import { syncPostKeys } from "@/lib/cx/ops/media";
 import { fireDueTasks, listTasks } from "@/lib/cx/ops/tasks";
@@ -34,9 +37,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const view = (VIEWS.some((v) => v.id === s("view")) ? s("view") : "open") as View;
   const filters = {
     view, q: s("q"), channel: s("channel"), priority: s("priority"), status: s("status"), tag: s("tag"), team: s("team"), sentiment: s("sentiment"),
-    from: s("from"), to: s("to"), profile: s("profile"), topic: s("topic"), escalated: s("escalated"), email: s("email"), severity: s("severity"), assignee: s("assignee"), sort: s("sort"),
-    // Profile group: ?group=<id>, "all" = every profile; without the param the brand's default group applies.
-    group: s("group") ?? (await defaultGroupId(brand.id).catch(() => null)) ?? undefined, media: s("media"), post: s("post"),
+    from: parseDate(s("from")), to: parseDate(s("to")), profile: s("profile"), topic: s("topic"), escalated: s("escalated"), email: s("email"), severity: s("severity"), assignee: s("assignee"),
+    // Konnect default: Date - Latest First.
+    sort: s("sort") ?? "latest",
+    // Legacy profile-group links (?group=<id>) still work; the Topic / Profile picker writes ?scope=.
+    group: s("group"), media: s("media"), post: s("post"), scope: s("scope"), lang: s("lang"), attach: s("attach"), cls: s("cls"),
   };
   const channels = await listChannels(brand.id);
   await ensureInboxJobs(brand.id, user.id, channels.some((c) => c.kind === "email" && c.status !== "paused")).catch(() => {});
@@ -74,6 +79,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     selected ? Promise.all([listTasks(brand.id, user.id, { ticketId: selected.ticket.id }), ticketBookmarks(user.id, selected.ticket.id)]).then(([tasks, bookmarks]) => ({ tasks, bookmarks })) : Promise.resolve(null),
   ]);
   const quickActions = (await listQuickActions(brand.id).catch(() => [])).map((q) => ({ id: q.id, name: q.name, description: q.description }));
+  const sd = await streamPageData(brand, user);
   return (
     <Page wide>
       <PageHeader
@@ -119,6 +125,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         panel={panel}
         ops={ops}
         act={s("act") ?? null}
+        scopeOptions={sd.scope}
+        agentStates={sd.ctx.agentStates}
+        more={{ sentiment: true, status: SETTABLE_STATUSES.map((x) => [x.id, x.label] as [string, string]), assignees: sd.options.assignees, priority: true, tags: sd.options.tags, languages: sd.options.languages, attach: true, classifications: sd.options.classifications }}
       />
     </Page>
   );

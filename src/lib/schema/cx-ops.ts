@@ -26,6 +26,9 @@ export const cxOpsSchema = [
     ["channel_ids", "jsonb NOT NULL DEFAULT '[]'"],
     ["sources", "jsonb NOT NULL DEFAULT '[]'"],
     ["is_default", "boolean NOT NULL DEFAULT false"],
+    // WP-K3 clusters: listening topics in the group and a color for charts/chips.
+    ["topic_ids", "jsonb NOT NULL DEFAULT '[]'"],
+    ["color", "text NOT NULL DEFAULT ''"],
     ["created_by", "text REFERENCES users(id) ON DELETE SET NULL"],
     ["created_at", "timestamptz NOT NULL DEFAULT now()"],
     ["updated_at", "timestamptz NOT NULL DEFAULT now()"],

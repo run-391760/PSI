@@ -2,7 +2,7 @@
 
 import {
   AlarmClock, AlertTriangle, Zap, ArrowLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, CornerDownRight, Download, ExternalLink, Eye, FileText, Forward, GitBranch, GitMerge,
-  Languages, Lock, Mail, MoreHorizontal, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X, Bookmark, BookmarkCheck, ClipboardList, MessagesSquare,
+  Languages, Lock, Mail, Maximize2, MoreHorizontal, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X, Bookmark, BookmarkCheck, ClipboardList, MessagesSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,13 +25,16 @@ import { TaskDialog } from "@/components/cx/ops/task-dialog";
 import { taskDueState, taskStatusLabel } from "@/lib/cx/ops/model";
 import type { Task } from "@/lib/cx/ops/tasks";
 import { Composer } from "./composer";
+import { ticketHref } from "@/lib/cx/inbox/stream";
 import type { InboxProps } from "./inbox-client";
 import { playAlert, usePrefs } from "./prefs";
 import { AssignDialog, ChildDialog, EmailDialog, FieldsPanel, fmtSize, ParentDialog, ReminderDialog, type EmailKind } from "./ticket-dialogs";
 import { Ago, SlaClockRow, useNow } from "./time";
 import { Avatar, ChannelIcon, channelLabel, KeyValue, SentimentBadge, statusLabel, StatusBadge } from "./ui";
 
-type Props = InboxProps & { detail: TicketDetail; backHref: string };
+export type ConversationProps = Pick<InboxProps, "brand" | "me" | "agents" | "teams" | "ai" | "settings" | "act" | "canned" | "emailSuggestions" | "fieldDefs" | "hasEmail" | "hasSignature" | "ops" | "quickActions" | "role" | "severities" | "signals" | "tickets" | "tree">;
+/** `fullPage`: rendered by the One Ticket View (/cx/ticket/[id]); related-ticket links then stay in that view. */
+type Props = ConversationProps & { detail: TicketDetail; backHref: string; fullPage?: boolean };
 const INTENTS: Record<string, string> = { complaint: "Complaint", query: "Query", feedback: "Feedback", praise: "Praise", purchase: "Purchase intent", cancellation: "Cancellation / churn risk", spam: "Spam", other: "Other" };
 type Live = { viewers: { name: string; typing: boolean }[]; lockedBy: { id: string; name: string } | null; visitorOnline: boolean | null; visitorTyping: boolean };
 type DialogState = null | { kind: "reminder"; existing?: TicketDetail["reminders"][number] } | { kind: EmailKind } | { kind: "assign" | "child" | "parent" | "merge" } | { kind: "task"; existing?: Task };
@@ -132,20 +135,21 @@ export function Conversation(props: Props) {
   const privateN = (detail.messages ?? []).filter((m) => m.direction === "note").length + (detail.familyNotes ?? []).length;
   const byId = useMemo(() => new Map((detail.messages ?? []).map((m) => [m.id, m])), [detail.messages]);
   const agentName = (id: string) => agents.find((a) => a.id === id)?.name ?? "";
+  const openTicket = (id: string) => (props.fullPage ? ticketHref(brand.id, id) : `/cx/inbox?brand=${brand.id}&view=all&t=${id}`);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* header */}
       <div className="flex flex-wrap items-start gap-2 border-b border-border px-4 py-3">
-        <Link href={backHref} scroll={false} className="-ml-1 rounded p-1 text-text-3 hover:bg-surface-3 lg:hidden" aria-label="Back to list"><ArrowLeft className="h-4 w-4" /></Link>
-        <div className="min-w-0 flex-1">
+        <Link href={backHref} scroll={false} className={cn("-ml-1 rounded p-1 text-text-3 hover:bg-surface-3", !props.fullPage && "lg:hidden")} aria-label="Back to list"><ArrowLeft className="h-4 w-4" /></Link>
+        <div className="min-w-[14rem] flex-1">
           <h2 className="text-[15px] font-semibold break-words text-text"><span className="font-normal text-text-3">#{t.number}</span> {t.subject}</h2>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-text-2">
             <span className="inline-flex items-center gap-1"><ChannelIcon kind={t.channel_kind} />{t.channel_name ?? channelLabel(t.channel_kind)}</span>
             <span>·</span>
             {t.contact_id ? <Link href={`/cx/contacts/${t.contact_id}?brand=${brand.id}`} className="text-link hover:underline">{t.contact_name || t.contact_email}</Link> : <span>Unknown contact</span>}
             {t.contact_email && t.contact_name && <span className="hidden text-text-3 sm:inline">{t.contact_email}</span>}
-            {detail.parent && <Link href={`/cx/inbox?brand=${brand.id}&view=all&t=${detail.parent.id}`} className="inline-flex items-center gap-0.5 text-link hover:underline"><GitBranch className="h-3 w-3" />Child of #{detail.parent.number}</Link>}
+            {detail.parent && <Link href={openTicket(detail.parent.id)} className="inline-flex items-center gap-0.5 text-link hover:underline"><GitBranch className="h-3 w-3" />Child of #{detail.parent.number}</Link>}
             {(detail.mentions ?? []).map((m) => m.url && (
               <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-link hover:underline">View mention<ExternalLink className="h-3 w-3" /></a>
             ))}
@@ -155,6 +159,7 @@ export function Conversation(props: Props) {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          {!props.fullPage && <Link href={ticketHref(brand.id, t.id)} className="rounded-md border border-border-strong p-1.5 text-text-2 hover:bg-surface-3" aria-label="Open One Ticket View" title="Open One Ticket View (full page)"><Maximize2 className="h-4 w-4" /></Link>}
           <button type="button" onClick={() => toggleBm()} className="rounded-md border border-border-strong p-1.5 text-text-2 hover:bg-surface-3" aria-label={bm.ticket ? "Remove bookmark" : "Bookmark ticket"} title={bm.ticket ? "Bookmarked (see Bookmarks)" : "Bookmark ticket"}>
             {bm.ticket ? <BookmarkCheck className="h-4 w-4 text-link" /> : <Bookmark className="h-4 w-4" />}
           </button>
@@ -332,7 +337,7 @@ export function Conversation(props: Props) {
                 {(detail.parent ? [detail.parent] : detail.children).map((c) => (
                   <li key={c.id} className="flex items-center gap-1.5 text-[12px]">
                     <GitBranch className="h-3 w-3 shrink-0 text-text-3" />
-                    <Link href={`/cx/inbox?brand=${brand.id}&view=all&t=${c.id}`} className="min-w-0 flex-1 truncate text-link hover:underline">#{c.number} {c.subject}</Link>
+                    <Link href={openTicket(c.id)} className="min-w-0 flex-1 truncate text-link hover:underline">#{c.number} {c.subject}</Link>
                     <StatusBadge status={c.crm_status} />
                   </li>
                 ))}
@@ -407,7 +412,7 @@ export function Conversation(props: Props) {
                 {(detail.related ?? []).map((r) => (
                   <li key={r.id} className="flex items-center gap-1.5 text-[12px]">
                     <ChannelIcon kind={r.channel_kind} className="text-text-3" />
-                    <Link href={`/cx/inbox?brand=${brand.id}&view=all&t=${r.id}`} className="min-w-0 flex-1 truncate text-link hover:underline">#{r.number} {r.subject}</Link>
+                    <Link href={openTicket(r.id)} className="min-w-0 flex-1 truncate text-link hover:underline">#{r.number} {r.subject}</Link>
                     <span className="text-text-3">{statusLabel(r.status)}</span>
                   </li>
                 ))}
@@ -430,7 +435,7 @@ export function Conversation(props: Props) {
       {dialog?.kind === "reminder" && <ReminderDialog brand={brand.id} ticketId={t.id} agents={agents} me={me} existing={dialog.existing} onClose={() => setDialog(null)} />}
       {dialog && (dialog.kind === "escalate" || dialog.kind === "forward" || dialog.kind === "compose") && <EmailDialog brand={brand.id} kind={dialog.kind} detail={detail} suggestions={props.emailSuggestions} settings={settings} hasEmail={props.hasEmail} hasSignature={props.hasSignature} onClose={() => setDialog(null)} />}
       {dialog?.kind === "assign" && <AssignDialog brand={brand.id} detail={detail} agents={agents} me={me} onClose={() => setDialog(null)} />}
-      {dialog?.kind === "child" && <ChildDialog brand={brand.id} detail={detail} agents={agents} onClose={() => setDialog(null)} onCreated={(id) => { setDialog(null); router.push(`/cx/inbox?brand=${brand.id}&view=all&t=${id}`); }} />}
+      {dialog?.kind === "child" && <ChildDialog brand={brand.id} detail={detail} agents={agents} onClose={() => setDialog(null)} onCreated={(id) => { setDialog(null); router.push(openTicket(id)); }} />}
       {dialog?.kind === "parent" && <ParentDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} />}
       {dialog?.kind === "task" && <TaskDialog brand={brand.id} agents={agents} tree={props.tree} me={me} ticket={dialog.existing ? null : { id: t.id, number: t.number, subject: t.subject }} existing={dialog.existing ?? null} onClose={() => setDialog(null)} />}
       {dialog?.kind === "merge" && <MergeDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); router.refresh(); }} />}
@@ -462,7 +467,7 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
     );
   return (
     <div className={cn("flex gap-2", right ? "justify-end" : "justify-start")}>
-      <div className={cn("rounded-lg border px-3 py-2", collapsible ? "w-full" : "max-w-[85%]", note ? "border-warning/40 bg-warning-soft" : out ? "border-link/20 bg-brand-soft" : "border-border bg-surface")}>
+      <div className={cn("min-w-0 rounded-lg border px-3 py-2", collapsible ? "w-full" : "max-w-[85%]", note ? "border-warning/40 bg-warning-soft" : out ? "border-link/20 bg-brand-soft" : "border-border bg-surface")}>
         <div className="mb-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-text-3">
           {collapsible && <button type="button" onClick={() => setOpen(false)} className="-ml-1 rounded p-0.5 hover:bg-surface-3" aria-label="Collapse"><ChevronDown className="h-3.5 w-3.5" /></button>}
           <span className="font-medium text-text-2">{m.author_name || (out ? "Agent" : "Customer")}</span>
@@ -481,7 +486,7 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
           )}
         </div>
         {replyTo && <div className="mb-1 border-l-2 border-border-strong pl-2 text-[12px] text-text-3">↪ {replyTo.author_name}: {replyTo.body.slice(0, 100)}</div>}
-        <div className="text-[13.5px] break-words whitespace-pre-wrap text-text">{m.body ? <Body text={m.body} /> : <span className="text-text-3 italic">(no text)</span>}</div>
+        <div className="text-[13.5px] break-words whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{m.body ? <Body text={m.body} /> : <span className="text-text-3 italic">(no text)</span>}</div>
         {tr && <div className="mt-1.5 border-t border-border pt-1.5 text-[13px] whitespace-pre-wrap text-text-2"><span className="text-[11px] text-text-3 uppercase">{lang}</span><br />{tr}</div>}
         {mentionNames.length > 0 && <div className="mt-1 text-[11.5px] text-text-3">Notified: {mentionNames.join(", ")}</div>}
         {(m.attachments ?? []).length > 0 && <Attachments list={m.attachments} />}

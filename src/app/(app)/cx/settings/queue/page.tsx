@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { TabsNav } from "@/components/ui/tabs";
 import { getQueueSettings, listStatuses, queueAgents, statusLog, teamZones, waitingTickets } from "@/lib/cx/admin/queue";
 import { adminSettings } from "@/lib/cx/admin/settings";
+import { listUserGroups } from "@/lib/cx/admin/users";
 import { AdminHeader, adminPage, tabHref } from "../_admin/shell";
 import { QueueAgentsPanel, QueueSettingsPanel, SegmentsPanel, StatusesPanel, WaitingPanel } from "./queue-client";
 
@@ -36,7 +37,7 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
       ]} />
       {tab === "agents" ? <QueueAgentsPanel brand={brand.id} agents={agents} statuses={statuses} />
         : tab === "statuses" ? <StatusesPanel brand={brand.id} statuses={statuses} zones={await teamZones(brand.id)} />
-        : tab === "segments" ? <SegmentsPanel brand={brand.id} settings={s} timer={timer} />
+        : tab === "segments" ? <SegmentsPanel brand={brand.id} settings={s} timer={timer} userGroups={(await listUserGroups(brand.id)).map((g) => ({ id: g.id, name: g.name, members: g.memberIds.length }))} />
         : tab === "live" ? <WaitingPanel brand={brand.id} waiting={waiting} agents={agents} log={await statusLog(brand.id)} timerMinutes={admin.queueTimerMinutes} />
         : <QueueSettingsPanel brand={brand.id} settings={s} timer={timer} />}
     </Page>

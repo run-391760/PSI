@@ -1,0 +1,72 @@
+/*
+ * CX workspace shell (Konnect layout, WP-K1). Root: .cx-shell[data-rail="on|off"].
+ * Tokens: dark brand-blue header, light-blue active rows. Unlayered so it wins over utilities.
+ */
+.cx-shell {
+  --cx-header: #0f4c81;
+  --cx-header-2: #0b3d6b;
+  --cx-header-ink: #ffffff;
+  --cx-header-muted: rgba(255, 255, 255, 0.62);
+  --cx-header-field: rgba(255, 255, 255, 0.12);
+  --cx-accent: #1a73d9;
+  --cx-active-bg: #e3effb;
+  --cx-active-ink: #1565c0;
+  --cx-group-bg: #eef1f5;
+}
+:root[data-theme="dark"] .cx-shell {
+  --cx-header: #0d2c4d;
+  --cx-header-2: #0a2340;
+  --cx-header-muted: rgba(255, 255, 255, 0.58);
+  --cx-accent: #4a9bf0;
+  --cx-active-bg: rgba(74, 155, 240, 0.16);
+  --cx-active-ink: #8cc2ff;
+  --cx-group-bg: rgba(255, 255, 255, 0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cx-shell {
+    --cx-header: #0d2c4d;
+    --cx-header-2: #0a2340;
+    --cx-header-muted: rgba(255, 255, 255, 0.58);
+    --cx-accent: #4a9bf0;
+    --cx-active-bg: rgba(74, 155, 240, 0.16);
+    --cx-active-ink: #8cc2ff;
+    --cx-group-bg: rgba(255, 255, 255, 0.05);
+  }
+}
+
+/* Header tabs scroll sideways on narrow screens without a visible scrollbar. */
+.cx-tabs {
+  scrollbar-width: none;
+}
+.cx-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Desktop sidebar: full (220px) or icon rail (52px). The rail is on when the user collapsed it, in
+   focus mode (data-rail="on"), or whenever a <SectionPanel> is on the page. */
+.cx-sidebar {
+  width: 220px;
+}
+.cx-rail-only {
+  display: none !important;
+}
+@media (min-width: 1024px) {
+  .cx-shell[data-rail="on"] .cx-sidebar,
+  .cx-shell:has([data-section-panel]) .cx-sidebar {
+    width: 52px;
+  }
+  .cx-shell[data-rail="on"] .cx-rail-hide,
+  .cx-shell:has([data-section-panel]) .cx-rail-hide {
+    display: none !important;
+  }
+  .cx-shell[data-rail="on"] .cx-rail-only,
+  .cx-shell:has([data-section-panel]) .cx-rail-only {
+    display: block !important;
+  }
+  .cx-shell[data-rail="on"] .cx-rail-center,
+  .cx-shell:has([data-section-panel]) .cx-rail-center {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}

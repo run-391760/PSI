@@ -1,111 +1,40 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Copy, ExternalLink, Pause, Pencil, Play, Plus, RefreshCw, Trash, Webhook } from "lucide-react";
-import Link from "next/link";
+import { AlertTriangle, CheckCircle2, Copy, ExternalLink, RefreshCw, Webhook } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useState } from "react";
-import { ChannelIcon } from "@/components/cx/inbox/ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
-import { CHANNELS, type ChannelKind } from "@/lib/cx/channels";
 import { syncLinkedInAction } from "@/app/(app)/cx/inbox/actions";
 import type { ChannelRow } from "@/lib/cx/inbox/channels";
 import { timeAgo } from "@/lib/format";
-import { channelStatusAction, deleteChannelAction, saveChannelAction, saveEmailAction, syncEmailAction, testEmailAction, type EmailInput } from "./actions";
+import { saveChannelAction, saveEmailAction, syncEmailAction, testEmailAction, type EmailInput } from "./actions";
 
-type Env = { whatsappVerify: boolean; whatsappSend: boolean; metaVerify: boolean; metaSecret: boolean };
-type Props = { brand: string; origin: string; channels: ChannelRow[]; available: Record<ChannelKind, boolean>; env: Env };
-type Editing = { kind: "email" | "livechat" | "webform" | "whatsapp" | "facebook" | "instagram" | "linkedin"; channel?: ChannelRow } | null;
+export type Env = { whatsappVerify: boolean; whatsappSend: boolean; metaVerify: boolean; metaSecret: boolean };
+export type EditKind = "email" | "livechat" | "webform" | "whatsapp" | "facebook" | "instagram" | "linkedin";
 
-export function ChannelsClient({ brand, origin, channels, available, env }: Props) {
-  const [editing, setEditing] = useState<Editing>(null);
-  const connectedKinds = new Set(channels.map((c) => c.kind));
+/** Connect / edit dialog for an inbox channel kind (used by Omni-Channel Setup → ADD PROFILE and the gear menu). */
+export function ChannelDialog({ brand, kind, channel, onClose }: { brand: string; kind: EditKind; channel?: ChannelRow; onClose: () => void }) {
+  if (kind === "email") return <EmailDialog brand={brand} channel={channel} onClose={onClose} />;
+  if (kind === "livechat" || kind === "webform") return <WidgetDialog brand={brand} kind={kind} channel={channel} onClose={onClose} />;
+  return <SocialDialog brand={brand} kind={kind} channel={channel} onClose={onClose} />;
+}
+
+/** Webhook endpoints that platforms push messages to (shown under Omni-Channel Setup). */
+export function WebhookEndpoints({ origin, env }: { origin: string; env: Env }) {
   return (
-    <div className="space-y-5">
-      <Card>
-        <CardHeader title="Connected channels" description="Conversations from these channels arrive in the Inbox as tickets." actions={
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="primary" onClick={() => setEditing({ kind: "email" })}><Plus className="h-3.5 w-3.5" />Email</Button>
-            <Button size="sm" onClick={() => setEditing({ kind: "livechat" })}><Plus className="h-3.5 w-3.5" />Live chat</Button>
-            <Button size="sm" onClick={() => setEditing({ kind: "webform" })}><Plus className="h-3.5 w-3.5" />Web form</Button>
-          </div>
-        } />
-        <CardBody className="space-y-3">
-          {channels.length === 0 ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              {([["email", "Email", "Import a support mailbox over IMAP and reply over SMTP. Works with Gmail, Outlook, Zoho or any host (use an app password)."], ["livechat", "Live chat", "A chat bubble for your website. Paste one script tag; visitors chat with your team in real time."], ["webform", "Web form", "A hosted contact form (or your own HTML form) that turns submissions into tickets."]] as const).map(([k, t, d]) => (
-                <button key={k} onClick={() => setEditing({ kind: k })} className="rounded-lg border border-dashed border-border-strong p-4 text-left hover:border-link hover:bg-surface-2">
-                  <div className="flex items-center gap-2 text-[14px] font-semibold text-text"><ChannelIcon kind={k} className="h-4 w-4" />{t}</div>
-                  <p className="mt-1 text-[12.5px] text-text-2">{d}</p>
-                  <span className="mt-2 inline-block text-[12.5px] font-medium text-link">Connect →</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            channels.map((c) => <ConnectedChannel key={c.id} c={c} brand={brand} origin={origin} onEdit={() => setEditing({ kind: c.kind as NonNullable<Editing>["kind"], channel: c })} />)
-          )}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader title="Channel catalogue" description="Every channel the CX workspace supports, the API behind it and what it costs." />
-        <CardBody>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {CHANNELS.map((ch) => {
-              const connected = connectedKinds.has(ch.kind);
-              const socialInbox = ch.kind === "whatsapp" ? env.whatsappVerify : ch.kind === "facebook" || ch.kind === "instagram" ? env.metaVerify && env.metaSecret : ch.kind === "linkedin";
-              const builtIn = ["email", "livechat", "webform"].includes(ch.kind);
-              return (
-                <div key={ch.kind} className="flex flex-col rounded-lg border border-border p-3.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 text-[14px] font-semibold text-text"><ChannelIcon kind={ch.kind} className="h-4 w-4" />{ch.name}</div>
-                    {connected ? <Badge tone="good">Connected</Badge> : builtIn ? <Badge tone="info">Built in</Badge> : available[ch.kind] ? <Badge tone="info">API ready</Badge> : <Badge>Not connected</Badge>}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {ch.uses.map((u) => <span key={u} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-text-2">{u}</span>)}
-                  </div>
-                  <dl className="mt-2 space-y-1 text-[12.5px]">
-                    <div className="flex gap-2"><dt className="w-10 shrink-0 text-text-3">API</dt><dd className="text-text">{ch.api}</dd></div>
-                    <div className="flex gap-2"><dt className="w-10 shrink-0 text-text-3">Cost</dt><dd className="text-text"><Badge tone={ch.cost === "free" ? "good" : ch.cost === "paid" ? "warning" : "info"} className="mr-1">{ch.cost === "free" ? "Free" : ch.cost === "paid" ? "Paid" : "Free · approval"}</Badge>{ch.costNote !== "Free" && ch.costNote}</dd></div>
-                    {ch.env.length > 0 && <div className="flex gap-2"><dt className="w-10 shrink-0 text-text-3">Env</dt><dd className="break-all font-mono text-[11.5px] text-text-2">{ch.env.join(", ")}</dd></div>}
-                  </dl>
-                  <p className="mt-2 flex-1 text-[12.5px] text-text-2">{ch.setup}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {builtIn && <Button size="sm" onClick={() => setEditing({ kind: ch.kind as "email" })}><Plus className="h-3.5 w-3.5" />Connect</Button>}
-                    {(ch.kind === "whatsapp" || ch.kind === "facebook" || ch.kind === "instagram" || ch.kind === "linkedin") && (
-                      socialInbox ? <Button size="sm" onClick={() => setEditing({ kind: ch.kind as "whatsapp" })}><Plus className="h-3.5 w-3.5" />Connect inbox</Button>
-                        : <span className="text-[12px] text-text-3">Inbox needs {ch.kind === "whatsapp" ? "WHATSAPP_VERIFY_TOKEN" : "META_VERIFY_TOKEN + META_APP_SECRET"} on the server.</span>
-                    )}
-                    {ch.uses.includes("listening") && !builtIn && <Link href={`/cx/listening?brand=${brand}`} className="text-[12.5px] text-link hover:underline">Used by Social listening →</Link>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader title="Messaging webhooks" description="Endpoints for platforms that push messages to us. They only accept requests when their tokens are configured." />
-        <CardBody className="space-y-3 text-[13px]">
-          <WebhookRow name="WhatsApp Business Cloud API" url={`${origin}/api/cx/webhooks/whatsapp`} ok={env.whatsappVerify} items={[["WHATSAPP_VERIFY_TOKEN", env.whatsappVerify, "verify token you enter in Meta → WhatsApp → Configuration"], ["META_APP_SECRET", env.metaSecret, "enforces the X-Hub-Signature-256 check (recommended)"], ["WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID", env.whatsappSend, "needed to send replies"]]} />
-          <WebhookRow name="Facebook Messenger & Instagram messaging" url={`${origin}/api/cx/webhooks/meta`} ok={env.metaVerify && env.metaSecret} items={[["META_VERIFY_TOKEN", env.metaVerify, "verify token for the Meta app's Webhooks product"], ["META_APP_SECRET", env.metaSecret, "required: every POST is signature-checked"]]} />
-          <p className="text-[12.5px] text-text-3">In the Meta app&apos;s Webhooks, subscribe Page fields <code>messages</code>, <code>feed</code>, <code>mention</code>, <code>ratings</code> and Instagram fields <code>messages</code>, <code>comments</code>, <code>mentions</code>, then connect the channel above with the phone number id / Page id / Instagram account id. Direct messages become one open ticket per sender; each comment thread, mention and tagged post becomes its own ticket, and replies are posted publicly on it. Posts you&apos;re tagged in on Instagram are checked every 15 minutes.</p>
-        </CardBody>
-      </Card>
-
-      {editing?.kind === "email" && <EmailDialog brand={brand} channel={editing.channel} onClose={() => setEditing(null)} />}
-      {(editing?.kind === "livechat" || editing?.kind === "webform") && <WidgetDialog brand={brand} kind={editing.kind} channel={editing.channel} onClose={() => setEditing(null)} />}
-      {(editing?.kind === "whatsapp" || editing?.kind === "facebook" || editing?.kind === "instagram" || editing?.kind === "linkedin") && <SocialDialog brand={brand} kind={editing.kind} channel={editing.channel} onClose={() => setEditing(null)} />}
+    <div className="space-y-3 text-[13px]">
+      <WebhookRow name="WhatsApp Business Cloud API" url={`${origin}/api/cx/webhooks/whatsapp`} ok={env.whatsappVerify} items={[["WHATSAPP_VERIFY_TOKEN", env.whatsappVerify, "verify token you enter in Meta → WhatsApp → Configuration"], ["META_APP_SECRET", env.metaSecret, "enforces the X-Hub-Signature-256 check (recommended)"], ["WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID", env.whatsappSend, "needed to send replies"]]} />
+      <WebhookRow name="Facebook Messenger & Instagram messaging" url={`${origin}/api/cx/webhooks/meta`} ok={env.metaVerify && env.metaSecret} items={[["META_VERIFY_TOKEN", env.metaVerify, "verify token for the Meta app's Webhooks product"], ["META_APP_SECRET", env.metaSecret, "required: every POST is signature-checked"]]} />
+      <p className="text-[12.5px] text-text-3">In the Meta app&apos;s Webhooks, subscribe Page fields <code>messages</code>, <code>feed</code>, <code>mention</code>, <code>ratings</code> and Instagram fields <code>messages</code>, <code>comments</code>, <code>mentions</code>, then add the profile with the phone number id / Page id / Instagram account id. Direct messages become one open ticket per sender; each comment thread, mention and tagged post becomes its own ticket, and replies are posted publicly on it. Posts you&apos;re tagged in on Instagram are checked every 15 minutes.</p>
     </div>
   );
 }
 
-function WebhookRow({ name, url, ok, items }: { name: string; url: string; ok: boolean; items: [string, boolean, string][] }) {
+export function WebhookRow({ name, url, ok, items }: { name: string; url: string; ok: boolean; items: [string, boolean, string][] }) {
   return (
     <div className="rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-center gap-2 font-medium text-text"><Webhook className="h-4 w-4 text-text-3" />{name}{ok ? <Badge tone="good">Accepting</Badge> : <Badge>Disabled</Badge>}</div>
@@ -138,28 +67,21 @@ export function CopyField({ value, className, multiline }: { value: string; clas
   );
 }
 
-function ConnectedChannel({ c, brand, origin, onEdit }: { c: ChannelRow; brand: string; origin: string; onEdit: () => void }) {
+/** Setup details of a connected profile: mailbox, embed snippet, hosted links, account ids, last sync error. */
+export function ProfileDetails({ c, brand, origin }: { c: ChannelRow; brand: string; origin: string }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "good" | "critical"; text: string } | null>(null);
-  const [confirm, setConfirm] = useState(false);
-  const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>, okText?: (d: unknown) => string) => {
-    setBusy(key); setMsg(null);
-    const r = await fn();
-    setBusy(null);
-    if (!r.ok) setMsg({ tone: "critical", text: r.error ?? "Failed" });
-    else if (okText) setMsg({ tone: "good", text: okText(r.data) });
-    router.refresh();
-  };
   const cfg = c.config as Record<string, any>;
-  let details: ReactNode = null;
+  let details: ReactNode = <p className="text-[12.5px] text-text-3">{c.tickets} tickets · {c.open} open.</p>;
   if (c.kind === "email")
     details = (
-      <div className="grid gap-x-6 gap-y-1 text-[12.5px] text-text-2 sm:grid-cols-2">
+      <div className="space-y-1 text-[12.5px] text-text-2">
         <div>Mailbox <span className="text-text">{cfg.user}</span> · {cfg.mailbox || "INBOX"}</div>
         <div>IMAP <span className="text-text">{cfg.imapHost}:{cfg.imapPort}</span> · SMTP <span className="text-text">{cfg.smtpHost}:{cfg.smtpPort}</span></div>
         <div>Replies from <span className="text-text">{cfg.fromName ? `${cfg.fromName} <${cfg.fromAddress}>` : cfg.fromAddress}</span></div>
         <div>Last check {cfg.lastCheck ? timeAgo(cfg.lastCheck) : "never"} · {cfg.imported ?? 0} messages imported · checks every 5 min</div>
+        <Button size="sm" className="mt-1" loading={busy} onClick={async () => { setBusy(true); setMsg(null); const r = await syncEmailAction(brand, c.id); setBusy(false); setMsg(r.ok ? { tone: "good", text: `Checked mailbox: ${r.data.imported} new tickets, ${r.data.threaded} replies threaded.` } : { tone: "critical", text: r.error }); router.refresh(); }}><RefreshCw className="h-3.5 w-3.5" />Sync now</Button>
       </div>
     );
   if (c.kind === "livechat")
@@ -188,31 +110,11 @@ function ConnectedChannel({ c, brand, origin, onEdit }: { c: ChannelRow; brand: 
         {c.kind === "linkedin" && <LinkedInSync brand={brand} />}
       </div>
     );
-
   return (
-    <div className="rounded-lg border border-border p-3.5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-text">
-            <ChannelIcon kind={c.kind} className="h-4 w-4" />{c.name}
-            <Badge tone={c.status === "active" ? "good" : c.status === "error" ? "critical" : "neutral"}>{c.status === "active" ? "Active" : c.status === "error" ? "Error" : "Paused"}</Badge>
-            <span className="text-[12px] font-normal text-text-3">{c.tickets} tickets · {c.open} open · added {timeAgo(c.created_at)}</span>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {c.kind === "email" && <Button size="sm" disabled={!!busy} onClick={() => run("sync", () => syncEmailAction(brand, c.id), (d) => { const x = d as { imported: number; threaded: number }; return `Checked mailbox: ${x.imported} new tickets, ${x.threaded} replies threaded.`; })}><RefreshCw className={`h-3.5 w-3.5 ${busy === "sync" ? "animate-spin" : ""}`} />Sync now</Button>}
-          <Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-3.5 w-3.5" />Edit</Button>
-          <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("pause", () => channelStatusAction(brand, c.id, c.status === "paused" ? "active" : "paused"))}>{c.status === "paused" ? <><Play className="h-3.5 w-3.5" />Resume</> : <><Pause className="h-3.5 w-3.5" />Pause</>}</Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirm(true)} aria-label="Remove channel"><Trash className="h-3.5 w-3.5" /></Button>
-        </div>
-      </div>
-      <div className="mt-2">{details}</div>
-      {c.last_error && <Callout tone="critical" className="mt-2" title="Last sync failed">{c.last_error}</Callout>}
-      {msg && <Callout tone={msg.tone === "good" ? "good" : "critical"} className="mt-2">{msg.text}</Callout>}
-      <Dialog open={confirm} onClose={() => setConfirm(false)} title="Remove channel?" description="Existing tickets stay in the inbox; new messages from this channel stop arriving." size="sm"
-        footer={<><Button onClick={() => setConfirm(false)}>Cancel</Button><Button variant="danger" onClick={() => { setConfirm(false); run("del", () => deleteChannelAction(brand, c.id)); }}>Remove</Button></>}>
-        <p className="text-[13px] text-text-2">{c.name}</p>
-      </Dialog>
+    <div className="space-y-2">
+      {details}
+      {c.last_error && <Callout tone="critical" title="Last sync failed">{c.last_error}</Callout>}
+      {msg && <Callout tone={msg.tone === "good" ? "good" : "critical"}>{msg.text}</Callout>}
     </div>
   );
 }
@@ -224,7 +126,7 @@ const PRESETS: Record<string, Partial<EmailInput>> = {
   yahoo: { imapHost: "imap.mail.yahoo.com", imapPort: 993, imapSecure: true, smtpHost: "smtp.mail.yahoo.com", smtpPort: 465, smtpSecure: true },
 };
 
-function EmailDialog({ brand, channel, onClose }: { brand: string; channel?: ChannelRow; onClose: () => void }) {
+export function EmailDialog({ brand, channel, onClose }: { brand: string; channel?: ChannelRow; onClose: () => void }) {
   const router = useRouter();
   const cfg = (channel?.config ?? {}) as Partial<EmailInput>;
   const [f, setF] = useState<EmailInput>({
@@ -276,7 +178,7 @@ function EmailDialog({ brand, channel, onClose }: { brand: string; channel?: Cha
   );
 }
 
-function WidgetDialog({ brand, kind, channel, onClose }: { brand: string; kind: "livechat" | "webform"; channel?: ChannelRow; onClose: () => void }) {
+export function WidgetDialog({ brand, kind, channel, onClose }: { brand: string; kind: "livechat" | "webform"; channel?: ChannelRow; onClose: () => void }) {
   const router = useRouter();
   const c = (channel?.config ?? {}) as Record<string, any>;
   const [name, setName] = useState(channel?.name ?? (kind === "livechat" ? "Website chat" : "Contact form"));
@@ -319,7 +221,7 @@ function WidgetDialog({ brand, kind, channel, onClose }: { brand: string; kind: 
   );
 }
 
-function LinkedInSync({ brand }: { brand: string }) {
+export function LinkedInSync({ brand }: { brand: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -339,7 +241,7 @@ const TOKEN_HINT: Record<Exclude<SocialKind, "whatsapp">, string> = {
   linkedin: "Token from the Community Management API with r_organization_social, w_organization_social, r_organization_social_feed, w_organization_social_feed and rw_organization_admin (a Page admin must authorize). Leave empty to use the brand's Publishing LinkedIn connection. Tokens expire after 60 days unless your app has refresh tokens.",
 };
 
-function SocialDialog({ brand, kind, channel, onClose }: { brand: string; kind: SocialKind; channel?: ChannelRow; onClose: () => void }) {
+export function SocialDialog({ brand, kind, channel, onClose }: { brand: string; kind: SocialKind; channel?: ChannelRow; onClose: () => void }) {
   const router = useRouter();
   const cfg = (channel?.config ?? {}) as Record<string, unknown>;
   const [name, setName] = useState(channel?.name ?? SOCIAL_NAME[kind]);

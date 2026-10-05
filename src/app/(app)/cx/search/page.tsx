@@ -15,6 +15,7 @@ import { sourceLabel } from "@/lib/cx/listening/sources";
 import { snippet, taskStatusLabel } from "@/lib/cx/ops/model";
 import { quickSearch, type SearchResults } from "@/lib/cx/ops/search";
 import { parseSearch } from "@/lib/cx/inbox/model";
+import { ticketHref } from "@/lib/cx/inbox/stream";
 import { dateTimeLabel, num } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -67,7 +68,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                   {res.tickets.map((t) => (
                     <li key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[13px]">
                       <ChannelIcon kind={t.channel_kind} className="text-text-3" />
-                      <Link href={`/cx/inbox?brand=${b}&view=all&t=${t.id}`} className="min-w-0 flex-1 truncate text-link hover:underline"><span className="text-text-3">#{t.number}</span> {t.subject}</Link>
+                      <Link href={ticketHref(b, t.id)} className="min-w-0 flex-1 truncate text-link hover:underline"><span className="text-text-3">#{t.number}</span> {t.subject}</Link>
                       <span className="text-[12px] text-text-2">{t.contact_name || t.contact_email}</span>
                       <StatusBadge status={t.crm_status} />
                       <span className="text-[11.5px] text-text-3" suppressHydrationWarning>{dateTimeLabel(t.updated_at)}</span>
@@ -85,7 +86,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                       <div className="flex flex-wrap items-center gap-2 text-[12px] text-text-3">
                         <ChannelIcon kind={m.channel_kind} /><span className="font-medium text-text-2">{m.author_name || (m.direction === "in" ? "Customer" : "Agent")}</span>
                         {m.direction === "note" ? <Badge tone="warning">Note</Badge> : m.direction === "out" ? <Badge tone="info">Reply</Badge> : null}
-                        <Link href={`/cx/inbox?brand=${b}&view=all&t=${m.ticket_id}`} className="min-w-0 truncate text-link hover:underline">#{m.number} {m.subject}</Link>
+                        <Link href={ticketHref(b, m.ticket_id)} className="min-w-0 truncate text-link hover:underline">#{m.number} {m.subject}</Link>
                         <span className="ml-auto" suppressHydrationWarning>{dateTimeLabel(m.created_at)}</span>
                       </div>
                       <p className="mt-0.5 text-text"><Hl text={snippet(m.body, text, 200)} q={text} /></p>
@@ -117,7 +118,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                       <div className="flex flex-wrap items-center gap-2 text-[12px] text-text-3">
                         <span className="font-medium text-text-2">{m.author || "Unknown"}</span><span>{sourceLabel(m.source)}</span>
                         <SentimentBadge sentiment={m.sentiment} />
-                        {m.ticket_id && <Link href={`/cx/inbox?brand=${b}&view=all&t=${m.ticket_id}`} className="text-link hover:underline">Ticket</Link>}
+                        {m.ticket_id && <Link href={ticketHref(b, m.ticket_id)} className="text-link hover:underline">Ticket</Link>}
                         {m.url && <a href={m.url} target="_blank" rel="noreferrer" className="text-link hover:underline">Original ↗</a>}
                         <span className="ml-auto" suppressHydrationWarning>{m.published_at ? dateTimeLabel(m.published_at) : "n/a"}</span>
                       </div>

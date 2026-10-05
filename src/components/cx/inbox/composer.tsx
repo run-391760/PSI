@@ -142,8 +142,9 @@ export function Composer(p: ComposerProps) {
   return (
     <div className="border-t border-border bg-surface p-3">
       <div className="mb-2 flex flex-wrap items-center gap-1">
-        <button onClick={() => setMode("reply")} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px]", mode === "reply" ? "bg-brand-soft font-medium text-link" : "text-text-2 hover:bg-surface-3")}><MessageSquareText className="h-3.5 w-3.5" />Reply</button>
-        <button onClick={() => setMode("note")} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px]", mode === "note" ? "bg-warning-soft font-medium text-warning-ink" : "text-text-2 hover:bg-surface-3")}><StickyNote className="h-3.5 w-3.5" />Internal note</button>
+        <button onClick={() => { setMode("reply"); setPrivateReply(false); }} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px]", mode === "reply" && !privateReply ? "bg-brand-soft font-medium text-link" : "text-text-2 hover:bg-surface-3")} title={publicReply ? "Public comment on the post" : "Reply to the customer"}><MessageSquareText className="h-3.5 w-3.5" />{publicReply ? "Comment" : "Reply"}</button>
+        {privateOk && <button onClick={() => { setMode("reply"); setPrivateReply(true); }} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px]", mode === "reply" && privateReply ? "bg-brand-soft font-medium text-link" : "text-text-2 hover:bg-surface-3")} title="Private reply: a DM to the commenter (Meta allows one per comment, within 7 days)"><Lock className="h-3.5 w-3.5" />Private reply</button>}
+        <button onClick={() => setMode("note")} className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px]", mode === "note" ? "bg-warning-soft font-medium text-warning-ink" : "text-text-2 hover:bg-surface-3")}><StickyNote className="h-3.5 w-3.5" />Note</button>
         <div className="ml-auto flex flex-wrap items-center gap-0.5">
           <AttachButton uploads={uploads} />
           <button type="button" onClick={() => setLinkOpen(true)} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] text-text-2 hover:bg-surface-3" title="Insert hyperlink"><Link2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Link</span></button>
@@ -241,11 +242,6 @@ export function Composer(p: ComposerProps) {
       {error && <Callout tone="critical" className="mt-2">{error}</Callout>}
       {notice && <Callout tone="warning" className="mt-2">{notice}</Callout>}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        {mode === "reply" && privateOk && (
-          <label className="mr-auto flex items-center gap-1.5 text-[12px] text-text-2" title="Meta allows one private reply per comment, within 7 days">
-            <input type="checkbox" checked={privateReply} onChange={(e) => setPrivateReply(e.target.checked)} className="accent-brand" />Send privately (DM the commenter)
-          </label>
-        )}
         {mode === "reply" && isEmail && p.hasSignature && (
           <label className="mr-auto flex items-center gap-1.5 text-[12px] text-text-2"><input type="checkbox" checked={signature} onChange={(e) => setSignature(e.target.checked)} className="accent-brand" />Signature</label>
         )}

@@ -90,9 +90,32 @@ export function distribute(type: AssignmentType, agents: QueueAgent[], ticketIds
   return { assignments: out, cursor: c };
 }
 
+/**
+ * Like distribute, but a ticket with `allowed` agent ids (its segment is routed to a user group) only goes to
+ * those agents. Tickets whose group has no free agent wait; other tickets keep being assigned.
+ */
+export function distributeRouted(type: AssignmentType, agents: QueueAgent[], tickets: { id: string; previousAgentId?: string | null; allowed?: string[] | null }[], cursor: number, now = new Date(), byTimezone = false) {
+  const pool = agents.map((a) => ({ ...a }));
+  const out: { ticketId: string; agentId: string }[] = [];
+  let c = cursor;
+  for (const t of tickets) {
+    const candidates = t.allowed ? pool.filter((a) => t.allowed!.includes(a.id)) : pool;
+    if (!candidates.length) continue;
+    const r = pickAgent(type, candidates, { cursor: c, previousAgentId: t.previousAgentId, now, byTimezone });
+    if (!r.agentId) continue;
+    c = r.cursor;
+    const a = pool.find((x) => x.id === r.agentId)!;
+    a.load++;
+    a.lastAssignedAt = now.toISOString();
+    out.push({ ticketId: t.id, agentId: r.agentId });
+  }
+  return { assignments: out, cursor: c };
+}
+
 // ---------------------------------------------------------------- segments and ordering
 
-export type Segment = { id: string; name: string; weight: number; match: { field: "contact_tag" | "email_domain" | "channel" | "priority"; values: string[] }[] };
+/** `userGroupId` (Settings → Users → Users Group) routes the segment's tickets only to that group's members. */
+export type Segment = { id: string; name: string; weight: number; match: { field: "contact_tag" | "email_domain" | "channel" | "priority"; values: string[] }[]; userGroupId?: string | null };
 /** First segment (highest weight) whose rules all match. */
 export function segmentFor(segments: Segment[], t: { contactTags: string[]; email: string | null; channel: string; priority: string }) {
   const lc = (xs: string[]) => xs.map((x) => x.trim().toLowerCase());

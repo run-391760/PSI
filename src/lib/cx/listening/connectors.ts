@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { booleanQuery, hashtagsFor, parseAppId, simpleQueries, type ListenSource } from "./sources";
+import { engineQueries, hashtagsOf, newsEditions, plainQueries, type TopicSpec } from "./topic-query";
 
 /**
  * Listening connectors: pure mappers (API response → RawMention, fixture-tested) and fetchers.
@@ -14,6 +15,8 @@ export type RawMention = {
   author: string;
   authorHandle: string | null;
   authorFollowers: number | null;
+  /** true/false when the source reports verification (Mastodon verified links, Bluesky verification); absent when unknown. */
+  authorVerified?: boolean | null;
   title: string;
   body: string;
   language: string | null;
@@ -152,6 +155,7 @@ export function mapMastodon(statuses: J[], instance = "mastodon.social"): RawMen
         author: str(s.account?.display_name) || acct || "unknown",
         authorHandle: acct ? `@${acct.includes("@") ? acct : `${acct}@${instance}`}` : null,
         authorFollowers: numOrNull(s.account?.followers_count),
+        authorVerified: Array.isArray(s.account?.fields) ? (s.account.fields as J[]).some((f) => !!f?.verified_at) : null,
         title: "",
         body: stripHtml(str(s.content)) || stripHtml(str(s.spoiler_text)),
         language: str(s.language) || null,
@@ -290,6 +294,7 @@ export function mapBluesky(json: J): RawMention[] {
         author: str(p.author?.displayName) || handle || "unknown",
         authorHandle: handle ? `@${handle}` : null,
         authorFollowers: numOrNull(p.author?.followersCount),
+        authorVerified: p.author ? str(p.author.verification?.verifiedStatus) === "valid" : null,
         title: "",
         body: str(p.record?.text),
         language: Array.isArray(langs) && langs[0] ? str(langs[0]).slice(0, 2) : null,
@@ -304,7 +309,15 @@ export function mapBluesky(json: J): RawMention[] {
 
 // ------------------------------------------------------------------ fetchers
 
-export type TopicQuery = { keywords: string[]; excluded: string[]; appIds: string[]; country: string; language: string };
+export type TopicQuery = {
+  keywords: string[];
+  excluded: string[];
+  appIds: string[];
+  country: string;
+  language: string;
+  /** Full topic spec (AND CONTAINS, exclusions, regional). When set, queries are built from it with chunking. */
+  spec?: TopicSpec;
+};
 
 const UA = "Mozilla/5.0 (compatible; SynapseSEO-Listening/1.0)";
 async function get(url: string, init: RequestInit = {}): Promise<Response> {
@@ -346,25 +359,45 @@ async function blueskyAuth() {
 
 const MAX_RULES = 5;
 
+/** Queries per source for a topic: from the full spec when present, else from the legacy keyword rules. */
+function topicPlan(t: TopicQuery) {
+  if (!t.spec) {
+    const rules = t.keywords.slice(0, MAX_RULES);
+    return {
+      boolean: (_sites: boolean, max = MAX_RULES) => rules.slice(0, max).map((k) => booleanQuery(k, t.excluded)),
+      plain: (max = 2) => rules.flatMap((k) => simpleQueries(k, max)),
+      hashtags: () => [...new Set(rules.flatMap(hashtagsFor))].slice(0, 6),
+      editions: [(t.country || "US").toUpperCase()],
+    };
+  }
+  const spec = t.spec;
+  return {
+    boolean: (sites: boolean, max = MAX_RULES) => engineQueries(spec, { maxQueries: max, sites }).queries,
+    plain: () => plainQueries(spec, 6),
+    hashtags: () => hashtagsOf(spec, 6),
+    editions: newsEditions(spec, t.country || "US"),
+  };
+}
+
 /** Fetch raw mentions of one topic from one source. Throws on transport/API errors. */
 export async function fetchSource(source: ListenSource, t: TopicQuery): Promise<RawMention[]> {
-  const rules = t.keywords.slice(0, MAX_RULES);
+  const plan = topicPlan(t);
   const out: RawMention[] = [];
-  const cc = (t.country || "US").toUpperCase();
   switch (source) {
-    case "news":
-      for (const k of rules) {
-        const q = booleanQuery(k, t.excluded);
-        const res = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:30d`)}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`);
-        out.push(...mapNewsRss(await res.text()));
-      }
+    case "news": {
+      const qs = plan.boolean(true, t.spec ? 4 : MAX_RULES);
+      for (const cc of plan.editions)
+        for (const q of qs) {
+          const res = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:30d`)}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`);
+          out.push(...mapNewsRss(await res.text()).map((m) => (plan.editions.length > 1 || t.spec?.countries.length ? { ...m, country: cc } : m)));
+        }
       break;
+    }
     case "hackernews":
-      for (const k of rules)
-        for (const q of simpleQueries(k, 2)) out.push(...mapHackerNews(await getJson(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(q)}&tags=(story,comment)&hitsPerPage=50`)));
+      for (const q of plan.plain(2).slice(0, 6)) out.push(...mapHackerNews(await getJson(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(q)}&tags=(story,comment)&hitsPerPage=50`)));
       break;
     case "mastodon":
-      for (const tag of [...new Set(rules.flatMap(hashtagsFor))].slice(0, 6)) out.push(...mapMastodon((await getJson(`https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`)) as unknown as J[]));
+      for (const tag of plan.hashtags()) out.push(...mapMastodon((await getJson(`https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`)) as unknown as J[]));
       break;
     case "appstore":
       for (const raw of t.appIds.slice(0, 5)) {
@@ -375,15 +408,15 @@ export async function fetchSource(source: ListenSource, t: TopicQuery): Promise<
       break;
     case "reddit": {
       const token = await redditAuth();
-      for (const k of rules)
-        out.push(...mapReddit(await getJson(`https://oauth.reddit.com/search?q=${encodeURIComponent(booleanQuery(k, t.excluded))}&sort=new&t=month&limit=50&raw_json=1`, { headers: { Authorization: `Bearer ${token}` } })));
+      for (const q of plan.boolean(true))
+        out.push(...mapReddit(await getJson(`https://oauth.reddit.com/search?q=${encodeURIComponent(q)}&sort=new&t=month&limit=50&raw_json=1`, { headers: { Authorization: `Bearer ${token}` } })));
       break;
     }
     case "youtube": {
       const key = encodeURIComponent(process.env.YOUTUBE_API_KEY ?? "");
       const after = new Date(Date.now() - 30 * 86400000).toISOString();
-      for (const k of rules.slice(0, 3)) {
-        const videos = mapYouTubeSearch(await getJson(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date&maxResults=25&publishedAfter=${after}&q=${encodeURIComponent(booleanQuery(k, t.excluded))}&key=${key}`));
+      for (const q of plan.boolean(false, 3)) {
+        const videos = mapYouTubeSearch(await getJson(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date&maxResults=25&publishedAfter=${after}&q=${encodeURIComponent(q)}&key=${key}`));
         out.push(...videos);
         for (const v of videos.slice(0, 5)) {
           const vid = v.externalId.slice(6);
@@ -395,10 +428,92 @@ export async function fetchSource(source: ListenSource, t: TopicQuery): Promise<
     }
     case "bluesky": {
       const jwt = await blueskyAuth();
-      for (const k of rules)
-        for (const q of simpleQueries(k, 2)) out.push(...mapBluesky(await getJson(`https://bsky.social/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&sort=latest&limit=50`, { headers: { Authorization: `Bearer ${jwt}` } })));
+      for (const q of plan.plain(2).slice(0, 6)) out.push(...mapBluesky(await getJson(`https://bsky.social/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&sort=latest&limit=50`, { headers: { Authorization: `Bearer ${jwt}` } })));
       break;
     }
   }
   return out;
+}
+
+// ------------------------------------------------------------------ public profile feeds (More Social Profiles, no login)
+
+/** YouTube channel Atom feed (https://www.youtube.com/feeds/videos.xml?channel_id=UC…) → videos. Free, no key. */
+export function mapYouTubeFeed(body: string): RawMention[] {
+  const doc = xml.parse(body) as J;
+  const feed = doc?.feed ?? {};
+  const raw = feed.entry;
+  const entries: J[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const channel = xtext(feed.author?.name) || xtext(feed.title);
+  return entries.flatMap((e) => {
+    const vid = xtext(e["yt:videoId"]);
+    if (!vid) return [];
+    const group = e["media:group"] ?? {};
+    const thumb = typeof group["media:thumbnail"] === "object" ? str(group["media:thumbnail"]?.["@_url"]) : "";
+    const stats = group["media:community"]?.["media:statistics"];
+    const views = typeof stats === "object" ? numOrNull(stats?.["@_views"]) : null;
+    return [
+      {
+        source: "youtube" as const,
+        externalId: `video:${vid}`,
+        url: `https://www.youtube.com/watch?v=${vid}`,
+        author: xtext(e.author?.name) || channel || "YouTube channel",
+        authorHandle: xtext(e["yt:channelId"]) || null,
+        authorFollowers: null,
+        title: stripHtml(xtext(e.title)),
+        body: stripHtml(xtext(group["media:description"])).slice(0, 4000),
+        language: null,
+        country: null,
+        publishedAt: iso(xtext(e.published)),
+        engagement: (views == null ? {} : { views }) as Record<string, number>,
+        media: httpsUrl(thumb) ? [{ type: "video" as const, url: `https://www.youtube.com/watch?v=${vid}`, preview: thumb, alt: null }] : [],
+      },
+    ];
+  });
+}
+
+/** Bluesky public author feed (public.api.bsky.app getAuthorFeed) → posts. */
+export const mapBlueskyAuthorFeed = (json: J) => mapBluesky({ posts: ((json?.feed ?? []) as J[]).map((f) => f?.post).filter(Boolean) });
+
+/**
+ * Latest posts of one public profile tracked without login. Free: Mastodon, Bluesky (public AppView),
+ * YouTube (channel RSS; @handles need YOUTUBE_API_KEY to resolve), Hacker News. Keyed: Reddit (REDDIT_CLIENT_ID/SECRET).
+ * Returns the resolved external id (e.g. a YouTube channel id) so it can be stored.
+ */
+export async function fetchProfileFeed(network: string, handle: string, externalId = ""): Promise<{ posts: RawMention[]; externalId: string }> {
+  const h = handle.trim().replace(/^@/, "");
+  switch (network) {
+    case "mastodon": {
+      const [user, instance = "mastodon.social"] = h.split("@");
+      if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(instance)) throw new Error("Use the form @user@instance.social.");
+      const id = externalId || str((await getJson(`https://${instance}/api/v1/accounts/lookup?acct=${encodeURIComponent(user)}`)).id);
+      if (!id) throw new Error("Account not found on that instance.");
+      const statuses = (await getJson(`https://${instance}/api/v1/accounts/${encodeURIComponent(id)}/statuses?limit=40&exclude_reblogs=true`)) as unknown as J[];
+      return { posts: mapMastodon(statuses, instance), externalId: id };
+    }
+    case "bluesky": {
+      const json = await getJson(`https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(h)}&limit=50&filter=posts_no_replies`);
+      return { posts: mapBlueskyAuthorFeed(json), externalId: externalId || h };
+    }
+    case "youtube": {
+      let id = externalId || (/^UC[\w-]{22}$/.test(h) ? h : "");
+      if (!id) {
+        const key = process.env.YOUTUBE_API_KEY;
+        if (!key) throw new Error("Enter the channel id (UC…) or set YOUTUBE_API_KEY to resolve @handles.");
+        const d = await getJson(`https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent(`@${h}`)}&key=${encodeURIComponent(key)}`);
+        id = str(d?.items?.[0]?.id);
+        if (!id) throw new Error("YouTube channel not found.");
+      }
+      const res = await get(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(id)}`);
+      return { posts: mapYouTubeFeed(await res.text()), externalId: id };
+    }
+    case "hackernews":
+      return { posts: mapHackerNews(await getJson(`https://hn.algolia.com/api/v1/search_by_date?tags=author_${encodeURIComponent(h)}&hitsPerPage=50`)), externalId: h };
+    case "reddit": {
+      const token = await redditAuth();
+      const path = /^r\//i.test(h) ? `/r/${encodeURIComponent(h.slice(2))}/new` : `/user/${encodeURIComponent(h.replace(/^u\//i, ""))}/submitted`;
+      return { posts: mapReddit(await getJson(`https://oauth.reddit.com${path}?limit=50&raw_json=1`, { headers: { Authorization: `Bearer ${token}` } })), externalId: h };
+    }
+    default:
+      throw new Error("This network has no free public API; connect its API to track this profile.");
+  }
 }

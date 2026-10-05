@@ -100,7 +100,7 @@ export type InboxPrefs = {
   /** Right-hand filter/counter panel open. */
   panel: boolean;
 };
-export const DEFAULT_PREFS: InboxPrefs = { layout: "ticket", align: "split", absoluteDates: false, soundNewTicket: false, soundNewMessage: false, enterToSend: false, emailCollapsed: true, translateTo: "English", mode: "split", panel: true };
+export const DEFAULT_PREFS: InboxPrefs = { layout: "ticket", align: "split", absoluteDates: false, soundNewTicket: false, soundNewMessage: false, enterToSend: false, emailCollapsed: true, translateTo: "English", mode: "cards", panel: true };
 
 export function normSettings(v: Partial<InboxSettings> | null | undefined): InboxSettings {
   const s = { ...DEFAULT_SETTINGS, ...(v ?? {}) };

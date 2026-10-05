@@ -20,6 +20,18 @@ CREATE TABLE IF NOT EXISTS cx_listening_topic_opts (
   topic_id text PRIMARY KEY REFERENCES cx_topics(id) ON DELETE CASCADE,
   app_ids jsonb NOT NULL DEFAULT '[]'
 );
+-- WP-K3 topic editor: AND CONTAINS, exclusions, regional, more settings, objective, creator, fetch tracking.
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS and_contains jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS exclude_authors jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS exclude_sites jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS countries jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS min_followers integer NOT NULL DEFAULT 0;
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS verified_only boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS fetch_frequency text NOT NULL DEFAULT 'hourly';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS objective text NOT NULL DEFAULT '';
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS created_by text REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+ALTER TABLE cx_listening_topic_opts ADD COLUMN IF NOT EXISTS last_fetched_at timestamptz;
 CREATE INDEX IF NOT EXISTS cx_mentions_topic ON cx_mentions(project_id, topic_id, published_at DESC);
 
 CREATE TABLE IF NOT EXISTS cx_crisis_events (

@@ -4,7 +4,7 @@ import { AppError } from "@/lib/domain";
 import { agentsOf } from "@/lib/cx/insights/team";
 import { audit } from "./audit";
 import { sendAdminEmail } from "./mailer";
-import { breakOverrun, cleanupDue, distribute, orderQueue, segmentFor, type AssignmentType, type QueueAgent, type Segment } from "./pure/queue";
+import { breakOverrun, cleanupDue, distribute, distributeRouted, orderQueue, segmentFor, type AssignmentType, type QueueAgent, type Segment } from "./pure/queue";
 import { iso } from "./util";
 
 /**
@@ -26,7 +26,7 @@ export async function getQueueSettings(projectId: string): Promise<QueueSettings
 }
 
 export async function saveQueueSettings(projectId: string, s: Omit<QueueSettings, "rrCursor">, actor: { id: string; name: string }) {
-  const segments = s.segments.filter((x) => x.name.trim() && x.match.length).map((x) => ({ ...x, id: x.id || randomUUID(), name: x.name.trim().slice(0, 60), weight: Math.round(Number(x.weight) || 0), match: x.match.map((m) => ({ field: m.field, values: m.values.map((v) => v.trim()).filter(Boolean) })).filter((m) => m.values.length) }));
+  const segments = s.segments.filter((x) => x.name.trim() && x.match.length).map((x) => ({ ...x, id: x.id || randomUUID(), name: x.name.trim().slice(0, 60), weight: Math.round(Number(x.weight) || 0), userGroupId: typeof x.userGroupId === "string" && x.userGroupId ? x.userGroupId.slice(0, 64) : null, match: x.match.map((m) => ({ field: m.field, values: m.values.map((v) => v.trim()).filter(Boolean) })).filter((m) => m.values.length) }));
   await query(
     `INSERT INTO cx_admin_queue_settings(project_id,enabled,assignment_type,max_per_agent,cleanup_minutes,reset_on_status,reset_after_minutes,remove_on,segments,by_timezone) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)
      ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled, assignment_type=excluded.assignment_type, max_per_agent=excluded.max_per_agent, cleanup_minutes=excluded.cleanup_minutes,
@@ -176,7 +176,17 @@ export async function runQueue(projectId: string) {
     ? await query<{ contact_id: string; assignee_id: string }>("SELECT DISTINCT ON (contact_id) contact_id,assignee_id FROM cx_tickets WHERE project_id=$1 AND contact_id = ANY($2) AND assignee_id IS NOT NULL ORDER BY contact_id, updated_at DESC", [projectId, ordered.map((o) => o.contact_id).filter(Boolean)])
     : [];
   const pool: QueueAgent[] = agents.map((a) => ({ id: a.id, status: a.status, paused: a.paused, load: a.load, capacity: a.capacity, lastAssignedAt: a.lastAssignedAt, officeStart: a.officeStart, officeEnd: a.officeEnd, timezone: a.timezone }));
-  const { assignments, cursor } = distribute(s.assignmentType, pool, ordered.map((o) => ({ id: o.id, previousAgentId: prev.find((p) => p.contact_id === o.contact_id)?.assignee_id ?? null })), s.rrCursor, new Date(), s.byTimezone);
+  // Segments routed to a user group (Settings → Users) only go to that group's members.
+  const routed = s.segments.filter((x) => x.userGroupId);
+  const groupMembers = new Map<string, string[]>();
+  if (routed.length) {
+    const { userIdsForUserGroup } = await import("./users");
+    for (const seg of routed) groupMembers.set(seg.name, await userIdsForUserGroup(projectId, seg.userGroupId));
+  }
+  const tickets = ordered.map((o) => ({ id: o.id, previousAgentId: prev.find((p) => p.contact_id === o.contact_id)?.assignee_id ?? null, allowed: o.segment ? groupMembers.get(o.segment) ?? null : null }));
+  const { assignments, cursor } = routed.length
+    ? distributeRouted(s.assignmentType, pool, tickets, s.rrCursor, new Date(), s.byTimezone)
+    : distribute(s.assignmentType, pool, tickets, s.rrCursor, new Date(), s.byTimezone);
   for (const a of assignments) {
     const [ok] = await query("UPDATE cx_tickets SET assignee_id=$2, updated_at=now() WHERE id=$1 AND assignee_id IS NULL RETURNING id", [a.ticketId, a.agentId]);
     if (!ok) continue;

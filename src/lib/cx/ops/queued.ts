@@ -1,6 +1,7 @@
 import { query } from "@/lib/db";
 import { getQueueSettings, queueAgents, queueTicket, runQueue } from "@/lib/cx/admin/queue";
 import { orderQueue } from "@/lib/cx/admin/pure/queue";
+import { logEvent } from "@/lib/cx/inbox/store";
 import { MEDIA_SQL } from "./media";
 
 /**
@@ -62,4 +63,12 @@ export async function queueAllUnassigned(projectId: string) {
 export async function markQueueAssigned(ticketIds: string[], agentId: string | null) {
   if (!ticketIds.length) return;
   await query("UPDATE cx_admin_ticket_state SET queue_agent=$2, assigned_at=CASE WHEN $2::text IS NULL THEN NULL ELSE now() END, queued_at=CASE WHEN $2::text IS NULL THEN now() ELSE queued_at END, updated_at=now() WHERE ticket_id = ANY($1)", [ticketIds, agentId]);
+}
+
+/** "Remove From Queue": take tickets out of the assignment queue (they stay open with their current assignee). */
+export async function removeFromQueue(projectId: string, ticketIds: string[], actor: string) {
+  if (!ticketIds.length) return 0;
+  const rows = await query<{ ticket_id: string }>("UPDATE cx_admin_ticket_state SET in_queue=false, updated_at=now() WHERE project_id=$1 AND ticket_id = ANY($2) AND in_queue RETURNING ticket_id", [projectId, ticketIds]);
+  for (const r of rows) await logEvent(query, r.ticket_id, actor, "queue", "removed the ticket from the queue").catch(() => {});
+  return rows.length;
 }

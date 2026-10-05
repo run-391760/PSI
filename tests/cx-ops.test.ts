@@ -183,7 +183,7 @@ test("notification prefs, month series, sizes, wait labels", () => {
 
 // ---------------------------------------------------------------- inbox prefs extension (card view)
 test("inbox prefs: card view mode and filter panel state are sanitized", () => {
-  assert.equal(inbox.normPrefs({}).mode, "split");
+  assert.equal(inbox.normPrefs({}).mode, "cards"); // WP-K2: Konnect "Ticket view" (cards) is the default
   assert.equal(inbox.normPrefs({ mode: "cards" }).mode, "cards");
   assert.equal(inbox.normPrefs({ mode: "weird" as "cards" }).mode, "split");
   assert.equal(inbox.normPrefs({}).panel, true);

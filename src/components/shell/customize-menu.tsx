@@ -6,11 +6,12 @@ import { DEFAULT_NAV, isNavItemHidden, moveItem, movePinned, navIsDefault, order
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { CX_NAV } from "./cx-nav";
+import { CX_NAV, CX_TABS } from "./cx-nav";
 import type { NavItem } from "./nav";
 import { useUiPrefs } from "./ui-prefs";
 
 const ALL = new Map(CX_NAV.flatMap((g) => g.items.map((i) => [i.href, i] as const)));
+const tabLabel = (id: string) => CX_TABS.find((t) => t.id === id)?.label ?? "";
 
 function IconBtn({ label, onClick, disabled, active, children }: { label: string; onClick: () => void; disabled?: boolean; active?: boolean; children: ReactNode }) {
   return (
@@ -53,7 +54,7 @@ export function CustomizeMenuDialog({ open, onClose }: { open: boolean; onClose:
       open={open}
       onClose={onClose}
       title="Customize menu"
-      description="Pin what you use most, hide what you don't. Hidden pages stay available from Settings and search."
+      description="Pin what you use most, hide what you don't. Pinned pages show on every tab. Hidden pages stay available from the ≡ menu and search."
       footer={
         <>
           <Button variant="ghost" size="sm" disabled={navIsDefault(nav)} onClick={() => save(DEFAULT_NAV)} className="mr-auto">
@@ -88,7 +89,9 @@ export function CustomizeMenuDialog({ open, onClose }: { open: boolean; onClose:
         const items = orderedItems(g, nav);
         return (
           <section key={g.id} className="mb-4 last:mb-0">
-            <h3 className="mb-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">{g.label}</h3>
+            <h3 className="mb-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
+              {tabLabel(g.tab)} · {g.label}
+            </h3>
             <ul className="divide-y divide-border">
               {items.map((item, i) => {
                 const pinned = nav.pinned.includes(item.href);

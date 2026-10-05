@@ -1,11 +1,28 @@
 import { query } from "@/lib/db";
 import { postKeyOf } from "./model";
 
-/** Media type of a ticket in SQL (alias t). Mirrors model.mediaTypeOf — keep both in sync. */
+const MENTION_CASE = (col: string) => `(CASE ${col}
+  WHEN 'news' THEN 'news' WHEN 'blogs' THEN 'blogs' WHEN 'blog' THEN 'blogs' WHEN 'rss' THEN 'blogs'
+  WHEN 'x' THEN 'x_public' WHEN 'twitter' THEN 'x_public' WHEN 'facebook' THEN 'facebook_posts' WHEN 'instagram' THEN 'instagram'
+  WHEN 'linkedin' THEN 'linkedin_mentions' WHEN 'youtube' THEN 'youtube' WHEN 'reddit' THEN 'reddit' WHEN 'mastodon' THEN 'mastodon'
+  WHEN 'bluesky' THEN 'bluesky' WHEN 'hackernews' THEN 'forums' WHEN 'appstore' THEN 'app_reviews' WHEN 'playstore' THEN 'app_reviews'
+  WHEN 'google-reviews' THEN 'google_reviews' ELSE 'web' END)`;
+
+/** Media type of a listening mention in SQL (alias mn). Mirrors model.mentionMediaType. */
+export const MENTION_MEDIA_SQL = MENTION_CASE("mn.source");
+
+/**
+ * Media type of a ticket in SQL (alias t). Mirrors model.mediaTypeOf — keep both in sync. Tickets created from
+ * listening mentions (no channel id, a listening source as channel kind, no thread key) follow the mention source.
+ */
 export const MEDIA_SQL = `(CASE
-  WHEN t.channel_kind IN ('email','livechat','webform','phone','whatsapp','x','linkedin','youtube','news','reddit','mastodon','bluesky','telegram','discord','discourse') THEN t.channel_kind
-  WHEN t.channel_kind='facebook' THEN (CASE split_part(COALESCE(t.external_thread_id,''),':',1) WHEN 'fbc' THEN 'facebook_comments' WHEN 'fbp' THEN 'facebook_posts' ELSE 'facebook_messages' END)
+  WHEN t.channel_id IS NULL AND t.channel_kind IN ('news','blogs','web','hackernews','mastodon','appstore','playstore','reddit','youtube','bluesky','x','facebook','instagram','linkedin','google-reviews')
+       AND COALESCE(t.external_thread_id,'') !~ '^(fbc|fbp|fbr|igc|igm|igt):|^(lic|lip)[|]' THEN ${MENTION_CASE("t.channel_kind")}
+  WHEN t.channel_kind IN ('email','livechat','webform','phone','whatsapp','x','youtube','news','reddit','mastodon','bluesky','telegram','discord','discourse','blogs','web') THEN t.channel_kind
+  WHEN t.channel_kind='facebook' THEN (CASE split_part(COALESCE(t.external_thread_id,''),':',1) WHEN 'fbc' THEN 'facebook_comments' WHEN 'fbr' THEN 'facebook_reviews'
+       WHEN 'fbp' THEN (CASE WHEN t.subject LIKE 'Mentioned your Page in a post%' THEN 'facebook_tags' ELSE 'facebook_posts' END) ELSE 'facebook_messages' END)
   WHEN t.channel_kind='instagram' THEN (CASE split_part(COALESCE(t.external_thread_id,''),':',1) WHEN 'igc' THEN 'instagram_comments' WHEN 'igm' THEN 'instagram_mentions' WHEN 'igt' THEN 'instagram_tags' ELSE 'instagram_messages' END)
+  WHEN t.channel_kind='linkedin' THEN (CASE WHEN COALESCE(t.external_thread_id,'') LIKE 'lic|%' THEN 'linkedin_comments' ELSE 'linkedin_mentions' END)
   WHEN t.channel_kind='hackernews' THEN 'forums'
   WHEN t.channel_kind IN ('appstore','playstore') THEN 'app_reviews'
   WHEN t.channel_kind='google-reviews' THEN 'google_reviews'

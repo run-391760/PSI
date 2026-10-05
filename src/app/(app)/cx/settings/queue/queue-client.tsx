@@ -195,7 +195,7 @@ const SEG_FIELDS: { value: Segment["match"][number]["field"]; label: string }[] 
   { value: "contact_tag", label: "Contact tag" }, { value: "email_domain", label: "Email domain" }, { value: "channel", label: "Channel" }, { value: "priority", label: "Priority" },
 ];
 
-export function SegmentsPanel({ brand, settings, timer }: { brand: string; settings: Settings; timer: Timer }) {
+export function SegmentsPanel({ brand, settings, timer, userGroups = [] }: { brand: string; settings: Settings; timer: Timer; userGroups?: { id: string; name: string; members: number }[] }) {
   const { run, busy, messages } = useRun();
   const [segs, setSegs] = useState<Segment[]>(settings.segments);
   const set = (i: number, p: Partial<Segment>) => setSegs(segs.map((s, j) => (j === i ? { ...s, ...p } : s)));
@@ -211,6 +211,12 @@ export function SegmentsPanel({ brand, settings, timer }: { brand: string; setti
             <div className="flex flex-wrap gap-2">
               <Field label="Name" className="min-w-40 flex-1"><Input value={s.name} onChange={(e) => set(i, { name: e.target.value })} placeholder="VIP" /></Field>
               <Field label="Weight" className="w-24"><Input type="number" value={s.weight} onChange={(e) => set(i, { weight: Number(e.target.value) })} /></Field>
+              <Field label="Route to user group" className="w-full sm:w-52">
+                <Select value={s.userGroupId ?? ""} onChange={(e) => set(i, { userGroupId: e.target.value || null })}>
+                  <option value="">Any available agent</option>
+                  {userGroups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.members})</option>)}
+                </Select>
+              </Field>
               <Button size="icon" variant="ghost" className="mt-5" aria-label="Remove segment" onClick={() => setSegs(segs.filter((_, j) => j !== i))}><Trash2 className="h-3.5 w-3.5" /></Button>
             </div>
             <div className="mt-2 space-y-1.5">

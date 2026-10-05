@@ -6,11 +6,23 @@ import { AppError } from "@/lib/domain";
 import { createChannel, deleteChannel, getChannel, updateChannel, type EmailConfig } from "@/lib/cx/inbox/channels";
 import { syncEmailChannel, testEmail } from "@/lib/cx/inbox/email";
 import { channelSecret } from "@/lib/cx/inbox/channels";
-import { brandUser } from "@/lib/cx/inbox/guard";
+import { brandUser as brandUser_ } from "@/lib/cx/inbox/guard";
 import { ensureInboxJobs } from "@/lib/cx/inbox/jobs";
+import { assertIpAllowed } from "@/lib/cx/admin/ip";
+import { claimProfile, setProfileColor } from "@/lib/cx/admin/profiles";
+import { requirePermission } from "@/lib/cx/admin/roles";
+
+/** Brand access + Settings: channels permission + the brand's IP allowlist. */
+async function brandUser(brand: string) {
+  const r = await brandUser_(brand);
+  await requirePermission(brand, r.user.id, "page:settings.channels", "change channels");
+  await assertIpAllowed(brand, r.user.id);
+  return r;
+}
 
 const done = () => {
   revalidatePath("/cx/settings/channels");
+  revalidatePath("/cx/settings/clusters");
   revalidatePath("/cx/inbox");
 };
 
@@ -50,6 +62,7 @@ export async function saveEmailAction(brand: string, input: EmailInput, channelI
       if (!input.password) return { ok: false, error: "Enter the app password." };
       id = await createChannel(brand, "email", input.name || cfg.fromAddress, cfg, input.password);
     }
+    await claimProfile(brand, id, user.id);
     await ensureInboxJobs(brand, user.id, true);
     done();
     return { ok: true, data: id };
@@ -82,6 +95,7 @@ export async function saveChannelAction(brand: string, kind: "livechat" | "webfo
     let id = channelId;
     if (id) await updateChannel(brand, id, { name, config: clean, secret: secret || null });
     else id = await createChannel(brand, kind, name, clean, secret || null);
+    await claimProfile(brand, id, user.id);
     await ensureInboxJobs(brand, user.id, false);
     if (kind === "facebook" && secret) {
       // Subscribe the Page to messages, comments/posts and mentions; a failure is shown on the channel, not fatal.
@@ -111,6 +125,17 @@ export async function deleteChannelAction(brand: string, channelId: string): Pro
   try {
     await brandUser(brand);
     await deleteChannel(brand, channelId);
+    done();
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+export async function profileColorAction(brand: string, channelId: string, color: string): Promise<ActionResult<null>> {
+  try {
+    await brandUser(brand);
+    await setProfileColor(brand, channelId, color);
     done();
     return { ok: true, data: null };
   } catch (e) {

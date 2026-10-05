@@ -43,6 +43,10 @@ export async function handleApi(req: Request, segments: string[]): Promise<[numb
   const rows = hashes.length ? await query<TokenRecord & { token_hash: string; revoked_at: string | null }>("SELECT id,project_id,user_id,kind,token_hash,revoked_at FROM cx_admin_api_tokens WHERE token_hash = ANY($1)", [hashes]) : [];
   const auth = authorize(tokens, (h) => { const r = rows.find((x) => x.token_hash === h); return r ? { ...r, revoked: !!r.revoked_at } : undefined; }, m.route.write);
   if (!auth.ok) return [auth.status, { error: auth.error }];
+  // Brand IP allowlist (Settings → Users → IP whitelisting) applies to the API too.
+  const { ipAllowedForRequest } = await import("./ip");
+  const ipCheck = await ipAllowedForRequest(auth.projectId, req.headers);
+  if (!ipCheck.ok) return [403, { error: `This brand only accepts API requests from approved IP addresses (yours: ${ipCheck.ip || "unknown"}).` }];
   try { await rateLimit(`cxapi:${auth.tokenIds[0]}`, 120, 60); } catch { return [429, { error: "Rate limit: 120 requests per minute per account token." }]; }
   await query("UPDATE cx_admin_api_tokens SET last_used_at=now() WHERE id = ANY($1)", [auth.tokenIds]);
   const body = req.method === "POST" ? ((await req.json().catch(() => null)) as Record<string, any> | null) ?? {} : {};

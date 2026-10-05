@@ -6,6 +6,7 @@ import { CHANNELS } from "@/lib/cx/channels";
 import { channelAvailable } from "@/lib/cx/providers";
 import { LISTEN_SOURCES, SENTIMENTS, STATUSES, TOPIC_KINDS, parseAppId, parseRule, type ListenSource } from "./sources";
 import { DEFAULT_SPIKE_SETTINGS, type SpikeSettings } from "./spikes";
+import { isFetchFrequency, normalizeSite, type TopicSpec } from "./topic-query";
 
 /** Server-side data access of the listening module (topics, mentions, settings, tickets from mentions). */
 
@@ -14,42 +15,83 @@ export type Topic = {
   project_id: string;
   name: string;
   kind: "brand" | "competitor" | "campaign" | "industry";
+  /** CONTAINS: any of these terms (legacy entries may be rules such as `acme AND (x OR y)`). */
   keywords: string[];
+  /** DOES NOT CONTAIN. */
   excluded: string[];
+  /** MEDIA PREFERENCE: sources to fetch ([] = every source). */
   sources: ListenSource[];
   languages: string[];
   active: boolean;
   created_at: string;
   app_ids: string[];
+  and_contains: string[];
+  exclude_authors: string[];
+  exclude_sites: string[];
+  countries: string[];
+  min_followers: number;
+  verified_only: boolean;
+  fetch_frequency: string;
+  objective: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  updated_at: string | null;
+  last_fetched_at: string | null;
   mentions: number;
   last_mention: string | null;
 };
 
 export async function listTopics(projectId: string): Promise<Topic[]> {
-  return query<Topic>(
-    `SELECT t.*, COALESCE(o.app_ids,'[]'::jsonb) app_ids,
+  const rows = await query<Topic>(
+    `SELECT t.*, COALESCE(o.app_ids,'[]'::jsonb) app_ids, COALESCE(o.and_contains,'[]'::jsonb) and_contains,
+       COALESCE(o.exclude_authors,'[]'::jsonb) exclude_authors, COALESCE(o.exclude_sites,'[]'::jsonb) exclude_sites, COALESCE(o.countries,'[]'::jsonb) countries,
+       COALESCE(o.min_followers,0) min_followers, COALESCE(o.verified_only,false) verified_only, COALESCE(o.fetch_frequency,'hourly') fetch_frequency,
+       COALESCE(o.objective,'') objective, o.created_by, u.name created_by_name, o.updated_at, o.last_fetched_at,
        (SELECT count(*)::int FROM cx_mentions m WHERE m.topic_id=t.id) mentions,
        (SELECT max(published_at) FROM cx_mentions m WHERE m.topic_id=t.id) last_mention
-     FROM cx_topics t LEFT JOIN cx_listening_topic_opts o ON o.topic_id=t.id
+     FROM cx_topics t LEFT JOIN cx_listening_topic_opts o ON o.topic_id=t.id LEFT JOIN users u ON u.id=o.created_by
      WHERE t.project_id=$1 ORDER BY CASE t.kind WHEN 'brand' THEN 0 WHEN 'competitor' THEN 1 WHEN 'campaign' THEN 2 ELSE 3 END, t.created_at`,
     [projectId],
   );
+  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
+  return rows.map((r) => ({ ...r, created_at: iso(r.created_at)!, updated_at: iso(r.updated_at), last_fetched_at: iso(r.last_fetched_at), last_mention: iso(r.last_mention) }));
 }
+
+/** The matching/query spec of a stored topic (see topic-query.ts). */
+export const topicSpec = (t: Pick<Topic, "keywords" | "and_contains" | "excluded" | "exclude_authors" | "exclude_sites" | "countries" | "languages" | "min_followers" | "verified_only">): TopicSpec => ({
+  contains: t.keywords ?? [],
+  andContains: t.and_contains ?? [],
+  excluded: t.excluded ?? [],
+  excludeAuthors: t.exclude_authors ?? [],
+  excludeSites: t.exclude_sites ?? [],
+  countries: t.countries ?? [],
+  languages: t.languages ?? [],
+  minFollowers: t.min_followers ?? 0,
+  verifiedOnly: !!t.verified_only,
+});
 
 const list = (max: number, len = 120) => z.array(z.string().trim().max(len)).max(max).transform((a) => [...new Set(a.filter(Boolean))]);
 export const topicInput = z.object({
   name: z.string().trim().min(1, "Name the topic.").max(80),
   kind: z.enum(TOPIC_KINDS),
-  keywords: list(20, 200).refine((a) => a.length > 0, "Add at least one keyword.").refine((a) => a.every((k) => parseRule(k).length > 0), "A keyword rule is empty."),
-  excluded: list(50, 80),
+  keywords: list(300, 200).refine((a) => a.length > 0, "Add at least one CONTAINS keyword.").refine((a) => a.every((k) => parseRule(k).length > 0), "A keyword is empty."),
+  excluded: list(300, 120),
   sources: z.array(z.enum(LISTEN_SOURCES)).max(LISTEN_SOURCES.length),
   languages: list(15, 5).transform((a) => a.map((l) => l.toLowerCase())),
   appIds: list(5, 20).refine((a) => a.every((x) => parseAppId(x)), "App Store ids look like 1234567890 or gb/1234567890."),
   active: z.boolean().default(true),
+  andContains: list(200, 120).optional(),
+  excludeAuthors: list(200, 120).optional(),
+  excludeSites: list(200, 200).refine((a) => a.every((x) => normalizeSite(x)), "Excluded sites must be domains like example.com.").transform((a) => [...new Set(a.map(normalizeSite))]).optional(),
+  countries: list(30, 2).refine((a) => a.every((c) => /^[A-Za-z]{2}$/.test(c)), "Countries are 2-letter codes (IN, US…).").transform((a) => a.map((c) => c.toUpperCase())).optional(),
+  minFollowers: z.coerce.number().int().min(0).max(100_000_000).optional(),
+  verifiedOnly: z.boolean().optional(),
+  fetchFrequency: z.string().refine(isFetchFrequency, "Unknown fetch frequency.").optional(),
+  objective: z.string().trim().max(1000).optional(),
 });
 export type TopicInput = z.input<typeof topicInput>;
 
-export async function saveTopic(projectId: string, input: TopicInput, id?: string) {
+export async function saveTopic(projectId: string, input: TopicInput, id?: string, userId?: string | null) {
   const t = topicInput.parse(input);
   const topicId = id ?? randomUUID();
   await transaction(async (q) => {
@@ -61,13 +103,50 @@ export async function saveTopic(projectId: string, input: TopicInput, id?: strin
     } else {
       const [{ n }] = await q<{ n: number }>("SELECT count(*)::int n FROM cx_topics WHERE project_id=$1", [projectId]);
       if (n >= 50) throw new AppError("A brand can have up to 50 topics.");
+      const [dupe] = await q("SELECT 1 FROM cx_topics WHERE project_id=$1 AND lower(name)=lower($2)", [projectId, t.name]);
+      if (dupe) throw new AppError("A topic with that name already exists.");
       await q("INSERT INTO cx_topics(id,project_id,name,kind,keywords,excluded,sources,languages,active) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9)", [
         topicId, projectId, t.name, t.kind, JSON.stringify(t.keywords), JSON.stringify(t.excluded), JSON.stringify(t.sources), JSON.stringify(t.languages), t.active,
       ]);
     }
-    await q("INSERT INTO cx_listening_topic_opts(topic_id,app_ids) VALUES($1,$2::jsonb) ON CONFLICT(topic_id) DO UPDATE SET app_ids=excluded.app_ids", [topicId, JSON.stringify(t.appIds)]);
+    // Options: only the fields the caller sent are written, so older callers don't wipe editor settings.
+    const opts: [string, unknown, string][] = [["app_ids", JSON.stringify(t.appIds), "::jsonb"]];
+    if (t.andContains) opts.push(["and_contains", JSON.stringify(t.andContains), "::jsonb"]);
+    if (t.excludeAuthors) opts.push(["exclude_authors", JSON.stringify(t.excludeAuthors), "::jsonb"]);
+    if (t.excludeSites) opts.push(["exclude_sites", JSON.stringify(t.excludeSites), "::jsonb"]);
+    if (t.countries) opts.push(["countries", JSON.stringify(t.countries), "::jsonb"]);
+    if (t.minFollowers !== undefined) opts.push(["min_followers", t.minFollowers, ""]);
+    if (t.verifiedOnly !== undefined) opts.push(["verified_only", t.verifiedOnly, ""]);
+    if (t.fetchFrequency !== undefined) opts.push(["fetch_frequency", t.fetchFrequency, ""]);
+    if (t.objective !== undefined) opts.push(["objective", t.objective, ""]);
+    if (!id && userId) opts.push(["created_by", userId, ""]);
+    const cols = opts.map((o) => o[0]);
+    const vals = opts.map((o, i) => `$${i + 2}${o[2]}`);
+    await q(
+      `INSERT INTO cx_listening_topic_opts(topic_id,${cols.join(",")},updated_at) VALUES($1,${vals.join(",")},now())
+       ON CONFLICT(topic_id) DO UPDATE SET ${cols.filter((c) => c !== "created_by").map((c) => `${c}=excluded.${c}`).join(",")}, updated_at=now()`,
+      [topicId, ...opts.map((o) => o[1])],
+    );
   });
   return topicId;
+}
+
+/** Copy a topic (name gets a "(copy)" suffix; starts paused so it doesn't double-fetch until reviewed). */
+export async function duplicateTopic(projectId: string, id: string, userId: string | null) {
+  const t = (await listTopics(projectId)).find((x) => x.id === id);
+  if (!t) throw new AppError("Topic not found.", 404);
+  const names = new Set((await listTopics(projectId)).map((x) => x.name.toLowerCase()));
+  let name = `${t.name} (copy)`.slice(0, 80);
+  for (let i = 2; names.has(name.toLowerCase()); i++) name = `${t.name} (copy ${i})`.slice(0, 80);
+  return saveTopic(projectId, {
+    name, kind: t.kind, keywords: t.keywords, excluded: t.excluded, sources: t.sources, languages: t.languages, appIds: t.app_ids, active: false,
+    andContains: t.and_contains, excludeAuthors: t.exclude_authors, excludeSites: t.exclude_sites, countries: t.countries, minFollowers: t.min_followers,
+    verifiedOnly: t.verified_only, fetchFrequency: t.fetch_frequency, objective: t.objective,
+  }, undefined, userId);
+}
+
+export async function markTopicFetched(topicId: string) {
+  await query("INSERT INTO cx_listening_topic_opts(topic_id,last_fetched_at) VALUES($1,now()) ON CONFLICT(topic_id) DO UPDATE SET last_fetched_at=now()", [topicId]);
 }
 
 export async function deleteTopic(projectId: string, id: string) {

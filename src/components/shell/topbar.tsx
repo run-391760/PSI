@@ -3,7 +3,7 @@
 import { Bell, Check, Focus, LogOut, Menu as MenuIcon, Moon, RotateCcw, Search, Settings, SlidersHorizontal, Sun, User, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { classifyQuery } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 import { Menu, MenuItem } from "@/components/ui/dialog";
@@ -18,7 +18,12 @@ type Suggestion = { label: string; sub: string; href: string };
 
 const isCx = (pathname: string) => pathname === "/cx" || pathname.startsWith("/cx/");
 
-function GlobalSearch() {
+/** "surface" = the SEO workspace's light topbar; "brand" = the CX workspace's dark brand-blue header. */
+export type BarVariant = "surface" | "brand";
+export const iconBtn = (variant: BarVariant = "surface") =>
+  variant === "brand" ? "rounded-md p-2 text-[var(--cx-header-muted)] hover:bg-white/10 hover:text-white" : "rounded-md p-2 text-text-2 hover:bg-surface-3 hover:text-text";
+
+export function GlobalSearch({ variant = "surface", className }: { variant?: BarVariant; className?: string }) {
   const router = useRouter();
   const cx = isCx(usePathname());
   const [q, setQ] = useState("");
@@ -88,8 +93,8 @@ function GlobalSearch() {
   };
 
   return (
-    <div ref={ref} className="relative w-full max-w-xl">
-      <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-text-3" />
+    <div ref={ref} className={cn("relative w-full max-w-xl", className)}>
+      <Search className={cn("pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2", variant === "brand" ? "text-[var(--cx-header-muted)]" : "text-text-3")} />
       <input
         value={q}
         onChange={(e) => (setQ(e.target.value), setOpen(true), setActive(0))}
@@ -100,16 +105,21 @@ function GlobalSearch() {
           if (e.key === "Enter") (e.preventDefault(), go());
           if (e.key === "Escape") setOpen(false);
         }}
-        placeholder={cx ? "Search CX pages, settings or tickets" : "Search a domain, URL or keyword"}
-        className="h-9 w-full rounded-lg border border-border bg-surface-2 pr-14 pl-9 text-[13.5px] placeholder:text-text-3 focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand/20 focus:outline-none"
+        placeholder={cx ? (variant === "brand" ? "Search" : "Search CX pages, settings or tickets") : "Search a domain, URL or keyword"}
+        className={cn(
+          "h-9 w-full rounded-lg pr-14 pl-9 text-[13.5px] focus:outline-none",
+          variant === "brand"
+            ? "border border-transparent bg-[var(--cx-header-field)] text-white placeholder:text-[var(--cx-header-muted)] focus:border-white/40 focus:bg-white/20"
+            : "border border-border bg-surface-2 placeholder:text-text-3 focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand/20",
+        )}
         aria-label="Global search"
         role="combobox"
         aria-expanded={open}
         aria-controls="global-search-list"
       />
-      <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border border-border bg-surface px-1.5 text-[10.5px] text-text-3 sm:block">⌘K</kbd>
+      <kbd className={cn("pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border px-1.5 text-[10.5px] sm:block", variant === "brand" ? "border-white/20 text-[var(--cx-header-muted)]" : "border-border bg-surface text-text-3")}>⌘K</kbd>
       {open && suggestions.length > 0 && (
-        <ul id="global-search-list" role="listbox" className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-pop">
+        <ul id="global-search-list" role="listbox" className="absolute z-50 mt-1 w-full min-w-72 overflow-hidden rounded-lg border border-border bg-surface py-1 text-text shadow-pop">
           {!q.trim() && <li className="px-3 pt-1 pb-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">{cx ? "Go to" : "Popular tools"}</li>}
           {suggestions.map((s, i) => (
             <li key={s.href + s.label} role="option" aria-selected={i === active}>
@@ -126,20 +136,23 @@ function GlobalSearch() {
 }
 
 /** Switch between the SEO workspace and the CX (customer experience) workspace. */
-function WorkspaceSwitch() {
+export function WorkspaceSwitch({ variant = "surface" }: { variant?: BarVariant }) {
   const pathname = usePathname();
   const cx = pathname === "/cx" || pathname.startsWith("/cx/");
   const item = (href: string, label: string, active: boolean) => (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={cn("rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors", active ? "bg-brand text-white shadow-card" : "text-text-2 hover:text-text")}
+      className={cn(
+        "rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors",
+        variant === "brand" ? (active ? "bg-white text-[var(--cx-header)]" : "text-[var(--cx-header-muted)] hover:text-white") : active ? "bg-brand text-white shadow-card" : "text-text-2 hover:text-text",
+      )}
     >
       {label}
     </Link>
   );
   return (
-    <nav aria-label="Workspace" className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+    <nav aria-label="Workspace" className={cn("flex shrink-0 items-center gap-0.5 rounded-lg p-0.5", variant === "brand" ? "border border-white/20 bg-white/5" : "border border-border bg-surface-2")}>
       {item("/dashboard", "SEO", !cx)}
       {item("/cx", "CX", cx)}
     </nav>
@@ -161,10 +174,10 @@ function useTheme() {
   return [dark, set] as const;
 }
 
-function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, variant }: { className?: string; variant?: BarVariant }) {
   const [dark, set] = useTheme();
   return (
-    <button onClick={() => set(!dark)} className={cn("rounded-md p-2 text-text-2 hover:bg-surface-3 hover:text-text", className)} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
+    <button onClick={() => set(!dark)} className={cn(iconBtn(variant), className)} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
       {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </button>
   );
@@ -173,7 +186,7 @@ function ThemeToggle({ className }: { className?: string }) {
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘\\" : "Ctrl+\\";
 
 /** Focus mode: one-click toggle; while on, a visible "Focus mode ×" pill exits it. */
-function FocusToggle() {
+export function FocusToggle({ variant }: { variant?: BarVariant }) {
   const { prefs, update } = useUiPrefs();
   const [hint, setHint] = useState("");
   useEffect(() => setHint(SHORTCUT), []);
@@ -191,14 +204,14 @@ function FocusToggle() {
       </button>
     );
   return (
-    <button onClick={() => update({ focus: true })} className="hidden rounded-md p-2 text-text-2 hover:bg-surface-3 hover:text-text sm:block" title={`Focus mode (${hint})`} aria-label="Turn on focus mode">
+    <button onClick={() => update({ focus: true })} className={cn("hidden sm:block", iconBtn(variant))} title={`Focus mode (${hint})`} aria-label="Turn on focus mode">
       <Focus className="h-4 w-4" />
     </button>
   );
 }
 
 /** Display preferences: focus mode, density, theme, menu customisation, hidden panels. */
-function DisplayMenu() {
+export function DisplayMenu({ variant }: { variant?: BarVariant }) {
   const { prefs, update } = useUiPrefs();
   const cx = isCx(usePathname());
   const router = useRouter();
@@ -211,7 +224,7 @@ function DisplayMenu() {
         align="right"
         className="w-72"
         trigger={(open) => (
-          <button className={cn("rounded-md p-2 text-text-2 hover:bg-surface-3 hover:text-text", open && "bg-surface-3 text-text")} aria-label="Display options" aria-expanded={open} title="Display options">
+          <button className={cn(iconBtn(variant), open && (variant === "brand" ? "bg-white/10 text-white" : "bg-surface-3 text-text"))} aria-label="Display options" aria-expanded={open} title="Display options">
             <SlidersHorizontal className="h-4 w-4" />
           </button>
         )}
@@ -251,6 +264,48 @@ function DisplayMenu() {
   );
 }
 
+/** Notification bell with the unread badge (links to Alerts). */
+export function AlertsBell({ unread, variant }: { unread: number; variant?: BarVariant }) {
+  return (
+    <Link href="/alerts" className={cn("relative", iconBtn(variant))} aria-label={`Alerts${unread ? `, ${unread} unread` : ""}`} title="Alerts">
+      <Bell className="h-4 w-4" />
+      {unread > 0 && <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-critical px-1 text-[10px] font-semibold text-white">{unread > 99 ? "99+" : unread}</span>}
+    </Link>
+  );
+}
+
+/** Avatar menu: account, settings, sign out. `extra` adds workspace-specific entries. */
+export function AccountMenu({ user, logoutAction, variant, extra }: { user: { name: string; email: string }; logoutAction: () => Promise<void>; variant?: BarVariant; extra?: ReactNode }) {
+  return (
+    <Menu
+      align="right"
+      trigger={() => (
+        <button className={cn("ml-1 flex items-center gap-2 rounded-md p-1", variant === "brand" ? "hover:bg-white/10" : "hover:bg-surface-3")} aria-label="Account menu">
+          <span className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold uppercase", variant === "brand" ? "bg-white text-[var(--cx-header)]" : "bg-brand text-white")}>{(user.name || user.email)[0]}</span>
+        </button>
+      )}
+    >
+      <div className="border-b border-border px-3 py-2">
+        <div className="text-[13px] font-medium text-text">{user.name || "Account"}</div>
+        <div className="truncate text-[12px] text-text-3">{user.email}</div>
+      </div>
+      {extra}
+      <MenuItem href="/settings" icon={<Settings className="h-4 w-4 text-text-3" />}>
+        Account settings
+      </MenuItem>
+      <MenuItem href="/settings?tab=profile" icon={<User className="h-4 w-4 text-text-3" />}>
+        Profile
+      </MenuItem>
+      <form action={logoutAction}>
+        <button type="submit" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-text hover:bg-surface-3">
+          <LogOut className="h-4 w-4 text-text-3" /> Sign out
+        </button>
+      </form>
+    </Menu>
+  );
+}
+
+/** SEO workspace topbar (the CX workspace uses <CxHeader>). */
 export function Topbar({ user, unread, onMenu, logoutAction }: { user: { name: string; email: string }; unread: number; onMenu: () => void; logoutAction: () => Promise<void> }) {
   return (
     <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur">
@@ -263,34 +318,8 @@ export function Topbar({ user, unread, onMenu, logoutAction }: { user: { name: s
         <FocusToggle />
         <DisplayMenu />
         <ThemeToggle className="hidden sm:block" />
-        <Link href="/alerts" className="relative rounded-md p-2 text-text-2 hover:bg-surface-3 hover:text-text" aria-label={`Alerts${unread ? `, ${unread} unread` : ""}`}>
-          <Bell className="h-4 w-4" />
-          {unread > 0 && <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-critical px-1 text-[10px] font-semibold text-white">{unread > 99 ? "99+" : unread}</span>}
-        </Link>
-        <Menu
-          align="right"
-          trigger={() => (
-            <button className="ml-1 flex items-center gap-2 rounded-md p-1 hover:bg-surface-3" aria-label="Account menu">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-[12px] font-semibold text-white uppercase">{(user.name || user.email)[0]}</span>
-            </button>
-          )}
-        >
-          <div className="border-b border-border px-3 py-2">
-            <div className="text-[13px] font-medium text-text">{user.name || "Account"}</div>
-            <div className="text-[12px] text-text-3">{user.email}</div>
-          </div>
-          <MenuItem href="/settings" icon={<Settings className="h-4 w-4 text-text-3" />}>
-            Settings
-          </MenuItem>
-          <MenuItem href="/settings?tab=profile" icon={<User className="h-4 w-4 text-text-3" />}>
-            Profile
-          </MenuItem>
-          <form action={logoutAction}>
-            <button type="submit" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-text hover:bg-surface-3">
-              <LogOut className="h-4 w-4 text-text-3" /> Sign out
-            </button>
-          </form>
-        </Menu>
+        <AlertsBell unread={unread} />
+        <AccountMenu user={user} logoutAction={logoutAction} />
       </div>
     </header>
   );

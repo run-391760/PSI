@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const config: NextConfig = {
   devIndicators: false,
+  // NEXT_DEV_FS_CACHE=0 turns off Turbopack's on-disk dev cache (it can grow by gigabytes on low-disk machines).
+  experimental: { turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== "0" },
   serverExternalPackages: ["@electric-sql/pglite", "pg", "imapflow", "mailparser", "nodemailer"],
   async headers() {
     return [

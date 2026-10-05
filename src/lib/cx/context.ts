@@ -32,6 +32,9 @@ export async function getCxBrand(userId: string, brandId: string, opts: { write?
   const brand = await findCxBrand(userId, brandId);
   if (!brand) throw new AppError("Brand not found.", 404);
   if (opts.write !== false && brand.role === "viewer") throw new AppError("Viewers can't make changes in this brand.", 403);
+  // Brand IP allowlist (Settings → Users → IP whitelisting); the owner is always exempt.
+  const { assertIpAllowed } = await import("@/lib/cx/admin/ip");
+  await assertIpAllowed(brand.id, userId);
   return brand;
 }
 
@@ -43,5 +46,13 @@ export async function cxContext(userId: string, sp: Record<string, string | stri
   const projects = await listCxBrands(userId);
   const requested = typeof sp.brand === "string" ? sp.brand : undefined;
   const brand = (requested ? await findCxBrand(userId, requested) : null) ?? projects[0] ?? null;
+  if (brand) {
+    const { ipBlocked } = await import("@/lib/cx/admin/ip");
+    const ip = await ipBlocked(brand.id, userId);
+    if (ip) {
+      const { redirect } = await import("next/navigation");
+      redirect(`/cx/ip-blocked?brand=${encodeURIComponent(brand.id)}&ip=${encodeURIComponent(ip)}`);
+    }
+  }
   return { projects, brand, switcher: projects.map((p) => ({ id: p.id, name: p.name, domain: p.domain })) };
 }

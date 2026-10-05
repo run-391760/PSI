@@ -6,51 +6,108 @@
 
 // ---------------------------------------------------------------- media types
 
-export type MediaType = { id: string; label: string };
-/** Media types in display order (Konnect-style channel sub-types). */
+export type MediaType = { id: string; label: string; network: string; konnect?: boolean };
+/**
+ * Media types in display order. The first block is Konnect's own taxonomy (MEDIA TYPE counter, in the order the
+ * product lists it); the rest are channels Konnect doesn't have (email, chat, forms, federated networks…).
+ * `network` is the channel kind used for the network badge/icon.
+ */
 export const MEDIA_TYPES: MediaType[] = [
-  { id: "email", label: "Email" },
-  { id: "livechat", label: "Live Chat" },
-  { id: "webform", label: "Web Form" },
-  { id: "phone", label: "Phone" },
-  { id: "whatsapp", label: "WhatsApp Messages" },
-  { id: "facebook_messages", label: "Facebook Messages" },
-  { id: "facebook_comments", label: "Facebook Comments" },
-  { id: "facebook_posts", label: "Facebook Public Posts" },
-  { id: "instagram_messages", label: "Instagram Messages" },
-  { id: "instagram_comments", label: "Instagram Comments" },
-  { id: "instagram_mentions", label: "Instagram Mentions" },
-  { id: "instagram_tags", label: "Instagram Tags" },
-  { id: "x", label: "Twitter Mentions" },
-  { id: "linkedin", label: "LinkedIn" },
-  { id: "youtube", label: "YouTube Comments" },
-  { id: "news", label: "News" },
-  { id: "forums", label: "Forums" },
-  { id: "reddit", label: "Reddit Posts" },
-  { id: "mastodon", label: "Mastodon Posts" },
-  { id: "bluesky", label: "Bluesky Posts" },
-  { id: "app_reviews", label: "App Reviews" },
-  { id: "google_reviews", label: "Google Reviews" },
-  { id: "telegram", label: "Telegram Messages" },
-  { id: "discord", label: "Discord Messages" },
-  { id: "discourse", label: "Consumer Forums" },
-  { id: "other", label: "Other" },
+  { id: "news", label: "News", network: "news", konnect: true },
+  { id: "blogs", label: "Blogs", network: "news", konnect: true },
+  { id: "web", label: "Other - Web", network: "news", konnect: true },
+  { id: "x_public", label: "Twitter Public Tweets", network: "x", konnect: true },
+  { id: "x", label: "Twitter Mentions", network: "x", konnect: true },
+  { id: "facebook_posts", label: "Facebook Public Posts", network: "facebook", konnect: true },
+  { id: "facebook_tags", label: "Facebook Tag Posts", network: "facebook", konnect: true },
+  { id: "facebook_messages", label: "Facebook Inbox", network: "facebook", konnect: true },
+  { id: "facebook_comments", label: "Facebook Comments", network: "facebook", konnect: true },
+  { id: "youtube", label: "YouTube", network: "youtube", konnect: true },
+  { id: "instagram", label: "Instagram", network: "instagram", konnect: true },
+  { id: "instagram_messages", label: "Instagram Messages", network: "instagram", konnect: true },
+  { id: "instagram_comments", label: "Instagram Comments", network: "instagram", konnect: true },
+  { id: "linkedin_comments", label: "LinkedIn Comments", network: "linkedin", konnect: true },
+  { id: "google_reviews", label: "Google Business Reviews", network: "google-reviews", konnect: true },
+  { id: "instagram_tags", label: "Instagram Tag Posts", network: "instagram", konnect: true },
+  { id: "instagram_mentions", label: "Instagram Mentions", network: "instagram", konnect: true },
+  { id: "linkedin_mentions", label: "LinkedIn Mentions", network: "linkedin", konnect: true },
+  { id: "email", label: "Email", network: "email" },
+  { id: "livechat", label: "Live Chat", network: "livechat" },
+  { id: "webform", label: "Web Form", network: "webform" },
+  { id: "phone", label: "Phone", network: "phone" },
+  { id: "whatsapp", label: "WhatsApp Messages", network: "whatsapp" },
+  { id: "facebook_reviews", label: "Facebook Reviews", network: "facebook" },
+  { id: "reddit", label: "Reddit Posts", network: "reddit" },
+  { id: "mastodon", label: "Mastodon Posts", network: "mastodon" },
+  { id: "bluesky", label: "Bluesky Posts", network: "bluesky" },
+  { id: "forums", label: "Forums", network: "hackernews" },
+  { id: "discourse", label: "Consumer Forums", network: "discourse" },
+  { id: "app_reviews", label: "App Reviews", network: "appstore" },
+  { id: "telegram", label: "Telegram Messages", network: "telegram" },
+  { id: "discord", label: "Discord Messages", network: "discord" },
+  { id: "other", label: "Other", network: "other" },
 ];
-export const mediaLabel = (id: string | null | undefined) => MEDIA_TYPES.find((m) => m.id === id)?.label ?? (id ? id.replace(/_/g, " ") : "Other");
+const MEDIA_BY_ID = new Map(MEDIA_TYPES.map((m) => [m.id, m]));
+/** Old ids from earlier builds (saved URLs) → current ids. */
+const MEDIA_ALIASES: Record<string, string[]> = { linkedin: ["linkedin_comments", "linkedin_mentions"] };
+export const mediaLabel = (id: string | null | undefined) => MEDIA_BY_ID.get(id ?? "")?.label ?? (id ? id.replace(/_/g, " ") : "Other");
+/** Channel kind whose icon represents a media type (network badge). */
+export const mediaNetwork = (id: string | null | undefined) => MEDIA_BY_ID.get(id ?? "")?.network ?? "other";
+/** Public conversation (answered with a Comment) vs private message (answered with a Reply). */
+const PUBLIC_MEDIA = new Set(["news", "blogs", "web", "x_public", "x", "facebook_posts", "facebook_tags", "facebook_comments", "facebook_reviews", "youtube", "instagram", "instagram_comments", "instagram_tags", "instagram_mentions", "linkedin_comments", "linkedin_mentions", "google_reviews", "reddit", "mastodon", "bluesky", "forums", "discourse", "app_reviews"]);
+export const isPublicMedia = (id: string | null | undefined) => PUBLIC_MEDIA.has(id ?? "");
 
-/** Media type of a ticket from its channel kind and public-thread key (mirrors MEDIA_SQL in ops/media.ts). */
-export function mediaTypeOf(t: { channel_kind: string; external_thread_id?: string | null }): string {
+/** Listening sources that aren't connected profiles (a ticket created from a mention keeps the source as channel kind and has no channel id). */
+const OWN_THREAD = /^(fbc|fbp|fbr|igc|igm|igt):|^(lic|lip)\|/;
+const LISTENING_KINDS = new Set(["news", "blogs", "web", "hackernews", "mastodon", "appstore", "playstore", "reddit", "youtube", "bluesky", "x", "facebook", "instagram", "linkedin", "google-reviews"]);
+
+/**
+ * Media type of a ticket from its channel kind, public-thread key and (for Facebook mention posts) the thread label
+ * stored at the start of the subject. Tickets created from listening mentions have no channel id: their media type
+ * follows the mention source (see mentionMediaType). Mirrors MEDIA_SQL in ops/media.ts — keep both in sync.
+ */
+export function mediaTypeOf(t: { channel_kind: string; external_thread_id?: string | null; channel_id?: string | null; subject?: string | null; from_listening?: boolean }): string {
   const k = t.channel_kind;
-  const thread = (t.external_thread_id ?? "").split(":")[0];
+  const key = t.external_thread_id ?? "";
+  const thread = key.split(/[:|]/)[0];
+  const listening = t.from_listening ?? (t.channel_id === null && LISTENING_KINDS.has(k) && !OWN_THREAD.test(key));
+  if (listening) return mentionMediaType(k);
   switch (k) {
-    case "email": case "livechat": case "webform": case "phone": case "whatsapp": case "x": case "linkedin": case "youtube": case "news": case "reddit": case "mastodon": case "bluesky": case "telegram": case "discord": case "discourse":
+    case "email": case "livechat": case "webform": case "phone": case "whatsapp": case "x": case "youtube": case "news": case "reddit": case "mastodon": case "bluesky": case "telegram": case "discord": case "discourse":
       return k;
-    case "facebook": return thread === "fbc" ? "facebook_comments" : thread === "fbp" ? "facebook_posts" : "facebook_messages";
+    case "facebook":
+      if (thread === "fbc") return "facebook_comments";
+      if (thread === "fbr") return "facebook_reviews";
+      if (thread === "fbp") return /^Mentioned your Page in a post/.test(t.subject ?? "") ? "facebook_tags" : "facebook_posts";
+      return "facebook_messages";
     case "instagram": return thread === "igc" ? "instagram_comments" : thread === "igm" ? "instagram_mentions" : thread === "igt" ? "instagram_tags" : "instagram_messages";
+    case "linkedin": return thread === "lic" ? "linkedin_comments" : "linkedin_mentions";
     case "hackernews": return "forums";
     case "appstore": case "playstore": return "app_reviews";
     case "google-reviews": return "google_reviews";
+    case "blogs": return "blogs";
+    case "web": return "web";
     default: return "other";
+  }
+}
+
+/** Media type of a listening mention (cx_mentions.source). Mirrors MENTION_MEDIA_SQL in ops/media.ts. */
+export function mentionMediaType(source: string): string {
+  switch (source) {
+    case "news": return "news";
+    case "blogs": case "blog": case "rss": return "blogs";
+    case "x": case "twitter": return "x_public";
+    case "facebook": return "facebook_posts";
+    case "instagram": return "instagram";
+    case "linkedin": return "linkedin_mentions";
+    case "youtube": return "youtube";
+    case "reddit": return "reddit";
+    case "mastodon": return "mastodon";
+    case "bluesky": return "bluesky";
+    case "hackernews": return "forums";
+    case "appstore": case "playstore": return "app_reviews";
+    case "google-reviews": return "google_reviews";
+    default: return "web";
   }
 }
 
@@ -62,8 +119,8 @@ export function profileBadge(mediaType: string, profileName: string | null | und
 
 /** Parse a comma-separated multi-select URL value into known media type ids. */
 export function parseMediaParam(v: string | null | undefined): string[] {
-  const ids = new Set(MEDIA_TYPES.map((m) => m.id));
-  return [...new Set(String(v ?? "").split(",").map((x) => x.trim()).filter((x) => ids.has(x)))];
+  const out = String(v ?? "").split(",").map((x) => x.trim()).flatMap((x) => MEDIA_ALIASES[x] ?? [x]).filter((x) => MEDIA_BY_ID.has(x));
+  return [...new Set(out)];
 }
 
 // ---------------------------------------------------------------- post keys ("view all comments on this post")
