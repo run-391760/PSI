@@ -43,6 +43,22 @@ export async function replyAction(brand: string, ticketId: string, input: ReplyI
   });
 }
 
+/** Hide, unhide or delete a Facebook / Instagram comment on the brand's own post. */
+export async function moderateCommentAction(brand: string, ticketId: string, messageId: string, action: "hide" | "unhide" | "delete"): Promise<ActionResult<string | null>> {
+  return run(brand, async (user) => {
+    const { moderateComment } = await import("@/lib/cx/inbox/social");
+    return moderateComment(brand, ticketId, messageId, action, user.name);
+  });
+}
+
+/** Fetch new LinkedIn comments and mentions now (normally every 5 minutes). */
+export async function syncLinkedInAction(brand: string): Promise<ActionResult<number>> {
+  return run(brand, async () => {
+    const { pollLinkedIn } = await import("@/lib/cx/inbox/linkedin");
+    return pollLinkedIn(brand, true);
+  });
+}
+
 export async function mergeAction(brand: string, targetId: string, sourceIds: string[], numbers: number[] = []): Promise<ActionResult<number>> {
   return run(brand, async (user) => {
     const ids = [...sourceIds];

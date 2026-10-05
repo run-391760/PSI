@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { runQuickActionAction } from "@/app/(app)/cx/settings/automation/admin-actions";
-import { mergeAction, summarizeAction, translateMessageAction, unlinkParentAction, updateTicketsAction } from "@/app/(app)/cx/inbox/actions";
+import { mergeAction, moderateCommentAction, summarizeAction, translateMessageAction, unlinkParentAction, updateTicketsAction } from "@/app/(app)/cx/inbox/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, Menu } from "@/components/ui/dialog";
@@ -75,6 +75,16 @@ export function Conversation(props: Props) {
   const now = useNow(15_000);
   const sla = slaStatus(t, now);
   const isEmail = t.channel_kind === "email";
+  // Public social threads (comments, mentions, reviews): agents can answer a specific comment; own-post comments can be moderated.
+  const threadKey = (t as unknown as { external_thread_id?: string | null }).external_thread_id ?? "";
+  const socialThread = /^(fbc|fbp|fbr|igc|igm|lic\||lip\|)/.test(threadKey);
+  const moderatable = /^(fbc|igc):/.test(threadKey) && !readOnlyRole;
+  const moderate = async (m: MessageRow, action: "hide" | "unhide" | "delete") => {
+    if (action === "delete" && !confirm("Delete this comment on the platform? This can't be undone.")) return;
+    const r = await moderateCommentAction(brand.id, t.id, m.id, action);
+    if (!r.ok) setError(r.error);
+    else router.refresh();
+  };
   const collapsedMode = isEmail && prefs.emailCollapsed;
   const readOnly = props.role === "viewer";
 
@@ -219,7 +229,8 @@ export function Conversation(props: Props) {
                 collapsible={collapsedMode && m.direction !== "note"} defaultOpen={!collapsedMode || i === 0 || m.direction === "note"}
                 replyTo={m.reply_to ? byId.get(m.reply_to) ?? null : null}
                 mentionNames={(m.mentions ?? []).map(agentName).filter(Boolean)}
-                onReply={isEmail && m.direction === "in" && !disabled ? () => setReplyTo(m) : undefined}
+                onReply={m.direction === "in" && !disabled && (isEmail || (socialThread && !!m.external_id && !m.external_id.startsWith("tag:"))) ? () => setReplyTo(m) : undefined}
+                onModerate={moderatable && m.direction === "in" && !m.from_ticket && m.external_id && m.moderation !== "deleted" ? (a) => moderate(m, a) : undefined}
                 bookmarked={bm.messages.includes(m.id)} onBookmark={m.from_ticket ? undefined : () => toggleBm(m.id)}
               />
             ))}
@@ -433,7 +444,7 @@ function Body({ text }: { text: string }) {
   return <>{linkSegments(text).map((s, i) => (s.href ? <a key={i} href={s.href} target="_blank" rel="noreferrer noopener" className="text-link underline">{s.text}</a> : <span key={i}>{s.text}</span>))}</>;
 }
 
-function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply, bookmarked, onBookmark }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void; bookmarked?: boolean; onBookmark?: () => void }) {
+function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply, bookmarked, onBookmark, onModerate }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void; bookmarked?: boolean; onBookmark?: () => void; onModerate?: (action: "hide" | "unhide" | "delete") => void }) {
   const [open, setOpen] = useState(defaultOpen);
   const [tr, setTr] = useState<string | null>(null);
   const [trBusy, setTrBusy] = useState(false);
@@ -459,6 +470,10 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
           <time title={dateTimeLabel(m.created_at)} suppressHydrationWarning>{dateTimeLabel(m.created_at)}</time>
           {onBookmark && <button type="button" onClick={onBookmark} className={cn("inline-flex items-center gap-0.5 hover:underline", bookmarked ? "text-link" : "text-text-3")} aria-label={bookmarked ? "Remove message bookmark" : "Bookmark message"} title={bookmarked ? "Bookmarked" : "Bookmark this message"}>{bookmarked ? <BookmarkCheck className="h-3 w-3" /> : <Bookmark className="h-3 w-3" />}{bookmarked ? "Saved" : ""}</button>}
           {onReply && <button type="button" onClick={onReply} className="inline-flex items-center gap-0.5 text-link hover:underline"><CornerDownRight className="h-3 w-3" />Reply to this</button>}
+          {m.moderation === "hidden" && <span className="rounded bg-warning-soft px-1 text-warning-ink">Hidden on the platform</span>}
+          {m.moderation === "deleted" && <span className="rounded bg-critical-soft px-1 text-critical-ink">Deleted on the platform</span>}
+          {onModerate && <button type="button" onClick={() => onModerate(m.moderation === "hidden" ? "unhide" : "hide")} className="text-link hover:underline" title="Hide or show this comment for everyone except its author and their friends">{m.moderation === "hidden" ? "Unhide" : "Hide"}</button>}
+          {onModerate && <button type="button" onClick={() => onModerate("delete")} className="text-critical-ink hover:underline">Delete</button>}
           {ai && m.direction === "in" && (
             <button type="button" disabled={trBusy} onClick={async () => { if (tr) return setTr(null); setTrBusy(true); const r = await translateMessageAction(brand, m.id, lang); setTrBusy(false); setTr(r.ok ? r.data ?? "No translation returned." : r.error); }} className="inline-flex items-center gap-0.5 text-link hover:underline">
               <Languages className="h-3 w-3" />{trBusy ? "Translating…" : tr ? "Hide translation" : `Translate`}
@@ -473,7 +488,7 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
         {out && (
           <div className={cn("mt-1 flex items-center gap-1 text-[11px]", m.delivery === "failed" ? "text-critical-ink" : m.delivery === "sent" ? "text-good-ink" : "text-text-3")}>
             {m.delivery === "failed" ? <AlertTriangle className="h-3 w-3" /> : m.delivery === "sent" ? <Check className="h-3 w-3" /> : null}
-            {m.delivery === "sent" ? "Sent" : m.delivery === "failed" ? `Failed: ${m.delivery_error ?? ""}` : `Stored only${m.delivery_error ? ` — ${m.delivery_error}` : ""}`}
+            {m.delivery === "sent" ? `Sent${m.delivery_error ? ` — ${m.delivery_error}` : ""}` : m.delivery === "failed" ? `Failed: ${m.delivery_error ?? ""}` : `Stored only${m.delivery_error ? ` — ${m.delivery_error}` : ""}`}
           </div>
         )}
       </div>

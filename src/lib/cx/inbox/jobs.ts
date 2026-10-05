@@ -47,6 +47,8 @@ export const jobs: Record<string, JobHandler> = {
     await import("@/lib/cx/ops/tasks").then(async (t) => { await t.fireDueTasks(job.project_id!); await t.sendDailyDigests(job.project_id!); }).catch((e) => console.error("[cx] task reminders", e));
     // Instagram has no webhook for posts the account is tagged in; poll them (throttled to 15 minutes).
     await import("./social").then((s) => s.pollInstagramTags(job.project_id!)).catch((e) => console.error("[cx] instagram tags", e));
+    // LinkedIn has no webhooks for page comments/mentions without partner approval; poll them (throttled to 5 minutes).
+    await import("./linkedin").then((l) => l.pollLinkedIn(job.project_id!)).catch((e) => console.error("[cx] linkedin", e));
     const rows = await query<{ id: string; number: number; subject: string; kind: "first_response" | "resolution" }>(
       `WITH due AS (
          SELECT t.id,t.number,t.subject,'first_response' AS kind FROM cx_tickets t

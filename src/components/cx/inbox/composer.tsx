@@ -58,11 +58,14 @@ export function Composer(p: ComposerProps) {
   const recRef = useRef<Speech | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const uploads = useUploads(brand.id);
-  const canSend = SENDS.has(t.channel_kind) || ["whatsapp", "facebook", "instagram", "discord", "discourse", "telegram"].includes(t.channel_kind);
+  const canSend = SENDS.has(t.channel_kind) || ["whatsapp", "facebook", "instagram", "linkedin", "discord", "discourse", "telegram"].includes(t.channel_kind);
   const isEmail = t.channel_kind === "email" || t.channel_kind === "webform";
   // Comment / mention / tag threads on Facebook and Instagram are answered in public on the post.
   const threadKey = (t as unknown as { external_thread_id?: string | null }).external_thread_id ?? "";
-  const publicReply = /^(fbc|fbp|igc|igm):/.test(threadKey);
+  const publicReply = /^(fbc|fbp|fbr|igc|igm|lic\||lip\|)/.test(threadKey);
+  // Private replies (DM to the commenter) exist for Facebook/Instagram comments only.
+  const privateOk = /^(fbc|igc):/.test(threadKey) || /^igm:[^:]+:.+/.test(threadKey);
+  const [privateReply, setPrivateReply] = useState(false);
   const [speechOk, setSpeechOk] = useState(false);
   useEffect(() => { const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }; setSpeechOk(!!(w.SpeechRecognition || w.webkitSpeechRecognition)); }, []);
   useEffect(() => { if (p.replyTo) setMode("reply"); }, [p.replyTo]);
@@ -91,12 +94,12 @@ export function Composer(p: ComposerProps) {
     if ((!text.trim() && !uploads.files.length) || busy || p.disabled || uploads.busy) return;
     if (needStatus) return setError("Choose the status to send with this reply.");
     setBusy("send"); setError(null); setNotice(null);
-    const r = await replyAction(brand.id, t.id, { body: text, note: mode === "note", status: mode === "reply" ? status || null : null, attachmentIds: uploads.ids, replyToId: mode === "reply" ? p.replyTo?.id ?? null : null, signature: isEmail && p.hasSignature ? signature : false });
+    const r = await replyAction(brand.id, t.id, { body: text, note: mode === "note", status: mode === "reply" ? status || null : null, attachmentIds: uploads.ids, replyToId: mode === "reply" ? p.replyTo?.id ?? null : null, signature: isEmail && p.hasSignature ? signature : false, privateReply: mode === "reply" && privateOk && privateReply });
     setBusy(null);
     if (!r.ok) return setError(r.error);
     if (r.data.delivery === "failed") setError(`Not delivered: ${r.data.note}`);
     else if (r.data.note) setNotice(r.data.note);
-    setText(""); setStatus(""); uploads.clear(); p.onClearReplyTo();
+    setText(""); setStatus(""); setPrivateReply(false); uploads.clear(); p.onClearReplyTo();
     router.refresh();
   };
   const ai = async (kind: "grammar" | "translate" | "suggest", lang?: string) => {
@@ -177,7 +180,7 @@ export function Composer(p: ComposerProps) {
       </div>
       {p.replyTo && mode === "reply" && (
         <div className="mb-2 flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1.5 text-[12px] text-text-2">
-          <CornerDownRight className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">Replying to {p.replyTo.author_name || "the customer"}’s email of {dateTimeLabel(p.replyTo.created_at)}: “{p.replyTo.body.slice(0, 80)}”</span>
+          <CornerDownRight className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">Replying to {p.replyTo.author_name || "the customer"}’s {isEmail ? "email" : "comment"} of {dateTimeLabel(p.replyTo.created_at)}: “{p.replyTo.body.slice(0, 80)}”</span>
           <button onClick={p.onClearReplyTo} className="rounded p-0.5 hover:bg-surface-3" aria-label="Cancel reply-to"><X className="h-3.5 w-3.5" /></button>
         </div>
       )}
@@ -206,7 +209,7 @@ export function Composer(p: ComposerProps) {
             if (e.metaKey || e.ctrlKey || (prefs.enterToSend && !e.shiftKey)) { e.preventDefault(); send(); }
           }}
           rows={4}
-          placeholder={p.disabled ? p.disabled : mode === "note" ? "Internal note — only your team sees this. Type @ to mention a teammate." : `${publicReply ? "Public reply on the post, visible to everyone" : `Reply to ${t.contact_name || "the customer"}`}…  (${prefs.enterToSend ? "Enter to send, Shift+Enter for a new line" : "⌘/Ctrl + Enter to send"}; paste screenshots)`}
+          placeholder={p.disabled ? p.disabled : mode === "note" ? "Internal note — only your team sees this. Type @ to mention a teammate." : `${publicReply && !privateReply ? "Public reply on the post, visible to everyone" : privateReply ? "Private message to the commenter" : `Reply to ${t.contact_name || "the customer"}`}…  (${prefs.enterToSend ? "Enter to send, Shift+Enter for a new line" : "⌘/Ctrl + Enter to send"}; paste screenshots)`}
           className={cn("text-[13.5px]", mode === "note" && "bg-warning-soft/40")}
           aria-label={mode === "note" ? "Internal note" : "Reply"}
         />
@@ -238,6 +241,11 @@ export function Composer(p: ComposerProps) {
       {error && <Callout tone="critical" className="mt-2">{error}</Callout>}
       {notice && <Callout tone="warning" className="mt-2">{notice}</Callout>}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+        {mode === "reply" && privateOk && (
+          <label className="mr-auto flex items-center gap-1.5 text-[12px] text-text-2" title="Meta allows one private reply per comment, within 7 days">
+            <input type="checkbox" checked={privateReply} onChange={(e) => setPrivateReply(e.target.checked)} className="accent-brand" />Send privately (DM the commenter)
+          </label>
+        )}
         {mode === "reply" && isEmail && p.hasSignature && (
           <label className="mr-auto flex items-center gap-1.5 text-[12px] text-text-2"><input type="checkbox" checked={signature} onChange={(e) => setSignature(e.target.checked)} className="accent-brand" />Signature</label>
         )}

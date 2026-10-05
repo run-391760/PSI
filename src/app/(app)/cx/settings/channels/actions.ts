@@ -71,13 +71,14 @@ export async function syncEmailAction(brand: string, channelId: string): Promise
   }
 }
 
-export async function saveChannelAction(brand: string, kind: "livechat" | "webform" | "whatsapp" | "facebook" | "instagram", name: string, config: Record<string, unknown>, channelId?: string, secret?: string): Promise<ActionResult<string>> {
+export async function saveChannelAction(brand: string, kind: "livechat" | "webform" | "whatsapp" | "facebook" | "instagram" | "linkedin", name: string, config: Record<string, unknown>, channelId?: string, secret?: string): Promise<ActionResult<string>> {
   try {
     const { user } = await brandUser(brand);
     const clean: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(config)) clean[k] = typeof v === "string" ? v.slice(0, 1000) : typeof v === "boolean" ? v : v;
     if (typeof clean.color === "string" && !/^#[0-9a-f]{6}$/i.test(clean.color)) throw new AppError("Color must be a hex value like #4f46e5.");
-    if (["whatsapp", "facebook", "instagram"].includes(kind) && !String(clean.accountId ?? "").trim()) throw new AppError("Enter the account / page id.");
+    if (["whatsapp", "facebook", "instagram", "linkedin"].includes(kind) && !String(clean.accountId ?? "").trim()) throw new AppError("Enter the account / page id.");
+    if (kind === "linkedin" && !/^urn:li:organization:\d+$/.test(String(clean.accountId).trim())) throw new AppError("Enter the organization as urn:li:organization:123456.");
     let id = channelId;
     if (id) await updateChannel(brand, id, { name, config: clean, secret: secret || null });
     else id = await createChannel(brand, kind, name, clean, secret || null);

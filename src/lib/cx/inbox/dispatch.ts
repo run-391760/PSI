@@ -19,7 +19,7 @@ import { parseMetaThread } from "./webhooks";
  * email in the thread (reply-on-reply). Notes notify @mentioned agents.
  */
 export type Delivery = { delivery: "sent" | "stored" | "failed"; note: string | null };
-export type ReplyInput = { body: string; note?: boolean; status?: Status | CrmStatus | null; attachmentIds?: string[]; replyToId?: string | null; signature?: boolean };
+export type ReplyInput = { body: string; note?: boolean; status?: Status | CrmStatus | null; attachmentIds?: string[]; replyToId?: string | null; signature?: boolean; /** Facebook/Instagram comment threads: DM the commenter instead of replying in public. */ privateReply?: boolean };
 
 export async function postReply(projectId: string, ticketId: string, user: { id: string; name: string }, input: ReplyInput): Promise<Delivery> {
   const body = input.body.trim();
@@ -60,7 +60,7 @@ export async function postReply(projectId: string, ticketId: string, user: { id:
   let result: Delivery = { delivery: "stored", note: null };
   let externalId: string | null = null;
   try {
-    const r = await deliver(projectId, t, body, { files, replyTo, signatureUser: input.signature === false ? null : user.id });
+    const r = await deliver(projectId, t, body, { files, replyTo, signatureUser: input.signature === false ? null : user.id, privateReply: !!input.privateReply });
     result = r.result;
     externalId = r.externalId;
   } catch (e) {
@@ -88,7 +88,22 @@ export async function postReply(projectId: string, ticketId: string, user: { id:
 }
 
 type T = { id: string; number: number; subject: string; channel_kind: string; channel_id: string | null; external_thread_id?: string | null; contact_email: string | null; contact_phone: string | null; handles: Record<string, string> | null };
-type Extra = { files?: FileRow[]; replyTo?: { external_id: string | null; author_name: string; created_at: string; body: string } | null; signatureUser?: string | null };
+type Extra = { files?: FileRow[]; replyTo?: { external_id: string | null; author_name: string; created_at: string; body: string } | null; signatureUser?: string | null; privateReply?: boolean };
+
+/** Which Meta messaging mode a DM reply may use, given hours since the customer's last message (pure). */
+export function messagingTag(ageHours: number | null, humanAgent: boolean): "response" | "human_agent" | "closed" {
+  if (ageHours === null || ageHours < 24) return "response";
+  if (humanAgent && ageHours < 7 * 24) return "human_agent";
+  return "closed";
+}
+async function lastInboundAgeHours(ticketId: string) {
+  const [r] = await query<{ at: string | null }>("SELECT max(created_at) AS at FROM cx_messages WHERE ticket_id=$1 AND direction='in'", [ticketId]);
+  return r?.at ? (Date.now() - new Date(r.at).getTime()) / 3_600_000 : null;
+}
+async function lastInboundExternalId(ticketId: string) {
+  const [r] = await query<{ external_id: string | null }>("SELECT external_id FROM cx_messages WHERE ticket_id=$1 AND direction='in' AND external_id IS NOT NULL ORDER BY created_at DESC LIMIT 1", [ticketId]);
+  return r?.external_id ?? null;
+}
 
 async function deliver(projectId: string, t: T, body: string, extra: Extra = {}): Promise<{ result: Delivery; externalId: string | null }> {
   const kind = t.channel_kind;
@@ -125,26 +140,50 @@ async function deliver(projectId: string, t: T, body: string, extra: Extra = {})
     return { result: { delivery: "sent", note: null }, externalId: d.messages?.[0]?.id ?? null };
   }
   if ((kind === "facebook" || kind === "instagram") && t.channel_id) {
-    const [ch] = await query<{ secret_enc: string | null; config: { accountId?: string } }>("SELECT secret_enc,config FROM cx_channels WHERE id=$1", [t.channel_id]);
+    const [ch] = await query<{ secret_enc: string | null; config: { accountId?: string; humanAgent?: boolean } }>("SELECT secret_enc,config FROM cx_channels WHERE id=$1", [t.channel_id]);
     const token = ch ? channelSecret(ch) : null;
     const thread = parseMetaThread(t.external_thread_id);
+    const net = kind === "facebook" ? "Facebook" : "Instagram";
+    const { graph } = await import("./social");
     if (thread) {
-      // Public thread (comment, mention, tag): answer in public on the post, not by DM.
-      if (!token) return { result: { delivery: "stored", note: `Replying to ${kind === "facebook" ? "Facebook" : "Instagram"} comments needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
+      // Public thread (comment, mention, tag, review): answer in public on the post, or privately by DM to the commenter.
+      if (!token) return { result: { delivery: "stored", note: `Replying to ${net} comments needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
+      const target = extra.replyTo?.external_id && !extra.replyTo.external_id.startsWith("tag:") ? extra.replyTo.external_id : null;
+      if (extra.privateReply) {
+        const commentId = target ?? (thread.kind === "igm" ? thread.commentId : thread.kind === "fbc" || thread.kind === "igc" ? (await lastInboundExternalId(t.id)) : null);
+        if (!commentId) return { result: { delivery: "stored", note: `A private reply needs a ${net} comment to answer. The reply was stored only.` }, externalId: null };
+        // Meta allows one private reply per comment, within 7 days of the comment (same endpoint for FB and IG with a Page token).
+        const d = await graph("me/messages", token, { recipient: JSON.stringify({ comment_id: commentId }), message: JSON.stringify({ text: plain }) });
+        return { result: { delivery: "sent", note: "Sent as a private message to the commenter." }, externalId: d.message_id ? String(d.message_id) : null };
+      }
       if (thread.kind === "igt") return { result: { delivery: "stored", note: "Instagram's API can't comment on posts you're only photo-tagged in. The reply was stored; answer on Instagram using the post link in the ticket." }, externalId: null };
-      const { graph } = await import("./social");
       const d =
-        thread.kind === "fbc" || thread.kind === "fbp" ? await graph(`${thread.id}/comments`, token, { message: plain })
+        thread.kind === "fbc" ? await graph(`${target ?? thread.id}/comments`, token, { message: plain })
+        : thread.kind === "fbp" || thread.kind === "fbr" ? await graph(`${thread.id}/comments`, token, { message: plain })
+        // Instagram only accepts replies on top-level comments, so replies always go under the thread's root comment.
         : thread.kind === "igc" ? await graph(`${thread.id}/replies`, token, { message: plain })
         : await graph(`${ch.config?.accountId}/mentions`, token, { media_id: thread.id, ...(thread.commentId ? { comment_id: thread.commentId } : {}), message: plain });
       return { result: { delivery: "sent", note: null }, externalId: d.id ? String(d.id) : null };
     }
     const psid = t.handles?.[kind];
     if (!token || !psid) return { result: { delivery: "stored", note: `Sending ${kind === "facebook" ? "Messenger" : "Instagram"} replies needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
-    const r = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${encodeURIComponent(token)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recipient: { id: psid }, messaging_type: "RESPONSE", message: { text: plain } }), signal: AbortSignal.timeout(20_000) });
-    const d = (await r.json().catch(() => ({}))) as { message_id?: string; error?: { message?: string } };
-    if (!r.ok) throw new Error(d.error?.message ?? `Graph API ${r.status}`);
-    return { result: { delivery: "sent", note: null }, externalId: d.message_id ?? null };
+    // Messaging window: 24 h after the customer's last message; up to 7 days with the Human Agent tag (Meta approval).
+    const age = await lastInboundAgeHours(t.id);
+    const tag = messagingTag(age, !!ch?.config?.humanAgent);
+    if (tag === "closed")
+      return { result: { delivery: "stored", note: ch?.config?.humanAgent ? `The customer's last message is over 7 days old, so ${net} doesn't allow a reply. The reply was stored only.` : `The customer's last message is over 24 hours old. ${net} only allows replies within 24 hours (7 days with the Human Agent permission, enable it on the channel once Meta approves it). The reply was stored only.` }, externalId: null };
+    const d = await graph("me/messages", token, {
+      recipient: JSON.stringify({ id: psid }),
+      message: JSON.stringify({ text: plain }),
+      ...(tag === "human_agent" ? { messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" } : { messaging_type: "RESPONSE" }),
+    });
+    return { result: { delivery: "sent", note: tag === "human_agent" ? "Sent with the Human Agent tag (outside the 24-hour window)." : null }, externalId: d.message_id ? String(d.message_id) : null };
+  }
+  if (kind === "linkedin") {
+    const { sendLinkedInReply } = await import("./linkedin");
+    const externalId = await sendLinkedInReply(projectId, t.channel_id, t.external_thread_id ?? null, plain);
+    if (externalId === null) return { result: { delivery: "stored", note: "Replying on LinkedIn needs an access token on the channel (or LinkedIn connected in Publishing). The reply was stored only." }, externalId: null };
+    return { result: { delivery: "sent", note: null }, externalId };
   }
   if (kind === "discord" || kind === "discourse" || kind === "telegram") {
     const { sendConnectorReply } = await import("@/lib/cx/admin/connectors");

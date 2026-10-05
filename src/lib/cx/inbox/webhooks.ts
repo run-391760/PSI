@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * messages (pure, fixture-tested) and X-Hub-Signature-256 verification.
  */
 export type InboundSocial = {
-  platform: "whatsapp" | "facebook" | "instagram"; accountId: string; senderId: string; senderName: string; messageId: string; text: string; timestamp: string;
+  platform: "whatsapp" | "facebook" | "instagram" | "linkedin"; accountId: string; senderId: string; senderName: string; messageId: string; text: string; timestamp: string;
   attachments: { type: string; url?: string; id?: string }[];
   /** Public conversations (comments, mentions, tags): one ticket per thread instead of one per sender. */
   thread?: { key: string; label: string; link?: string | null };
@@ -14,11 +14,12 @@ export type InboundSocial = {
 /**
  * Public-conversation thread keys (stored in cx_tickets.external_thread_id) and how a reply is sent:
  * fbc:<commentId> reply to a Page comment · fbp:<postId> comment on a visitor post / mention post ·
- * igc:<commentId> reply to an IG comment · igm:<mediaId>:<commentId?> reply to an @mention · igt:<mediaId> tagged post.
+ * fbr:<openGraphStoryId> comment on a Page review/recommendation · igc:<commentId> reply to an IG comment ·
+ * igm:<mediaId>:<commentId?> reply to an @mention · igt:<mediaId> tagged post.
  */
-export type MetaThread = { kind: "fbc" | "fbp" | "igc" | "igm" | "igt"; id: string; commentId: string | null };
+export type MetaThread = { kind: "fbc" | "fbp" | "fbr" | "igc" | "igm" | "igt"; id: string; commentId: string | null };
 export function parseMetaThread(key: string | null | undefined): MetaThread | null {
-  const m = /^(fbc|fbp|igc|igm|igt):([^:]+)(?::(.*))?$/.exec(key ?? "");
+  const m = /^(fbc|fbp|fbr|igc|igm|igt):([^:]+)(?::(.*))?$/.exec(key ?? "");
   return m ? { kind: m[1] as MetaThread["kind"], id: m[2], commentId: m[3] || null } : null;
 }
 
@@ -53,10 +54,19 @@ export function mapMeta(body: Obj): InboundSocial[] {
     for (const ev of entry.messaging ?? []) {
       const m = ev.message;
       if (!m || m.is_echo) continue;
+      const atts: Obj[] = m.attachments ?? [];
+      const storyMention = atts.some((a) => a.type === "story_mention");
+      const story = m.reply_to?.story;
+      const base = m.text ?? (storyMention ? "" : atts.length ? `[${atts.map((a) => a.type).join(", ")}]` : "[message]");
+      // Story mentions / story replies (Instagram): keep the story media link; it expires after 24 hours on Meta's side.
+      const text = storyMention ? `Mentioned you in their story${base ? `: ${base}` : ""}` : story ? `Replied to your story: ${base}` : base;
       out.push({
         platform, accountId: String(entry.id ?? ev.recipient?.id ?? ""), senderId: String(ev.sender?.id ?? ""), senderName: "", messageId: m.mid ?? "",
-        text: m.text ?? (m.attachments?.length ? `[${m.attachments.map((a: Obj) => a.type).join(", ")}]` : "[message]"), timestamp: iso(ev.timestamp),
-        attachments: (m.attachments ?? []).map((a: Obj) => ({ type: a.type ?? "file", url: a.payload?.url })),
+        text, timestamp: iso(ev.timestamp),
+        attachments: [
+          ...atts.map((a) => ({ type: a.type === "story_mention" ? "story" : a.type ?? "file", url: a.payload?.url })),
+          ...(story?.url ? [{ type: "story", url: String(story.url) }] : []),
+        ],
       });
     }
   return out;
@@ -97,6 +107,14 @@ export function mapMetaChanges(body: Obj): { items: InboundSocial[]; mentions: P
             thread: { key: `fbp:${postId}`, label: ch.field === "mention" ? "Mentioned your Page in a post" : "Post on your Page", link },
           });
         }
+      }
+      if (object === "page" && ch.field === "ratings" && v.open_graph_story_id && (v.verb === "add" || v.verb === "edit")) {
+        const positive = v.recommendation_type ? v.recommendation_type === "positive" : Number(v.rating) >= 4;
+        items.push({
+          platform: "facebook", accountId, senderId: String(v.reviewer_id ?? ""), senderName: String(v.reviewer_name ?? ""), messageId: `review:${v.open_graph_story_id}:${v.verb === "edit" ? iso(v.created_time) : "add"}`,
+          text: String(v.review_text || (v.rating ? `[${v.rating}★ rating]` : "[recommendation]")), timestamp: iso(v.created_time), attachments: [],
+          thread: { key: `fbr:${v.open_graph_story_id}`, label: positive ? "Recommends your Page" : "Doesn't recommend your Page", link: `https://www.facebook.com/${v.open_graph_story_id}` },
+        });
       }
       if (object === "instagram" && ch.field === "comments" && v.id) {
         if (String(v.from?.id ?? "") === accountId) continue;

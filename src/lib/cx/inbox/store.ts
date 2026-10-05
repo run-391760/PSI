@@ -36,7 +36,7 @@ export type TicketListRow = {
   media_type: string; first_body: string | null; first_at: string | null; first_author: string | null; contact_handle: string | null;
   post_key: string | null; post_url: string | null; post_tickets: number; bookmarked: boolean; tasks_open: number;
 };
-export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null };
+export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null; external_id?: string | null; moderation?: string | null };
 
 const DONE = "('solved','closed')";
 /** Effective CRM status in SQL (mirrors model.effectiveStatus). Needs aliases t (ticket) and tm (meta). */
@@ -589,7 +589,7 @@ export async function getTicket(projectId: string, id: string) {
   if (!t) return null;
   const ticket = normTicket(t);
   const messages = (await query<MessageRow>(
-    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,mm.reply_to,COALESCE(mm.mentions,'[]') AS mentions
+    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,m.external_id,mm.reply_to,mm.moderation,COALESCE(mm.mentions,'[]') AS mentions
        FROM cx_messages m LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id WHERE m.ticket_id=$1 ORDER BY m.created_at, m.id`,
     [id],
   )).map((m) => ({ ...m, created_at: iso(m.created_at)! }));

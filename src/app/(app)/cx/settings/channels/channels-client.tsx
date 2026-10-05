@@ -12,13 +12,14 @@ import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
 import { CHANNELS, type ChannelKind } from "@/lib/cx/channels";
+import { syncLinkedInAction } from "@/app/(app)/cx/inbox/actions";
 import type { ChannelRow } from "@/lib/cx/inbox/channels";
 import { timeAgo } from "@/lib/format";
 import { channelStatusAction, deleteChannelAction, saveChannelAction, saveEmailAction, syncEmailAction, testEmailAction, type EmailInput } from "./actions";
 
 type Env = { whatsappVerify: boolean; whatsappSend: boolean; metaVerify: boolean; metaSecret: boolean };
 type Props = { brand: string; origin: string; channels: ChannelRow[]; available: Record<ChannelKind, boolean>; env: Env };
-type Editing = { kind: "email" | "livechat" | "webform" | "whatsapp" | "facebook" | "instagram"; channel?: ChannelRow } | null;
+type Editing = { kind: "email" | "livechat" | "webform" | "whatsapp" | "facebook" | "instagram" | "linkedin"; channel?: ChannelRow } | null;
 
 export function ChannelsClient({ brand, origin, channels, available, env }: Props) {
   const [editing, setEditing] = useState<Editing>(null);
@@ -56,7 +57,7 @@ export function ChannelsClient({ brand, origin, channels, available, env }: Prop
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {CHANNELS.map((ch) => {
               const connected = connectedKinds.has(ch.kind);
-              const socialInbox = ch.kind === "whatsapp" ? env.whatsappVerify : ch.kind === "facebook" || ch.kind === "instagram" ? env.metaVerify && env.metaSecret : false;
+              const socialInbox = ch.kind === "whatsapp" ? env.whatsappVerify : ch.kind === "facebook" || ch.kind === "instagram" ? env.metaVerify && env.metaSecret : ch.kind === "linkedin";
               const builtIn = ["email", "livechat", "webform"].includes(ch.kind);
               return (
                 <div key={ch.kind} className="flex flex-col rounded-lg border border-border p-3.5">
@@ -75,7 +76,7 @@ export function ChannelsClient({ brand, origin, channels, available, env }: Prop
                   <p className="mt-2 flex-1 text-[12.5px] text-text-2">{ch.setup}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {builtIn && <Button size="sm" onClick={() => setEditing({ kind: ch.kind as "email" })}><Plus className="h-3.5 w-3.5" />Connect</Button>}
-                    {(ch.kind === "whatsapp" || ch.kind === "facebook" || ch.kind === "instagram") && (
+                    {(ch.kind === "whatsapp" || ch.kind === "facebook" || ch.kind === "instagram" || ch.kind === "linkedin") && (
                       socialInbox ? <Button size="sm" onClick={() => setEditing({ kind: ch.kind as "whatsapp" })}><Plus className="h-3.5 w-3.5" />Connect inbox</Button>
                         : <span className="text-[12px] text-text-3">Inbox needs {ch.kind === "whatsapp" ? "WHATSAPP_VERIFY_TOKEN" : "META_VERIFY_TOKEN + META_APP_SECRET"} on the server.</span>
                     )}
@@ -93,13 +94,13 @@ export function ChannelsClient({ brand, origin, channels, available, env }: Prop
         <CardBody className="space-y-3 text-[13px]">
           <WebhookRow name="WhatsApp Business Cloud API" url={`${origin}/api/cx/webhooks/whatsapp`} ok={env.whatsappVerify} items={[["WHATSAPP_VERIFY_TOKEN", env.whatsappVerify, "verify token you enter in Meta → WhatsApp → Configuration"], ["META_APP_SECRET", env.metaSecret, "enforces the X-Hub-Signature-256 check (recommended)"], ["WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID", env.whatsappSend, "needed to send replies"]]} />
           <WebhookRow name="Facebook Messenger & Instagram messaging" url={`${origin}/api/cx/webhooks/meta`} ok={env.metaVerify && env.metaSecret} items={[["META_VERIFY_TOKEN", env.metaVerify, "verify token for the Meta app's Webhooks product"], ["META_APP_SECRET", env.metaSecret, "required: every POST is signature-checked"]]} />
-          <p className="text-[12.5px] text-text-3">In the Meta app&apos;s Webhooks, subscribe Page fields <code>messages</code>, <code>feed</code>, <code>mention</code> and Instagram fields <code>messages</code>, <code>comments</code>, <code>mentions</code>, then connect the channel above with the phone number id / Page id / Instagram account id. Direct messages become one open ticket per sender; each comment thread, mention and tagged post becomes its own ticket, and replies are posted publicly on it. Posts you&apos;re tagged in on Instagram are checked every 15 minutes.</p>
+          <p className="text-[12.5px] text-text-3">In the Meta app&apos;s Webhooks, subscribe Page fields <code>messages</code>, <code>feed</code>, <code>mention</code>, <code>ratings</code> and Instagram fields <code>messages</code>, <code>comments</code>, <code>mentions</code>, then connect the channel above with the phone number id / Page id / Instagram account id. Direct messages become one open ticket per sender; each comment thread, mention and tagged post becomes its own ticket, and replies are posted publicly on it. Posts you&apos;re tagged in on Instagram are checked every 15 minutes.</p>
         </CardBody>
       </Card>
 
       {editing?.kind === "email" && <EmailDialog brand={brand} channel={editing.channel} onClose={() => setEditing(null)} />}
       {(editing?.kind === "livechat" || editing?.kind === "webform") && <WidgetDialog brand={brand} kind={editing.kind} channel={editing.channel} onClose={() => setEditing(null)} />}
-      {(editing?.kind === "whatsapp" || editing?.kind === "facebook" || editing?.kind === "instagram") && <SocialDialog brand={brand} kind={editing.kind} channel={editing.channel} onClose={() => setEditing(null)} />}
+      {(editing?.kind === "whatsapp" || editing?.kind === "facebook" || editing?.kind === "instagram" || editing?.kind === "linkedin") && <SocialDialog brand={brand} kind={editing.kind} channel={editing.channel} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -179,8 +180,14 @@ function ConnectedChannel({ c, brand, origin, onEdit }: { c: ChannelRow; brand: 
       </div>
     );
   }
-  if (["whatsapp", "facebook", "instagram"].includes(c.kind))
-    details = <div className="text-[12.5px] text-text-2">Account id <span className="font-mono text-text">{cfg.accountId}</span>{c.has_secret ? " · access token stored (encrypted)" : ""}</div>;
+  if (["whatsapp", "facebook", "instagram", "linkedin"].includes(c.kind))
+    details = (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-text-2">
+        <span>{c.kind === "linkedin" ? "Organization" : "Account id"} <span className="font-mono break-all text-text">{cfg.accountId}</span>{c.has_secret ? " · access token stored (encrypted)" : c.kind === "linkedin" ? " · uses the Publishing LinkedIn token" : ""}</span>
+        {cfg.humanAgent ? <Badge tone="info">Human Agent (7-day replies)</Badge> : null}
+        {c.kind === "linkedin" && <LinkedInSync brand={brand} />}
+      </div>
+    );
 
   return (
     <div className="rounded-lg border border-border p-3.5">
@@ -312,23 +319,63 @@ function WidgetDialog({ brand, kind, channel, onClose }: { brand: string; kind: 
   );
 }
 
-function SocialDialog({ brand, kind, channel, onClose }: { brand: string; kind: "whatsapp" | "facebook" | "instagram"; channel?: ChannelRow; onClose: () => void }) {
+function LinkedInSync({ brand }: { brand: string }) {
   const router = useRouter();
-  const [name, setName] = useState(channel?.name ?? (kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Facebook Page" : "Instagram"));
-  const [accountId, setAccountId] = useState(String((channel?.config as Record<string, unknown>)?.accountId ?? ""));
-  const [token, setToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const label = kind === "whatsapp" ? "Phone number id" : kind === "facebook" ? "Facebook Page id" : "Instagram account id";
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
   return (
-    <Dialog open onClose={onClose} title={`Connect ${kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Messenger" : "Instagram"} inbox`} description={kind === "whatsapp" ? "Messages arrive through the webhook; this maps them to this brand." : "Messages, comments and mentions arrive through the webhook; this maps them to this brand."}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={async () => { const r = await saveChannelAction(brand, kind, name, { accountId: accountId.trim() }, channel?.id, token || undefined); if (r.ok) { onClose(); router.refresh(); } else setError(r.error); }}>Save</Button></>}>
+    <span className="inline-flex items-center gap-2">
+      <button type="button" disabled={busy} onClick={async () => { setBusy(true); const r = await syncLinkedInAction(brand); setBusy(false); setMsg(r.ok ? `${r.data} new` : r.error); router.refresh(); }} className="text-link hover:underline">{busy ? "Checking…" : "Check now"}</button>
+      {msg && <span className="text-text-3">{msg}</span>}
+    </span>
+  );
+}
+
+type SocialKind = "whatsapp" | "facebook" | "instagram" | "linkedin";
+const SOCIAL_NAME: Record<SocialKind, string> = { whatsapp: "WhatsApp", facebook: "Facebook Page", instagram: "Instagram", linkedin: "LinkedIn page" };
+const TOKEN_HINT: Record<Exclude<SocialKind, "whatsapp">, string> = {
+  facebook: "Long-lived Page token with pages_messaging, pages_manage_engagement, pages_read_user_content, pages_manage_metadata. Stored encrypted; saving it also subscribes the Page to the webhook. Without it replies are stored only.",
+  instagram: "Page token of the Page linked to this Instagram account, with instagram_manage_messages and instagram_manage_comments. Needed to reply and to fetch mentions and tagged posts. Stored encrypted.",
+  linkedin: "Token from the Community Management API with r_organization_social, w_organization_social, r_organization_social_feed, w_organization_social_feed and rw_organization_admin (a Page admin must authorize). Leave empty to use the brand's Publishing LinkedIn connection. Tokens expire after 60 days unless your app has refresh tokens.",
+};
+
+function SocialDialog({ brand, kind, channel, onClose }: { brand: string; kind: SocialKind; channel?: ChannelRow; onClose: () => void }) {
+  const router = useRouter();
+  const cfg = (channel?.config ?? {}) as Record<string, unknown>;
+  const [name, setName] = useState(channel?.name ?? SOCIAL_NAME[kind]);
+  const [accountId, setAccountId] = useState(String(cfg.accountId ?? ""));
+  const [token, setToken] = useState("");
+  const [humanAgent, setHumanAgent] = useState(!!cfg.humanAgent);
+  const [error, setError] = useState<string | null>(null);
+  const label = kind === "whatsapp" ? "Phone number id" : kind === "facebook" ? "Facebook Page id" : kind === "instagram" ? "Instagram account id" : "Organization URN";
+  const title = kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Facebook" : kind === "instagram" ? "Instagram" : "LinkedIn";
+  const description =
+    kind === "whatsapp" ? "Messages arrive through the webhook; this maps them to this brand."
+    : kind === "linkedin" ? "Comments on your company posts and @mentions of your page are checked every 5 minutes. LinkedIn has no API for page messages."
+    : "Messages, comments, mentions and reviews arrive through the webhook; this maps them to this brand.";
+  const save = async () => {
+    const config: Record<string, unknown> = { accountId: accountId.trim() };
+    if (kind === "facebook" || kind === "instagram") config.humanAgent = humanAgent;
+    const r = await saveChannelAction(brand, kind, name, config, channel?.id, token || undefined);
+    if (r.ok) { onClose(); router.refresh(); } else setError(r.error);
+  };
+  return (
+    <Dialog open onClose={onClose} title={`Connect ${title} inbox`} description={description} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save}>Save</Button></>}>
       <div className="space-y-3">
         <Field label="Channel name" htmlFor="s-n"><Input id="s-n" value={name} onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label={label} htmlFor="s-a"><Input id="s-a" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="font-mono" /></Field>
+        <Field label={label} htmlFor="s-a" hint={kind === "linkedin" ? "Like urn:li:organization:123456 (the number is in your page's admin URL)." : undefined}>
+          <Input id="s-a" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="font-mono" placeholder={kind === "linkedin" ? "urn:li:organization:123456" : undefined} />
+        </Field>
         {kind !== "whatsapp" && (
-          <Field label="Page access token (to send replies)" htmlFor="s-t" hint={kind === "facebook" ? "Long-lived Page token with pages_messaging, pages_manage_engagement, pages_read_user_content, pages_manage_metadata. Stored encrypted; saving it also subscribes the Page to the webhook. Without it replies are stored only." : "Page token of the Page linked to this Instagram account, with instagram_manage_messages and instagram_manage_comments. Needed to reply and to fetch mentions and tagged posts. Stored encrypted."}>
+          <Field label={kind === "linkedin" ? "Access token (optional)" : "Page access token (to send replies)"} htmlFor="s-t" hint={TOKEN_HINT[kind]}>
             <Input id="s-t" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
           </Field>
+        )}
+        {(kind === "facebook" || kind === "instagram") && (
+          <label className="flex items-start gap-2 text-[12.5px] text-text-2">
+            <input type="checkbox" checked={humanAgent} onChange={(e) => setHumanAgent(e.target.checked)} className="mt-0.5 accent-brand" />
+            <span>Human Agent permission approved by Meta: allow DM replies up to 7 days after the customer&apos;s last message (otherwise 24 hours).</span>
+          </label>
         )}
         {error && <Callout tone="critical">{error}</Callout>}
       </div>

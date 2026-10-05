@@ -53,7 +53,7 @@ export function channelSecret(r: { secret_enc: string | null }) {
 }
 
 export async function createChannel(projectId: string, kind: string, name: string, config: Record<string, unknown>, secret?: string | null) {
-  if (!["email", "livechat", "webform", "whatsapp", "facebook", "instagram"].includes(kind)) throw new AppError("This channel cannot be connected here.");
+  if (!["email", "livechat", "webform", "whatsapp", "facebook", "instagram", "linkedin"].includes(kind)) throw new AppError("This channel cannot be connected here.");
   const id = randomUUID();
   await query("INSERT INTO cx_channels(id,project_id,kind,name,config,secret_enc) VALUES($1,$2,$3,$4,$5::jsonb,$6)", [id, projectId, kind, name.trim().slice(0, 80) || kind, JSON.stringify(config), secret ? encryptSecret(secret) : null]);
   return id;

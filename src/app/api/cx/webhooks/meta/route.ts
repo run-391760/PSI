@@ -3,10 +3,10 @@ import { storeMentions, storeSocial } from "@/lib/cx/inbox/social";
 import { mapMeta, mapMetaChanges, verifyMetaSignature } from "@/lib/cx/inbox/webhooks";
 
 /**
- * Meta webhook for Facebook (object "page": Messenger, Page comments, visitor posts, mentions) and Instagram
+ * Meta webhook for Facebook (object "page": Messenger, Page comments, visitor posts, mentions, reviews) and Instagram
  * (object "instagram": DMs, comments, @mentions). Setup (Meta App → Webhooks): Callback URL =
  * https://<your-host>/api/cx/webhooks/meta, Verify token = META_VERIFY_TOKEN; subscribe Page fields
- * messages, feed, mention and Instagram fields messages, comments, mentions. META_APP_SECRET is required
+ * messages, feed, mention, ratings and Instagram fields messages, comments, mentions. META_APP_SECRET is required
  * (signature check). Connect a Facebook / Instagram channel in Settings → Channels with the Page / IG
  * account id (and a Page access token to send replies).
  */

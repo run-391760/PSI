@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS cx_inbox_message_meta (
   mentions jsonb NOT NULL DEFAULT '[]',
   email_id text
 );
+ALTER TABLE cx_inbox_message_meta ADD COLUMN IF NOT EXISTS moderation text;
 
 CREATE TABLE IF NOT EXISTS cx_inbox_translations (
   message_id text NOT NULL REFERENCES cx_messages(id) ON DELETE CASCADE,

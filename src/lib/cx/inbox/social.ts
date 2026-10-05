@@ -1,5 +1,5 @@
 import { query } from "@/lib/db";
-import { addInbound, createTicket } from "./store";
+import { addInbound, createTicket, logEvent } from "./store";
 import { channelSecret, setChannelResult } from "./channels";
 import type { InboundSocial, PendingMention } from "./webhooks";
 
@@ -7,11 +7,13 @@ const GRAPH = "https://graph.facebook.com/v21.0";
 type Obj = Record<string, any>;
 
 /** GET/POST the Graph API with a Page access token (sent in the body or header, never logged). */
-export async function graph(path: string, token: string, post?: Record<string, string>): Promise<Obj> {
+export async function graph(path: string, token: string, post?: Record<string, string> | "DELETE"): Promise<Obj> {
+  const del = post === "DELETE";
+  if (del) post = undefined;
   const r = await fetch(`${GRAPH}/${path}`, {
-    method: post ? "POST" : "GET",
+    method: del ? "DELETE" : post ? "POST" : "GET",
     headers: { authorization: `Bearer ${token}`, ...(post ? { "content-type": "application/x-www-form-urlencoded" } : {}) },
-    body: post ? new URLSearchParams(post).toString() : undefined,
+    body: post && typeof post === "object" ? new URLSearchParams(post).toString() : undefined,
     signal: AbortSignal.timeout(20_000),
   });
   const d = (await r.json().catch(() => ({}))) as Obj;
@@ -135,5 +137,33 @@ export async function pollInstagramTags(projectId: string) {
 
 /** Subscribe the app to a Page's webhook fields (messages, comments/posts, mentions). */
 export async function subscribePage(pageId: string, token: string) {
-  await graph(`${pageId}/subscribed_apps`, token, { subscribed_fields: "messages,feed,mention" });
+  await graph(`${pageId}/subscribed_apps`, token, { subscribed_fields: "messages,feed,mention,ratings" });
+}
+
+export type Moderation = "hide" | "unhide" | "delete";
+
+/**
+ * Hide, unhide or delete a Facebook / Instagram comment that arrived in a ticket. Only comments on the
+ * brand's own posts can be moderated (Meta rule); the result is stored on the message and logged.
+ */
+export async function moderateComment(projectId: string, ticketId: string, messageId: string, action: Moderation, actor: string) {
+  const { AppError } = await import("@/lib/domain");
+  const { parseMetaThread } = await import("./webhooks");
+  const [m] = await query<{ external_id: string | null; direction: string; channel_kind: string; channel_id: string | null; external_thread_id: string | null }>(
+    `SELECT m.external_id,m.direction,t.channel_kind,t.channel_id,t.external_thread_id FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id
+      WHERE m.id=$1 AND m.ticket_id=$2 AND t.project_id=$3`, [messageId, ticketId, projectId]);
+  if (!m) throw new AppError("Message not found.", 404);
+  const thread = parseMetaThread(m.external_thread_id);
+  // Only comments on the brand's own posts: Page comments (fbc) and IG comments (igc), not @mentions elsewhere.
+  if (!thread || (thread.kind !== "fbc" && thread.kind !== "igc") || m.direction !== "in" || !m.external_id) throw new AppError("Only comments on your own Facebook and Instagram posts can be hidden or deleted.");
+  const [ch] = m.channel_id ? await query<{ secret_enc: string | null }>("SELECT secret_enc FROM cx_channels WHERE id=$1 AND project_id=$2", [m.channel_id, projectId]) : [];
+  const token = ch ? channelSecret(ch) : null;
+  if (!token) throw new AppError("Add a Page access token to the channel to moderate comments.");
+  if (action === "delete") await graph(m.external_id, token, "DELETE");
+  else if (m.channel_kind === "instagram") await graph(m.external_id, token, { hide: action === "hide" ? "true" : "false" });
+  else await graph(m.external_id, token, { is_hidden: action === "hide" ? "true" : "false" });
+  const state = action === "unhide" ? null : action === "hide" ? "hidden" : "deleted";
+  await query("INSERT INTO cx_inbox_message_meta(message_id,moderation) VALUES($1,$2) ON CONFLICT(message_id) DO UPDATE SET moderation=$2", [messageId, state]);
+  await logEvent(query, ticketId, actor, "update", `${action === "delete" ? "deleted" : action === "hide" ? "hid" : "unhid"} a ${m.channel_kind === "instagram" ? "Instagram" : "Facebook"} comment`);
+  return state;
 }
