@@ -6,6 +6,7 @@ import {
   Bot,
   Building2,
   ChartNoAxesCombined,
+  ClipboardCheck,
   Compass,
   FileCheck2,
   FileSearch,
@@ -110,6 +111,7 @@ export const NAV: NavGroup[] = [
     label: "Content marketing",
     items: [
       { href: "/topic-research", label: "Topic Research", icon: Sparkles, description: "Content ideas, headlines and questions for a topic.", requires: ["dataforseo"] },
+      { href: "/optimizer", label: "Pre-Publish Optimizer", icon: ClipboardCheck, description: "Audit, score and fix a draft before publishing: intent, quality, topical coverage, E-E-A-T, schema.", badge: "New" },
       { href: "/writing-assistant", label: "SEO Writing Assistant", icon: PenLine, description: "Readability, SEO and tone checks while you write." },
       { href: "/brand-monitoring", label: "Brand Monitoring", icon: MessageSquareQuote, description: "Mentions of your brand across the web." },
     ],

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Menu, MenuItem } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/tabs";
 import { restorePanels } from "@/lib/cx/ui/prefs-logic";
+import { OptimizerTabs } from "@/components/optimizer/module-tabs";
 import { CX_SEARCH } from "./cx-nav";
 import { CustomizeMenuDialog } from "./customize-menu";
 import { ALL_TOOLS } from "./nav";
@@ -305,22 +306,25 @@ export function AccountMenu({ user, logoutAction, variant, extra }: { user: { na
   );
 }
 
-/** SEO workspace topbar (the CX workspace uses <CxHeader>). */
+/** SEO workspace topbar with the Pre-Publish Optimizer module tabs as its second row (the CX workspace uses <CxHeader>). */
 export function Topbar({ user, unread, onMenu, logoutAction }: { user: { name: string; email: string }; unread: number; onMenu: () => void; logoutAction: () => Promise<void> }) {
   return (
-    <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur">
-      <button onClick={onMenu} className="rounded-md p-2 text-text-2 hover:bg-surface-3 lg:hidden" aria-label="Open navigation">
-        <MenuIcon className="h-5 w-5" />
-      </button>
-      <WorkspaceSwitch />
-      <GlobalSearch />
-      <div className="ml-auto flex items-center gap-1">
-        <FocusToggle />
-        <DisplayMenu />
-        <ThemeToggle className="hidden sm:block" />
-        <AlertsBell unread={unread} />
-        <AccountMenu user={user} logoutAction={logoutAction} />
+    <header className="no-print sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
+      <div className="flex h-14 items-center gap-3 px-4">
+        <button onClick={onMenu} className="rounded-md p-2 text-text-2 hover:bg-surface-3 lg:hidden" aria-label="Open navigation">
+          <MenuIcon className="h-5 w-5" />
+        </button>
+        <WorkspaceSwitch />
+        <GlobalSearch />
+        <div className="ml-auto flex items-center gap-1">
+          <FocusToggle />
+          <DisplayMenu />
+          <ThemeToggle className="hidden sm:block" />
+          <AlertsBell unread={unread} />
+          <AccountMenu user={user} logoutAction={logoutAction} />
+        </div>
       </div>
+      <OptimizerTabs />
     </header>
   );
 }

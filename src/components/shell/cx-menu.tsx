@@ -45,14 +45,14 @@ export function CxMenu({ open, onClose, logoutAction }: { open: boolean; onClose
         aria-label="CX menu"
         inert={!open}
         className={cn(
-          "no-print fixed inset-y-0 left-0 z-50 flex w-[300px] max-w-[85vw] flex-col bg-surface text-text shadow-modal transition-transform duration-200",
+          "cx-drawer no-print fixed inset-y-0 left-0 z-50 flex w-[300px] max-w-[85vw] flex-col bg-surface text-text shadow-modal transition-transform duration-200",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-12 shrink-0 items-center gap-2 bg-[var(--cx-header)] px-4 text-white">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-white/5 bg-[var(--cx-header)] px-4 text-white">
           <Logo size={24} />
           <span className="text-[14px] font-semibold tracking-wide uppercase">
-            Synapse<span className="opacity-80">CX</span>
+            Synapse<span className="text-[#a99dff]">CX</span>
           </span>
           <button type="button" onClick={onClose} className="ml-auto rounded p-1.5 text-[var(--cx-header-muted)] hover:bg-white/10 hover:text-white" aria-label="Close menu">
             <X className="h-4 w-4" />

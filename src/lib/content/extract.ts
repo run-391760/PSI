@@ -63,7 +63,7 @@ function mainRoot($: CheerioAPI): Cheerio<Element> {
   return $("body").first() as Cheerio<Element>;
 }
 
-function inlineMarkdown($: CheerioAPI, el: Cheerio<AnyNode>, base: string): string {
+function inlineMarkdown($: CheerioAPI, el: Cheerio<AnyNode>, base: string, images = false): string {
   let out = "";
   el.contents().each((_, node) => {
     if (node.type === "text") out += (node as unknown as { data: string }).data;
@@ -88,15 +88,30 @@ function inlineMarkdown($: CheerioAPI, el: Cheerio<AnyNode>, base: string): stri
         const t = clean($n.text());
         out += t ? `*${t}*` : "";
       } else if (tag === "img") {
-        /* images are dropped from imported text */
-      } else out += inlineMarkdown($, $n, base);
+        // Images are dropped from imported text unless asked for (the optimizer audits them).
+        if (images) out += imageMarkdown($n.attr("alt") ?? "", $n.attr("src") ?? $n.attr("data-src") ?? "", base);
+      } else out += inlineMarkdown($, $n, base, images);
     }
   });
   return out;
 }
 
-/** Analyze fetched HTML. Returns measured facts, the main text (for keyword checks) and a Markdown rendition. */
-export function extractPage(html: string, url: string, status: number, headers: Record<string, string | string[] | undefined>, domain: string) {
+function imageMarkdown(alt: string, src: string, base: string) {
+  if (!src || src.startsWith("data:")) return "";
+  let abs = src;
+  try {
+    abs = new URL(src, base).toString();
+  } catch {
+    /* keep as is */
+  }
+  return `![${clean(alt).replace(/[[\]]/g, "")}](${abs.replace(/\s/g, "%20")})`;
+}
+
+/**
+ * Analyze fetched HTML. Returns measured facts, the main text (for keyword checks) and a Markdown
+ * rendition (`opts.images` keeps images in the Markdown).
+ */
+export function extractPage(html: string, url: string, status: number, headers: Record<string, string | string[] | undefined>, domain: string, opts: { images?: boolean } = {}) {
   const audit = auditHtml(html, url, headers);
   const $ = load(html);
   const meta = (name: string) => $(`meta[name='${name}']`).attr("content") ?? $(`meta[property='${name}']`).attr("content") ?? "";
@@ -138,16 +153,23 @@ export function extractPage(html: string, url: string, status: number, headers: 
   const root = mainRoot($);
   root.find("br").replaceWith(" ");
   const blocks: { tag: string; text: string; md: string; ordered?: boolean }[] = [];
-  root.find(BLOCKS).each((_, el) => {
+  root.find(opts.images ? `${BLOCKS},img` : BLOCKS).each((_, el) => {
     const $el = $(el);
     const tag = (el as Element).tagName.toLowerCase();
+    if (tag === "img") {
+      // Stand-alone images (figures); images inside text blocks are kept inline by inlineMarkdown.
+      if ($el.closest(BLOCKS).length) return;
+      const md = imageMarkdown($el.attr("alt") ?? "", $el.attr("src") ?? $el.attr("data-src") ?? "", url);
+      if (md) blocks.push({ tag: "img", text: "", md });
+      return;
+    }
     if (tag !== "pre" && $el.find(BLOCKS).length) return; // nested: children are collected instead
     const text = clean($el.text());
     if (!text) return;
-    const md = tag === "pre" ? text : clean(inlineMarkdown($, $el, url));
+    const md = tag === "pre" ? text : clean(inlineMarkdown($, $el, url, opts.images));
     blocks.push({ tag, text, md, ordered: tag === "li" ? $el.parent().is("ol") : undefined });
   });
-  let text = blocks.map((b) => b.text).join("\n");
+  let text = blocks.filter((b) => b.text).map((b) => b.text).join("\n");
   const rootWords = wordList(root.text()).length;
   if (wordList(text).length < rootWords * 0.4) {
     root.find("div,section,span").each((_, el) => void $(el).append("\n"));
@@ -167,12 +189,14 @@ export function extractPage(html: string, url: string, status: number, headers: 
       if (b.tag === "li") return `${b.ordered ? "1." : "-"} ${b.md}`;
       if (b.tag === "blockquote") return `> ${b.md}`;
       if (b.tag === "pre") return "```\n" + b.text + "\n```";
+      if (b.tag === "figcaption" && opts.images) return `*${b.md}*`;
       return b.md;
     })
     .reduce<string[]>((acc, line) => {
       const prevList = acc.length && /^(-|1\.) /.test(acc[acc.length - 1]);
       const isList = /^(-|1\.) /.test(line);
-      if (acc.length) acc.push(prevList && isList ? "\n" : "\n\n");
+      const caption = acc.length && /^!\[/.test(acc[acc.length - 1]) && /^\*[^*]/.test(line);
+      if (acc.length) acc.push((prevList && isList) || caption ? "\n" : "\n\n");
       acc.push(line);
       return acc;
     }, [])

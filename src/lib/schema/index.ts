@@ -18,6 +18,7 @@ import { cxAdminSchema } from "./cx-admin";
 import { cxOpsSchema } from "./cx-ops";
 import { cxUiSchema } from "./cx-ui";
 import { cxSettingsSchema } from "./cx-settings";
+import { optimizerSchema } from "./optimizer";
 
 export const schema = [
   coreSchema,
@@ -40,4 +41,5 @@ export const schema = [
   cxUiSchema,
   cxOpsSchema,
   cxSettingsSchema,
+  optimizerSchema,
 ].join("\n");

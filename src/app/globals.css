@@ -294,3 +294,11 @@
     animation: none;
   }
 }
+
+/* Optimizer module tabs: scroll sideways without a visible scrollbar. */
+.opt-tabs {
+  scrollbar-width: none;
+}
+.opt-tabs::-webkit-scrollbar {
+  display: none;
+}

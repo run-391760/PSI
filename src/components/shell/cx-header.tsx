@@ -34,7 +34,7 @@ export function CxHeader({ user, unread, onMenu, logoutAction }: { user: { name:
             aria-current={on ? "page" : undefined}
             className={cn(
               "flex h-full shrink-0 items-center border-b-[3px] px-3 pt-[3px] text-[12px] font-semibold tracking-[0.1em] whitespace-nowrap uppercase transition-colors",
-              on ? "border-white bg-white/[0.06] text-white" : "border-transparent text-[var(--cx-header-muted)] hover:text-white",
+              on ? "border-[var(--cx-tab-active)] bg-white/[0.06] text-white" : "border-transparent text-[var(--cx-header-muted)] hover:text-white",
             )}
           >
             {t.label}
@@ -45,7 +45,7 @@ export function CxHeader({ user, unread, onMenu, logoutAction }: { user: { name:
   );
 
   return (
-    <header className="no-print sticky top-0 z-30 bg-[var(--cx-header)] text-white shadow-[0_1px_0_rgba(0,0,0,0.15)]">
+    <header className="no-print sticky top-0 z-30 bg-[var(--cx-header)] text-white border-b border-white/5">
       <div className="flex h-12 items-center gap-1.5 px-2 sm:gap-2 sm:px-3">
         <button type="button" onClick={onMenu} className={iconBtn("brand")} aria-label="Open menu" title="Menu">
           <MenuIcon className="h-5 w-5" />
@@ -53,7 +53,7 @@ export function CxHeader({ user, unread, onMenu, logoutAction }: { user: { name:
         <Link href={keepParams("/cx", params)} className="flex shrink-0 items-center gap-2" aria-label="SynapseCX home">
           <Logo size={24} />
           <span className="hidden text-[13.5px] font-semibold tracking-wide uppercase sm:inline">
-            Synapse<span className="opacity-80">CX</span>
+            Synapse<span className="text-[#a99dff]">CX</span>
           </span>
         </Link>
         <div className="ml-1 shrink-0">

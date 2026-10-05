@@ -3,35 +3,38 @@
  * Tokens: dark brand-blue header, light-blue active rows. Unlayered so it wins over utilities.
  */
 .cx-shell {
-  --cx-header: #0f4c81;
-  --cx-header-2: #0b3d6b;
+  /* Same palette as the SEO workspace: navy navigation chrome (--nav-*) and the purple brand accent. */
+  --cx-header: var(--nav-bg);
+  --cx-header-2: var(--nav-bg-2);
   --cx-header-ink: #ffffff;
-  --cx-header-muted: rgba(255, 255, 255, 0.62);
-  --cx-header-field: rgba(255, 255, 255, 0.12);
-  --cx-accent: #1a73d9;
-  --cx-active-bg: #e3effb;
-  --cx-active-ink: #1565c0;
-  --cx-group-bg: #eef1f5;
+  --cx-header-muted: var(--nav-text);
+  --cx-header-field: rgba(255, 255, 255, 0.08);
+  --cx-tab-active: #8b7cff;
+  --cx-accent: var(--brand);
+  --cx-active-bg: var(--brand-soft);
+  --cx-active-ink: var(--brand-ink);
+  --cx-group-bg: var(--surface-3);
 }
-:root[data-theme="dark"] .cx-shell {
-  --cx-header: #0d2c4d;
-  --cx-header-2: #0a2340;
-  --cx-header-muted: rgba(255, 255, 255, 0.58);
-  --cx-accent: #4a9bf0;
-  --cx-active-bg: rgba(74, 155, 240, 0.16);
-  --cx-active-ink: #8cc2ff;
-  --cx-group-bg: rgba(255, 255, 255, 0.05);
+
+/* Sidebar and hamburger drawer use the dark SEO sidebar colours: the shared text/surface tokens are
+   re-pointed at the nav palette inside them, so the components keep their token classes. */
+.cx-shell .cx-sidebar,
+.cx-drawer {
+  color-scheme: dark;
+  --surface: var(--nav-bg);
+  --surface-2: rgba(255, 255, 255, 0.05);
+  --surface-3: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.06);
+  --text: #ffffff;
+  --text-2: var(--nav-text);
+  --text-3: var(--nav-muted);
+  --cx-active-bg: var(--nav-active);
+  --cx-active-ink: #ffffff;
+  background: var(--nav-bg);
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cx-shell {
-    --cx-header: #0d2c4d;
-    --cx-header-2: #0a2340;
-    --cx-header-muted: rgba(255, 255, 255, 0.58);
-    --cx-accent: #4a9bf0;
-    --cx-active-bg: rgba(74, 155, 240, 0.16);
-    --cx-active-ink: #8cc2ff;
-    --cx-group-bg: rgba(255, 255, 255, 0.05);
-  }
+.cx-shell .cx-sidebar [aria-current="page"] svg,
+.cx-drawer [aria-current="page"] svg {
+  color: #b3a8ff;
 }
 
 /* Header tabs scroll sideways on narrow screens without a visible scrollbar. */
