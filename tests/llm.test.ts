@@ -2,23 +2,25 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { z } from "zod";
 import { AppError } from "../src/lib/domain";
-import { CLAUDE_MODEL, complete, completeOrThrow, GEMINI_DEFAULT_MODEL, jsonSchemaOf, llmConfigured, llmLabel, llmProviders, OPENAI_DEFAULT_MODEL, structured } from "../src/lib/providers/llm";
+import { CLAUDE_MODEL, complete, completeOrThrow, GEMINI_DEFAULT_MODEL, jsonSchemaOf, llmConfigured, llmLabel, llmProviders, OPENAI_DEFAULT_MODEL, providersFor, structured } from "../src/lib/providers/llm";
+import { SARVAM_DEFAULT_MODEL } from "../src/lib/providers/sarvam";
 
 // No network: every provider call goes through this fetch stub, routed by host.
 type Reply = { status: number; body: unknown };
-type Seen = { host: "anthropic" | "openai" | "gemini"; url: string; body: any };
+type Seen = { host: "anthropic" | "openai" | "gemini" | "sarvam"; url: string; body: any; headers: Record<string, string> };
 let routes: Partial<Record<Seen["host"], () => Reply>> = {};
 let seen: Seen[] = [];
-const hostOf = (url: string): Seen["host"] => (url.includes("api.openai.com") ? "openai" : url.includes("generativelanguage.googleapis.com") ? "gemini" : "anthropic");
+const hostOf = (url: string): Seen["host"] =>
+  url.includes("api.openai.com") ? "openai" : url.includes("generativelanguage.googleapis.com") ? "gemini" : url.includes("api.sarvam.ai") ? "sarvam" : "anthropic";
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const host = hostOf(url);
-  seen.push({ host, url, body: init?.body ? JSON.parse(String(init.body)) : null });
+  seen.push({ host, url, body: init?.body ? JSON.parse(String(init.body)) : null, headers: Object.fromEntries(new Headers(init?.headers).entries()) });
   const r = routes[host]?.() ?? { status: 500, body: { error: { message: "no route" } } };
   return new Response(JSON.stringify(r.body), { status: r.status, headers: { "content-type": "application/json", "request-id": "req_test" } });
 }) as typeof fetch;
 
-const KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENAI_MODEL", "GEMINI_MODEL"] as const;
+const KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "SARVAM_API_KEY", "OPENAI_MODEL", "GEMINI_MODEL", "SARVAM_MODEL"] as const;
 const saved: Partial<Record<string, string | undefined>> = {};
 const warn = console.warn;
 beforeEach(() => {
@@ -45,6 +47,7 @@ const claudeText = (text: string): Reply => ({
 });
 const openAiText = (text: string): Reply => ({ status: 200, body: { model: OPENAI_DEFAULT_MODEL, status: "completed", output: [{ type: "message", content: [{ type: "output_text", text }] }] } });
 const geminiText = (text: string): Reply => ({ status: 200, body: { modelVersion: GEMINI_DEFAULT_MODEL, candidates: [{ finishReason: "STOP", content: { parts: [{ text: "thinking…", thought: true }, { text }] } }] } });
+const sarvamText = (text: string | null, finish = "stop"): Reply => ({ status: 200, body: { id: "c1", object: "chat.completion", model: SARVAM_DEFAULT_MODEL, choices: [{ index: 0, finish_reason: finish, message: { role: "assistant", content: text, reasoning_content: "hmm" } }] } });
 const fail = (status: number, message = "boom"): Reply => ({ status, body: { type: "error", error: { type: "error", message } } });
 
 test("providers are picked from configured keys in priority order", () => {
@@ -58,12 +61,33 @@ test("providers are picked from configured keys in priority order", () => {
   assert.deepEqual(llmProviders(), ["anthropic", "openai", "gemini"]);
   assert.equal(llmConfigured(), true);
   assert.equal(llmLabel(), "Claude (Anthropic)");
+  keys("SARVAM_API_KEY");
+  assert.deepEqual(llmProviders(), ["anthropic", "openai", "gemini", "sarvam"], "Sarvam comes last");
+});
+
+test("Sarvam alone is a full AI provider; blank keys do not count", () => {
+  process.env.ANTHROPIC_API_KEY = "   ";
+  keys("SARVAM_API_KEY");
+  assert.deepEqual(llmProviders(), ["sarvam"]);
+  assert.equal(llmLabel(), "Sarvam AI");
+});
+
+test("providersFor returns up to n distinct configured providers in priority order", () => {
+  assert.deepEqual(providersFor(3), []);
+  keys("SARVAM_API_KEY", "OPENAI_API_KEY");
+  assert.deepEqual(providersFor(3), ["openai", "sarvam"]);
+  assert.deepEqual(providersFor(1), ["openai"]);
+  assert.deepEqual(providersFor(0), []);
+  keys("ANTHROPIC_API_KEY", "GEMINI_API_KEY");
+  const four = providersFor(4);
+  assert.deepEqual(four, ["anthropic", "openai", "gemini", "sarvam"]);
+  assert.equal(new Set(four).size, 4);
 });
 
 test("complete returns null without a key and never calls the network", async () => {
   assert.equal(await complete("sys", "hi"), null);
   assert.equal(seen.length, 0);
-  await assert.rejects(completeOrThrow("sys", "hi"), (e: unknown) => e instanceof AppError && /Anthropic, OpenAI or Gemini/.test(e.message));
+  await assert.rejects(completeOrThrow("sys", "hi"), (e: unknown) => e instanceof AppError && /Anthropic, OpenAI, Gemini or Sarvam/.test(e.message));
 });
 
 test("Claude answers first when its key is set", async () => {
@@ -164,4 +188,96 @@ test("optional fields turn OpenAI strict mode off", async () => {
   assert.equal(seen[0].body.text.format.strict, false);
   const props = jsonSchemaOf(z.object({ a: z.literal("x") })).properties as Record<string, { enum?: unknown[] }>;
   assert.deepEqual(props.a.enum, ["x"]);
+});
+
+// ------------------------------------------------------------------------------------------ Sarvam
+
+test("Sarvam chat completions: OpenAI-compatible request, key in headers, reasoning trace dropped", async () => {
+  keys("SARVAM_API_KEY");
+  routes.sarvam = () => sarvamText("<think>internal</think>नमस्ते");
+  const r = await completeOrThrow("sys", "hi", { maxTokens: 300 });
+  assert.deepEqual([r.provider, r.text, r.model], ["sarvam", "नमस्ते", SARVAM_DEFAULT_MODEL]);
+  assert.equal(seen[0].url, "https://api.sarvam.ai/v1/chat/completions");
+  assert.equal(seen[0].headers["api-subscription-key"], "test-key");
+  assert.equal(seen[0].body.model, SARVAM_DEFAULT_MODEL);
+  assert.deepEqual(seen[0].body.messages.map((m: { role: string }) => m.role), ["system", "user"]);
+  assert.equal(seen[0].body.reasoning_effort, "low");
+  assert.ok(seen[0].body.max_tokens > 300, "reasoning headroom");
+  assert.ok(!JSON.stringify(seen[0].body).includes("test-key"), "the key never travels in the body");
+  process.env.SARVAM_MODEL = "sarvam-105b-conversations";
+  await completeOrThrow("sys", "hi");
+  assert.equal(seen[1].body.model, "sarvam-105b-conversations");
+});
+
+test("Sarvam is the last fallback and its errors map to AppErrors", async () => {
+  keys("GEMINI_API_KEY", "SARVAM_API_KEY");
+  routes.gemini = () => fail(500);
+  routes.sarvam = () => sarvamText("from sarvam");
+  assert.equal(await complete("sys", "hi"), "from sarvam");
+  assert.deepEqual(seen.map((s) => s.host), ["gemini", "sarvam"]);
+  routes.gemini = () => fail(400);
+  routes.sarvam = () => ({ status: 403, body: { error: { message: "bad key", code: "invalid_api_key_error" } } });
+  await assert.rejects(completeOrThrow("sys", "hi", { providers: ["sarvam"] }), (e: unknown) => e instanceof AppError && e.status === 401 && /SARVAM_API_KEY was rejected/.test(e.message));
+  routes.sarvam = () => sarvamText(null, "length");
+  assert.equal(await complete("sys", "hi", { providers: ["sarvam"] }), null, "an answer cut off before any text is a failure");
+});
+
+test("the providers option pins a call to one configured provider", async () => {
+  keys("ANTHROPIC_API_KEY", "SARVAM_API_KEY");
+  routes.sarvam = () => sarvamText("pinned");
+  const r = await completeOrThrow("sys", "hi", { providers: ["sarvam"] });
+  assert.equal(r.provider, "sarvam");
+  assert.deepEqual(seen.map((s) => s.host), ["sarvam"]);
+  await assert.rejects(completeOrThrow("sys", "hi", { providers: ["openai"] }), (e: unknown) => e instanceof AppError && e.status === 400, "an unconfigured pin is not configured");
+});
+
+test("structured output via Sarvam: json_schema mode, schema in the prompt, zod-validated", async () => {
+  keys("SARVAM_API_KEY");
+  routes.sarvam = () => sarvamText('Here you go: {"title":"T","level":2,"tags":["a"]}');
+  const r = await structured(Schema, "sys", "prompt", { name: "brief", effort: "high" });
+  assert.deepEqual([r.provider, r.data], ["sarvam", { title: "T", level: 2, tags: ["a"] }]);
+  const rf = seen[0].body.response_format;
+  assert.deepEqual([rf.type, rf.json_schema.name, rf.json_schema.schema.required], ["json_schema", "brief", ["title", "level", "tags"]]);
+  assert.match(seen[0].body.messages[0].content, /^sys\n\nAnswer with a single JSON object only/);
+  assert.equal(seen[0].body.reasoning_effort, "high");
+});
+
+test("structured output via Sarvam falls back to json_object mode and repairs one invalid answer", async () => {
+  keys("SARVAM_API_KEY");
+  let n = 0;
+  routes.sarvam = () => {
+    n++;
+    if (n === 1) return { status: 400, body: { error: { message: "unsupported schema", code: "invalid_request_error" } } };
+    if (n === 2) return sarvamText('{"title":"T","level":7,"tags":[]}');
+    return sarvamText('{"title":"T","level":3,"tags":[]}');
+  };
+  const r = await structured(Schema, "sys", "prompt");
+  assert.equal(r.data.level, 3);
+  assert.deepEqual(seen.map((s) => s.body.response_format.type), ["json_schema", "json_object", "json_object"]);
+  assert.match(seen[2].body.messages[1].content, /did not validate \(level:/);
+  assert.match(seen[2].body.messages[1].content, /"level":7/);
+
+  seen = [];
+  routes.sarvam = () => sarvamText("still not json");
+  await assert.rejects(structured(Schema, "sys", "p"), (e: unknown) => e instanceof AppError && /Sarvam returned an answer in an unexpected format/.test(e.message));
+  assert.equal(seen.length, 2, "exactly one repair round");
+  assert.match(seen[1].body.messages[1].content, /not valid JSON/);
+});
+
+test("a Sarvam answer cut off by its reasoning is retried once with low effort and a larger budget", async () => {
+  keys("SARVAM_API_KEY");
+  let n = 0;
+  routes.sarvam = () => (++n === 1 ? sarvamText('{"title":"T","lev', "length") : sarvamText('{"title":"T","level":2,"tags":[]}'));
+  const r = await structured(Schema, "sys", "prompt", { maxTokens: 8000 });
+  assert.equal(r.data.level, 2);
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].body.reasoning_effort, undefined, "first attempt keeps the default (medium) effort");
+  assert.equal(seen[1].body.reasoning_effort, "low");
+  assert.ok(seen[1].body.max_tokens > seen[0].body.max_tokens && seen[1].body.max_tokens <= 32_000);
+
+  seen = [];
+  n = 0;
+  routes.sarvam = () => sarvamText('{"title":"T","lev', "length");
+  await assert.rejects(structured(Schema, "sys", "prompt", { maxTokens: 8000 }), /cut off/);
+  assert.equal(seen.length, 2, "only one retry");
 });

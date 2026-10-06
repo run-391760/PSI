@@ -26,7 +26,7 @@ const LEVEL: Record<string, Tone> = { high: "critical", medium: "warning", low: 
 function NoAi({ what }: { what: string }) {
   return (
     <Callout className="mb-4" title="Connect an AI key">
-      {what} needs an AI key (Anthropic, OpenAI or Gemini) on the server. The aggregated metrics below are real and are exactly what the model would see.
+      {what} needs an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server. The aggregated metrics below are real and are exactly what the model would see.
     </Callout>
   );
 }

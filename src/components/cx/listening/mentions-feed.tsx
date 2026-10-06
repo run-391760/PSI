@@ -27,6 +27,8 @@ export type FeedMention = {
   title: string;
   body: string;
   language: string | null;
+  /** English translation of an Indian-language mention (Sarvam AI). */
+  translation?: string | null;
   published_at: string | null;
   sentiment: string | null;
   intent: string | null;
@@ -162,6 +164,12 @@ export function MentionsFeed({ brandId, mentions }: { brandId: string; mentions:
                   </div>
                   {m.title && <div className="mt-1.5 text-[14px] leading-snug font-semibold [overflow-wrap:anywhere] text-text">{m.title}</div>}
                   {m.body && <p className="mt-1 line-clamp-4 text-[13px] leading-relaxed [overflow-wrap:anywhere] text-text-2">{m.body}</p>}
+                  {m.translation && (
+                    <p className="mt-1.5 line-clamp-4 border-l-2 border-border-strong pl-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] text-text-2">
+                      <span className="mr-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">English · Sarvam AI</span>
+                      {m.translation}
+                    </p>
+                  )}
                   <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                     <select
                       value={sentiment}

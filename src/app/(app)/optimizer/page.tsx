@@ -1,6 +1,7 @@
 import { CheckCircle2, Circle, CircleDot } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AgentAudit } from "@/components/optimizer/agents/agent-audit";
 import { DraftEditor } from "@/components/optimizer/editor";
 import { OptimizerEmpty, OptimizerHeader } from "@/components/optimizer/page-parts";
 import { ScoreFlash } from "@/components/optimizer/score-flash";
@@ -13,7 +14,7 @@ import { bySeverity } from "@/lib/optimizer/analyze";
 import { featureById } from "@/lib/optimizer/features";
 import { moduleScores, workflowState } from "@/lib/optimizer/progress";
 import { cn } from "@/lib/utils";
-import { loadOptimizer } from "./data";
+import { loadAgentAudit, loadOptimizer, verifiedScore } from "./data";
 
 export const metadata: Metadata = { title: "Pre-Publish Optimizer" };
 
@@ -27,6 +28,7 @@ export default async function OptimizerDashboard({ searchParams }: PageProps<"/o
         <OptimizerEmpty />
       </Page>
     );
+  const agents = await loadAgentAudit(data.user.id, draft, bundle, report);
   const steps = workflowState(draft, report, bundle, data.revisions.map((r) => r.kind));
   const modules = moduleScores(report);
   const issues = report.findings.filter((f) => f.severity).sort(bySeverity).slice(0, 12);
@@ -34,7 +36,11 @@ export default async function OptimizerDashboard({ searchParams }: PageProps<"/o
   return (
     <Page wide>
       <OptimizerHeader data={data} title="Dashboard" description="Write or paste the article, watch the score, then work through the module tabs above." basePath="/optimizer" />
-      <DraftEditor key={draft.id} draft={draft} bundle={bundle} others={data.others} />
+      <DraftEditor key={draft.id} draft={draft} bundle={bundle} others={data.others} verified={verifiedScore(agents)} />
+
+      <div className="mt-4">
+        <AgentAudit draftId={draft.id} {...agents} />
+      </div>
 
       <Card className="mt-4">
         <CardHeader title="Workflow" description="Brief → write → audit → score → prioritize → optimize → apply → re-score → pre-publish check → publish" />

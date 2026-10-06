@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardCheck } from "lucide-react";
+import { Bug, ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 /**
  * Top navigation of the SEO workspace: the Pre-Publish Optimizer's dashboard and one tab per module
  * (names exactly as in the feature list), in the CX header's tab style (12px semibold uppercase, 3px
- * active underline). Keeps the open draft (?doc=) when switching tabs.
+ * active underline), plus the Live crawler. Keeps the open draft (?doc=) when switching tabs.
  */
 export function OptimizerTabs() {
   const pathname = usePathname();
@@ -45,6 +45,7 @@ export function OptimizerTabs() {
   return (
     <nav ref={ref} aria-label="Pre-publish optimizer modules" className="opt-tabs flex h-10 items-stretch overflow-x-auto border-t border-border px-1 sm:px-2">
       {tab("dashboard", "Optimizer", "/optimizer", <ClipboardCheck className="h-3.5 w-3.5" />)}
+      {tab("crawler", "Live crawler", "/optimizer/crawler", <Bug className="h-3.5 w-3.5" />)}
       <span className="mx-1 my-3 w-px shrink-0 bg-border" aria-hidden />
       {MODULES.map((m) => tab(m.id, m.label, `/optimizer/${m.id}`))}
     </nav>

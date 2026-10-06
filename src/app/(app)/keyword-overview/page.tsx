@@ -177,7 +177,7 @@ export default async function KeywordOverviewPage({ searchParams }: PageProps<"/
               <ul className="mt-4 space-y-2 border-t border-border pt-3">
                 {o.countries.slice(0, 7).map((c) => (
                   <li key={c.db} className="grid grid-cols-[92px_1fr_56px] items-center gap-2 text-[12.5px]">
-                    <Link href={`/keyword-overview?q=${encodeURIComponent(keyword)}&db=${c.db}`} className={cn("truncate", c.db === db ? "font-semibold text-text" : "text-link hover:underline")} title={c.name}>
+                    <Link prefetch={false} href={`/keyword-overview?q=${encodeURIComponent(keyword)}&db=${c.db}`} className={cn("truncate", c.db === db ? "font-semibold text-text" : "text-link hover:underline")} title={c.name}>
                       {c.flag} {c.db}
                     </Link>
                     <Bar value={c.volume} max={countryMax} />

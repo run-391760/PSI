@@ -28,4 +28,13 @@ CREATE TABLE IF NOT EXISTS opt_briefs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS opt_briefs_owner ON opt_briefs(owner_id, created_at DESC);
+-- Multi-agent scoring runs (Analyst → Reviewer → Verifier → Finalizer); the latest 20 per draft are kept.
+CREATE TABLE IF NOT EXISTS opt_agent_runs (
+  id text PRIMARY KEY, draft_id text NOT NULL REFERENCES opt_drafts(id) ON DELETE CASCADE,
+  owner_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE, job_id text,
+  status text NOT NULL DEFAULT 'queued', body_hash text NOT NULL DEFAULT '',
+  items jsonb NOT NULL DEFAULT '[]', stages jsonb NOT NULL DEFAULT '{}', summary jsonb NOT NULL DEFAULT '{}',
+  error text, created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS opt_agent_runs_draft ON opt_agent_runs(draft_id, created_at DESC);
 `;

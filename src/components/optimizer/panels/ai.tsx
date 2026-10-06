@@ -88,7 +88,7 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
   };
   return (
     <Card>
-      <CardHeader title="Rewrite a section with Claude" description={aiOn ? "Describe the change; Claude rewrites only that part, you review it, then apply & re-score." : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to enable."} />
+      <CardHeader title="Rewrite a section with Claude" description={aiOn ? "Describe the change; Claude rewrites only that part, you review it, then apply & re-score." : "Add an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to enable."} />
       <CardBody className="space-y-3">
         <div className="grid gap-3 md:grid-cols-[260px_1fr]">
           <Field label="Section">

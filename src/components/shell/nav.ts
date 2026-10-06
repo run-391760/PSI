@@ -3,6 +3,7 @@ import {
   AlignLeft,
   BarChart3,
   Bell,
+  Bug,
   Bot,
   Building2,
   ChartNoAxesCombined,
@@ -183,6 +184,7 @@ export const POPULAR_TOOLS = ["/optimizer", "/domain-overview", "/keyword-overvi
 export const SEARCH_ONLY: { href: string; label: string; icon: LucideIcon; description: string; group: string }[] = [
   { href: "/alerts", label: "Alerts", icon: Bell, description: "Ranking, audit and mention alerts and alert rules.", group: "Account" },
   { href: "/settings", label: "Settings", icon: Settings, description: "Account, API connections, integrations and team.", group: "Account" },
+  { href: "/optimizer/crawler", label: "Live crawler", icon: Bug, description: "Watch a spider crawl your website live and flag every SEO issue it finds.", group: "Optimize" },
 ];
 
 export { FileSearch };

@@ -331,7 +331,7 @@ export function Composer(props: ComposerProps) {
             />
             {(!props.ai || !props.imageAi) && (
               <p className="text-[12px] text-text-3">
-                {!props.ai ? "AI captions and prompt-based writing: connect an AI key (Anthropic, OpenAI or Gemini) on the server. " : ""}
+                {!props.ai ? "AI captions and prompt-based writing: connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server. " : ""}
                 {!props.imageAi ? "AI image generation: set OPENAI_API_KEY (image API) on the server." : ""}
               </p>
             )}

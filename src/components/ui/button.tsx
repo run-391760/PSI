@@ -52,7 +52,9 @@ export function ButtonLink({
   ...props
 }: Omit<ComponentProps<typeof Link>, "href"> & { href: string; variant?: Variant; size?: Size; children: ReactNode }) {
   return (
-    <Link href={href} className={buttonClass(variant, size, className)} {...props}>
+    // Links with a query string open a specific report view: rendering it ahead of time costs a full
+    // server render per link, so they are not prefetched unless the caller asks.
+    <Link href={href} prefetch={href.includes("?") ? false : undefined} className={buttonClass(variant, size, className)} {...props}>
       {children}
     </Link>
   );

@@ -19,6 +19,7 @@ import { cxOpsSchema } from "./cx-ops";
 import { cxUiSchema } from "./cx-ui";
 import { cxSettingsSchema } from "./cx-settings";
 import { optimizerSchema } from "./optimizer";
+import { optimizerCrawlSchema } from "./optimizer-crawl";
 
 export const schema = [
   coreSchema,
@@ -42,4 +43,5 @@ export const schema = [
   cxOpsSchema,
   cxSettingsSchema,
   optimizerSchema,
+  optimizerCrawlSchema,
 ].join("\n");

@@ -112,7 +112,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
               <Sparkles className="h-4 w-4" /> AI pre-score
             </Button>
           ) : (
-            <span className="max-w-56 text-[12px] text-text-3">AI pre-scoring needs an AI key (Anthropic, OpenAI or Gemini). Manual scoring works now.</span>
+            <span className="max-w-56 text-[12px] text-text-3">AI pre-scoring needs an AI key (Anthropic, OpenAI, Gemini or Sarvam). Manual scoring works now.</span>
           )}
         </CardBody>
       </Card>

@@ -92,7 +92,7 @@ export async function saveReviewAction(projectId: string, id: string, input: { a
 export async function aiPrescoreAction(projectId: string, id: string): Promise<ActionResult<{ answers: QaAnswers; notes: Record<string, string>; summary: string }>> {
   try {
     await brand(projectId);
-    if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI or Gemini) on the server to use AI pre-scoring.", 400);
+    if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to use AI pre-scoring.", 400);
     const r = await aiPrescore(projectId, id);
     if (!r) throw new AppError("The AI provider did not answer. Try again.", 502);
     done();
@@ -170,7 +170,7 @@ export async function coachingFlagAction(projectId: string, id: string, action: 
 export async function bulkAiScoreAction(projectId: string): Promise<ActionResult<{ considered: number; scored: number; failed: number; avg: number | null; below: number }>> {
   try {
     const user = await brand(projectId);
-    if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI or Gemini) on the server to auto-score.", 400);
+    if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to auto-score.", 400);
     const r = await bulkAiScore(projectId, user.id, 20);
     if (!r) throw new AppError("The AI provider did not answer. Try again.", 502);
     done();

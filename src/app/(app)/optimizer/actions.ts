@@ -5,7 +5,10 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { fail, type ActionResult } from "@/lib/content/action";
 import { AppError, database } from "@/lib/domain";
+import { cancelJob, enqueue } from "@/lib/jobs/queue";
 import { aiBrief, aiFix, aiReview, type AiProposal } from "@/lib/optimizer/ai";
+import { activeRun, attachJob, createRun, endRun, getRun } from "@/lib/optimizer/agents/store";
+import { runFingerprint } from "@/lib/optimizer/agents/verify";
 import { STATUS_LABEL, summarize } from "@/lib/optimizer/analyze";
 import { briefToMarkdown, researchBrief } from "@/lib/optimizer/brief";
 import { briefCompetitors } from "@/lib/optimizer/brief-export";
@@ -33,6 +36,7 @@ import {
   type DraftPatch,
 } from "@/lib/optimizer/store";
 import type { Brief, Fix, ReportSummary } from "@/lib/optimizer/types";
+import { llmConfigured } from "@/lib/providers/llm";
 
 /** Server actions of the AI Pre-Publish SEO & Content Optimizer (every action checks ownership via the store). */
 
@@ -374,6 +378,55 @@ export async function draftFromBriefAction(briefId: string): Promise<ActionResul
     await linkBrief(user.id, b.id, draft.id);
     done();
     return { ok: true, data: { id: draft.id } };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ------------------------------------------------------------------------------ agent audit
+
+const AGENT_KEY_MISSING = "Add an AI key in Settings → Integrations (Anthropic, OpenAI, Gemini or Sarvam) to run the agent audit. Nothing was run and no agent output was produced.";
+
+/** Starts the four-agent audit of the draft as a background job (one run at a time per draft). */
+export async function startAgentAuditAction(draftId: string): Promise<ActionResult<{ runId: string; existing: boolean }>> {
+  try {
+    const user = await requireUser();
+    const draft = await getDraft(user.id, id.parse(draftId));
+    if (!llmConfigured()) throw new AppError(AGENT_KEY_MISSING);
+    const running = await activeRun(user.id, draft.id);
+    if (running) return { ok: true, data: { runId: running.id, existing: true } };
+    if (!draft.body.trim()) throw new AppError("The draft is empty: write or paste the article first.");
+    const bundle = await getBundle(draft.id);
+    // createRun refuses atomically when another run is active (a double click or a second tab), so only one run is billed.
+    const runId = await createRun(user.id, draft.id, runFingerprint(inputOf(draft), bundle));
+    if (!runId) {
+      const other = await activeRun(user.id, draft.id);
+      if (other) return { ok: true, data: { runId: other.id, existing: true } };
+      throw new AppError("Another agent audit of this draft is starting. Try again in a moment.", 409);
+    }
+    try {
+      const job = await enqueue({ kind: "optimizer.agents", ownerId: user.id, payload: { runId, draftId: draft.id }, dedupeKey: `optimizer.agents:${runId}` });
+      await attachJob(runId, job.id);
+    } catch (e) {
+      // A run without a job would block new runs until it times out.
+      await endRun(runId, "failed", e instanceof Error ? e.message : String(e)).catch(() => {});
+      throw e;
+    }
+    done();
+    return { ok: true, data: { runId, existing: false } };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function cancelAgentAuditAction(runId: string): Promise<ActionResult<null>> {
+  try {
+    const user = await requireUser();
+    const run = await getRun(user.id, id.parse(runId));
+    if (run.jobId && (run.status === "queued" || run.status === "running")) await cancelJob(user.id, run.jobId);
+    await endRun(run.id, "cancelled", null);
+    done();
+    return { ok: true, data: null };
   } catch (e) {
     return fail(e);
   }

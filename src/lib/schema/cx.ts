@@ -117,4 +117,6 @@ CREATE TABLE IF NOT EXISTS cx_mentions (
   UNIQUE(project_id, source, external_id)
 );
 CREATE INDEX IF NOT EXISTS cx_mentions_feed ON cx_mentions(project_id, published_at DESC);
+-- English translation of Indian-language mentions (Sarvam AI), shown under the original text.
+ALTER TABLE cx_mentions ADD COLUMN IF NOT EXISTS translation text;
 `;

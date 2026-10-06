@@ -26,6 +26,7 @@ const ROUTES = [
   "/site-audit",
   "/on-page-checker",
   "/optimizer",
+  "/optimizer/crawler",
   "/optimizer/search-intent",
   "/optimizer/content-quality",
   "/optimizer/on-page",

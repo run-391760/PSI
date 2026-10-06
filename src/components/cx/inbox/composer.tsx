@@ -175,7 +175,7 @@ export function Composer(p: ComposerProps) {
               )}
             </Menu>
           ) : (
-            <span className="hidden items-center gap-1 px-1 text-[11.5px] text-text-3 xl:inline-flex" title="Set an AI key (Anthropic, OpenAI or Gemini) on the server"><Sparkles className="h-3.5 w-3.5" />Connect an AI key for AI helpers</span>
+            <span className="hidden items-center gap-1 px-1 text-[11.5px] text-text-3 xl:inline-flex" title="Set an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server"><Sparkles className="h-3.5 w-3.5" />Connect an AI key for AI helpers</span>
           )}
         </div>
       </div>

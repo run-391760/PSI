@@ -4,8 +4,9 @@ import { complete as llmComplete, llmConfigured } from "@/lib/providers/llm";
 /**
  * Text understanding for CX: sentiment (built-in lexicon, free), intent and language (rule-based,
  * free), and optional LLM features (suggested replies, summaries, AI classification) when an
- * Anthropic, OpenAI or Gemini key is configured (shared layer in providers/llm). Callers must handle
- * `null` = AI not configured or unavailable.
+ * Anthropic, OpenAI, Gemini or Sarvam key is configured (shared layer in providers/llm). Callers must
+ * handle `null` = AI not configured or unavailable. Indian-language text is translated by Sarvam
+ * before scoring where it matters (listening/indic.ts, inbox translate).
  */
 export type Intent = "complaint" | "query" | "feedback" | "praise" | "purchase" | "cancellation" | "spam" | "other";
 export const INTENT_LABELS: Record<Intent, string> = {
@@ -38,11 +39,20 @@ export function intentOf(text: string): Intent {
   return "other";
 }
 
-/** Script-based language guess (ISO 639-1); "en" for Latin text. Good enough for routing/filters. */
+/**
+ * Script-based language guess (ISO 639-1); "en" for Latin text. Good enough for routing/filters.
+ * Devanagari reads as Hindi and Bengali script as Bengali; Sarvam refines these where configured.
+ */
 export function languageOf(text: string): string {
   if (/[ऀ-ॿ]/.test(text)) return "hi";
   if (/[઀-૿]/.test(text)) return "gu";
   if (/[஀-௿]/.test(text)) return "ta";
+  if (/[ঀ-৿]/.test(text)) return "bn";
+  if (/[਀-੿]/.test(text)) return "pa";
+  if (/[଀-୿]/.test(text)) return "or";
+  if (/[ఀ-౿]/.test(text)) return "te";
+  if (/[ಀ-೿]/.test(text)) return "kn";
+  if (/[ഀ-ൿ]/.test(text)) return "ml";
   if (/[؀-ۿ]/.test(text)) return "ar";
   if (/[一-鿿]/.test(text)) return "zh";
   if (/[Ѐ-ӿ]/.test(text)) return "ru";

@@ -167,7 +167,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                   brandId={brand.id}
                   mentions={mentions.slice(0, 50).map((x) => ({
                     id: x.id, topic_name: x.topic_name, topic_kind: x.topic_kind, source: x.source, url: x.url, author: x.author, author_handle: x.author_handle,
-                    author_followers: x.author_followers, title: x.title, body: x.body.slice(0, 800), language: x.language, published_at: x.published_at, sentiment: x.sentiment,
+                    author_followers: x.author_followers, title: x.title, body: x.body.slice(0, 800), language: x.language, translation: x.translation?.slice(0, 800) ?? null, published_at: x.published_at, sentiment: x.sentiment,
                     intent: x.intent, engagement: x.engagement, status: x.status, tags: x.tags, ticket_id: x.ticket_id, ticket_number: x.ticket_number,
                   }))}
                 />

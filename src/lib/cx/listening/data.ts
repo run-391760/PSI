@@ -235,6 +235,8 @@ export type Mention = {
   title: string;
   body: string;
   language: string | null;
+  /** English translation of an Indian-language mention (Sarvam AI). */
+  translation: string | null;
   country: string | null;
   published_at: string | null;
   sentiment: string | null;
@@ -270,7 +272,7 @@ function where(projectId: string, f: MentionFilters) {
   if (f.status === "open") conds.push("m.status IN ('new','read')");
   else if (f.status && (STATUSES as readonly string[]).includes(f.status)) add("m.status=?", f.status);
   if (f.tag) add("m.tags @> ?::jsonb", JSON.stringify([f.tag]));
-  if (f.q) add("(m.title ILIKE ? OR m.body ILIKE ? OR m.author ILIKE ?)", `%${f.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
+  if (f.q) add("(m.title ILIKE ? OR m.body ILIKE ? OR m.author ILIKE ? OR m.translation ILIKE ?)", `%${f.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
   if (f.from && /^\d{4}-\d{2}-\d{2}$/.test(f.from)) add("m.published_at >= ?::date", f.from);
   if (f.to && /^\d{4}-\d{2}-\d{2}$/.test(f.to)) add("m.published_at < ?::date + 1", f.to);
   return { sql: conds.join(" AND "), params };

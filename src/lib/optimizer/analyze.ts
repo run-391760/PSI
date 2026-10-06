@@ -91,6 +91,11 @@ export const bySeverity = (a: Finding, b: Finding) => (SEV_RANK[b.severity ?? "l
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
+/** Top recommendation ranking: the biggest weighted gap among the most severe issues (blockers first). */
+export const impactOf = (f: Finding) => (SEV_RANK[f.severity ?? "low"] ?? 0) * 10 + (CATEGORIES.find((c) => c.id === featureById(f.feature)?.category)?.weight ?? 0) * 10 * (1 - (f.score ?? 0)) + (f.blocker ? 50 : 0);
+/** Issues that can be recommended (they have a fix description or a blocker), highest impact first. */
+export const recommendable = (findings: Finding[]) => findings.filter((f) => f.severity && (f.how || f.blocker)).sort((a, b) => impactOf(b) - impactOf(a));
+
 export type AnalyzeInput = { research?: Research | null; ai?: AiReview | null; links?: LinkCheck | null; live?: LiveCheck | null; others?: OtherDraft[]; now?: Date };
 
 export function analyze(draft: DraftInput, extra: AnalyzeInput = {}): Report {
@@ -105,6 +110,18 @@ export function analyze(draft: DraftInput, extra: AnalyzeInput = {}): Report {
     return { ...f, severity: severityOf(f) };
   });
 
+  return { ...aggregate(findings), findings, intent: ctx.intent, words: ctx.doc.words, analyzedAt: (extra.now ?? new Date()).toISOString() };
+}
+
+/** Report fields computed from the findings alone (shared with the agent finalizer, so both use the same math). */
+export type Aggregate = Pick<Report, "overall" | "weighted" | "cap" | "categories" | "counts" | "blockers" | "status" | "readiness" | "topRecommendation">;
+
+/**
+ * Category scores (priority-weighted checks), the weighted overall with its intent / people-first caps,
+ * severity counts, blockers, publish status, readiness and the top recommendation. Findings must
+ * already carry their severity (see severityOf).
+ */
+export function aggregate(findings: Finding[]): Aggregate {
   const categories: CategoryScore[] = CATEGORIES.map((c) => {
     const fs = findings.filter((f) => featureById(f.feature)?.category === c.id);
     const measured = fs.filter((f) => f.score != null);
@@ -134,23 +151,17 @@ export function analyze(draft: DraftInput, extra: AnalyzeInput = {}): Report {
   }
   const status: Report["status"] = blockers.length ? "blocked" : counts.critical > 0 || (overall ?? 0) < 7 ? "needs-improvement" : "ready";
   const readiness = Math.max(0, Math.min(100, Math.round(100 - blockers.length * 25 - counts.critical * 10 - counts.high * 3 - counts.medium)));
-  // Top recommendation: the biggest weighted gap among the most severe issues.
-  const impact = (f: Finding) => (SEV_RANK[f.severity ?? "low"] ?? 0) * 10 + (CATEGORIES.find((c) => c.id === featureById(f.feature)?.category)?.weight ?? 0) * 10 * (1 - (f.score ?? 0)) + (f.blocker ? 50 : 0);
-  const top = findings.filter((f) => f.severity && (f.how || f.blocker)).sort((a, b) => impact(b) - impact(a))[0];
+  const top = recommendable(findings)[0];
   return {
     overall: overall == null ? null : r1(overall),
     weighted,
     cap,
     categories,
-    findings,
     counts,
     blockers,
     status,
     readiness,
     topRecommendation: top ? { feature: top.feature, text: top.blocker ?? top.how ?? top.summary } : null,
-    intent: ctx.intent,
-    words: ctx.doc.words,
-    analyzedAt: (extra.now ?? new Date()).toISOString(),
   };
 }
 

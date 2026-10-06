@@ -2,16 +2,19 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { AppError } from "@/lib/domain";
+import { sarvamChat, SarvamError } from "./sarvam";
 
 /**
  * One AI layer for every SEO and CX feature (server-only). Whichever key is configured is used, in
- * priority order ANTHROPIC_API_KEY → OPENAI_API_KEY → GEMINI_API_KEY; when a provider fails the next
- * configured one is tried. Claude runs through the SDK with server-side refusal fallbacks; OpenAI
- * (Responses API) and Gemini (generateContent) run over fetch, with JSON-schema output validated
- * against the same zod schema Claude uses.
+ * priority order ANTHROPIC_API_KEY → OPENAI_API_KEY → GEMINI_API_KEY → SARVAM_API_KEY; when a provider
+ * fails the next configured one is tried. Claude runs through the SDK with server-side refusal
+ * fallbacks; OpenAI (Responses API), Gemini (generateContent) and Sarvam (OpenAI-compatible chat
+ * completions, providers/sarvam.ts) run over fetch, with JSON output validated against the same zod
+ * schema Claude uses. Callers that need independent opinions (multi-agent review) pin providers with
+ * `providersFor(n)` and the `providers` option.
  */
 
-export type LlmProvider = "anthropic" | "openai" | "gemini";
+export type LlmProvider = "anthropic" | "openai" | "gemini" | "sarvam";
 export type LlmEffort = "low" | "medium" | "high";
 
 export const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
@@ -21,26 +24,32 @@ const openAiModel = () => process.env.OPENAI_MODEL || OPENAI_DEFAULT_MODEL;
 const geminiModel = () => process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL;
 
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
-/** Thinking/reasoning tokens count against the output cap on all three providers; text replies get this on top. */
+/** Thinking/reasoning tokens count against the output cap on every provider; text replies get this on top. */
 const THINKING_HEADROOM = 4000;
 
 const PROVIDERS: { id: LlmProvider; env: string; label: string; name: string }[] = [
   { id: "anthropic", env: "ANTHROPIC_API_KEY", label: "Claude (Anthropic)", name: "Claude" },
   { id: "openai", env: "OPENAI_API_KEY", label: "OpenAI", name: "OpenAI" },
   { id: "gemini", env: "GEMINI_API_KEY", label: "Gemini (Google)", name: "Gemini" },
+  { id: "sarvam", env: "SARVAM_API_KEY", label: "Sarvam AI", name: "Sarvam" },
 ];
 const info = (p: LlmProvider) => PROVIDERS.find((x) => x.id === p)!;
 
 /** Configured providers, most preferred first. */
-export const llmProviders = (): LlmProvider[] => PROVIDERS.filter((p) => !!process.env[p.env]).map((p) => p.id);
+export const llmProviders = (): LlmProvider[] => PROVIDERS.filter((p) => !!process.env[p.env]?.trim()).map((p) => p.id);
 export const llmConfigured = () => llmProviders().length > 0;
+/**
+ * Up to `n` distinct configured providers, most preferred first: one per independent reviewer in a
+ * multi-agent pipeline. Fewer than `n` when fewer keys are set (callers then reuse the first).
+ */
+export const providersFor = (n: number): LlmProvider[] => llmProviders().slice(0, Math.max(0, Math.floor(n)));
 export const providerLabel = (p: LlmProvider) => info(p).label;
 /** Label of the provider that answers first, e.g. "Claude (Anthropic)". */
 export const llmLabel = () => {
   const [p] = llmProviders();
   return p ? providerLabel(p) : "Not configured";
 };
-export const LLM_NOT_CONFIGURED = "Connect an AI key (Anthropic, OpenAI or Gemini) on the server to use this.";
+export const LLM_NOT_CONFIGURED = "Connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to use this.";
 
 let client: Anthropic | null = null;
 /** The one shared Anthropic SDK client. */
@@ -150,9 +159,20 @@ async function callGemini(c: Call): Promise<Raw> {
   return { text, model: String(data.modelVersion ?? model) };
 }
 
-/** Try each configured provider in order; the first success wins, otherwise the first error is thrown. */
-async function firstSuccess<T>(attempt: (p: LlmProvider) => Promise<T>): Promise<T & { provider: LlmProvider }> {
-  const providers = llmProviders();
+async function callSarvam(c: Call): Promise<Raw> {
+  const r = await sarvamChat(c.system, c.prompt, { maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, effort: c.effort });
+  return { text: r.text, model: r.model };
+}
+
+const callText = (p: LlmProvider, c: Call) => (p === "anthropic" ? callAnthropic(c) : p === "openai" ? callOpenAi(c) : p === "gemini" ? callGemini(c) : callSarvam(c));
+
+/**
+ * Try each provider in order (the configured ones, or the caller's pinned subset of them); the first
+ * success wins, otherwise the first error is thrown.
+ */
+async function firstSuccess<T>(attempt: (p: LlmProvider) => Promise<T>, only?: LlmProvider[]): Promise<T & { provider: LlmProvider }> {
+  const configured = llmProviders();
+  const providers = only?.length ? configured.filter((p) => only.includes(p)) : configured;
   if (!providers.length) throw new AppError(LLM_NOT_CONFIGURED, 400);
   let first: AppError | null = null;
   for (const [i, p] of providers.entries()) {
@@ -169,16 +189,17 @@ async function firstSuccess<T>(attempt: (p: LlmProvider) => Promise<T>): Promise
 
 // ------------------------------------------------------------------------------------------ text
 
-type TextOpts = { maxTokens?: number; timeoutMs?: number };
+/** `providers`: try only these (in configured priority order), e.g. one entry of providersFor(n). */
+type TextOpts = { maxTokens?: number; timeoutMs?: number; providers?: LlmProvider[] };
 
 /** Plain-text completion; throws an AppError with a user-facing message when no provider answers. */
 export async function completeOrThrow(system: string, prompt: string, opts: TextOpts = {}): Promise<{ text: string; provider: LlmProvider; model: string }> {
   const c: Call = { system, prompt, maxTokens: (opts.maxTokens ?? 1200) + THINKING_HEADROOM, timeoutMs: opts.timeoutMs ?? 60_000, effort: "low" };
   return firstSuccess(async (p) => {
-    const r = p === "anthropic" ? await callAnthropic(c) : p === "openai" ? await callOpenAi(c) : await callGemini(c);
+    const r = await callText(p, c);
     if (!r.text) throw new AppError(`${info(p).name} returned an empty answer.`, 502);
     return { text: r.text, model: r.model };
-  });
+  }, opts.providers);
 }
 
 /** Plain-text completion that never throws: null when no AI key is configured or every provider failed. */
@@ -228,19 +249,77 @@ function parseJson(text: string): unknown {
   try {
     return JSON.parse(t);
   } catch {
-    return undefined;
+    // A JSON object wrapped in a sentence (seen with JSON-mode-only providers).
+    const i = t.indexOf("{");
+    const j = t.lastIndexOf("}");
+    if (i < 0 || j <= i) return undefined;
+    try {
+      return JSON.parse(t.slice(i, j + 1));
+    } catch {
+      return undefined;
+    }
   }
+}
+
+const issuesOf = (error: z.ZodError) =>
+  error.issues
+    .slice(0, 6)
+    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+
+/**
+ * Sarvam: JSON-schema mode (falling back to json_object mode if the schema is refused), the schema
+ * repeated in the system prompt as a JSON-only instruction, zod validation and one repair round
+ * that shows the model its invalid answer and the validation issues.
+ */
+async function structuredSarvam<T extends z.ZodType>(schema: T, c: Call, json: NonNullable<Call["json"]>): Promise<{ data: z.infer<T>; model: string }> {
+  const system = `${c.system}\n\nAnswer with a single JSON object only: no prose, no markdown, no code fences. It must validate against this JSON Schema:\n${JSON.stringify(json.schema)}`;
+  let base = { maxTokens: c.maxTokens, timeoutMs: c.timeoutMs, effort: c.effort };
+  let mode: "schema" | "object" = "schema";
+  // sarvam-105b's reasoning counts toward max_tokens: an answer cut off mid-JSON is retried once with
+  // low reasoning effort and a larger budget (the API documents no upper max_tokens; 32k fits its 128k context).
+  const ask = async (prompt: string) => {
+    try {
+      return await askOnce(prompt);
+    } catch (e) {
+      if (!(e instanceof SarvamError) || e.code !== "length" || base.effort === "low") throw e;
+      base = { ...base, effort: "low", maxTokens: Math.min(32_000, Math.max(base.maxTokens * 2, 24_000)) };
+      return askOnce(prompt);
+    }
+  };
+  const askOnce = async (prompt: string) => {
+    if (mode === "schema") {
+      try {
+        return await sarvamChat(system, prompt, { ...base, json: { ...json, strict: strictCompatible(json.schema) } });
+      } catch (e) {
+        // A schema feature the endpoint does not accept: plain JSON mode plus the instruction above.
+        if (!(e instanceof SarvamError) || e.status !== 400) throw e;
+        mode = "object";
+      }
+    }
+    return sarvamChat(system, prompt, { ...base, json: true });
+  };
+  const first = await ask(c.prompt);
+  const raw = parseJson(first.text);
+  let parsed = schema.safeParse(raw);
+  if (parsed.success) return { data: parsed.data as z.infer<T>, model: first.model };
+  const repair = `${c.prompt}\n\n---\nYour previous answer did not validate (${raw === undefined ? "not valid JSON" : issuesOf(parsed.error)}). Previous answer:\n${first.text.slice(0, 8000)}\n\nReturn the corrected JSON object only.`;
+  const second = await ask(repair);
+  parsed = schema.safeParse(parseJson(second.text));
+  if (!parsed.success) throw new AppError("Sarvam returned an answer in an unexpected format. Try again.", 502);
+  return { data: parsed.data as z.infer<T>, model: second.model };
 }
 
 /**
  * Schema-constrained output. Claude uses structured outputs via the SDK; OpenAI and Gemini get the
- * JSON Schema and their answer is validated with the zod schema. Throws AppError.
+ * JSON Schema and their answer is validated with the zod schema; Sarvam gets JSON mode with one
+ * repair retry (structuredSarvam). `providers` pins the attempt to a subset (see providersFor). Throws AppError.
  */
 export async function structured<T extends z.ZodType>(
   schema: T,
   system: string,
   prompt: string,
-  opts: { maxTokens?: number; effort?: LlmEffort; timeoutMs?: number; name?: string } = {},
+  opts: { maxTokens?: number; effort?: LlmEffort; timeoutMs?: number; name?: string; providers?: LlmProvider[] } = {},
 ): Promise<{ data: z.infer<T>; model: string; provider: LlmProvider }> {
   const c: Call = { system, prompt, maxTokens: opts.maxTokens ?? 16000, timeoutMs: opts.timeoutMs ?? 180_000, effort: opts.effort ?? "medium" };
   let json: Call["json"];
@@ -253,9 +332,10 @@ export async function structured<T extends z.ZodType>(
     // `effort` only reaches Claude (OpenAI/Gemini reasoning params are model-specific and 400 on
     // non-reasoning models), so their default reasoning gets the same headroom as text replies.
     const oc: Call = { ...c, json, maxTokens: c.maxTokens + THINKING_HEADROOM };
+    if (p === "sarvam") return structuredSarvam(schema, oc, json);
     const r = p === "openai" ? await callOpenAi(oc) : await callGemini(oc);
     const parsed = schema.safeParse(parseJson(r.text));
     if (!parsed.success) throw new AppError(`${info(p).name} returned an answer in an unexpected format. Try again.`, 502);
     return { data: parsed.data as z.infer<T>, model: r.model };
-  });
+  }, opts.providers);
 }

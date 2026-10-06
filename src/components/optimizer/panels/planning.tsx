@@ -242,7 +242,7 @@ export function BriefGenerator({
               <Input value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value })} placeholder="Class 12 students and parents in Gujarat" />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-[13px] text-text" title={aiOn ? "" : "Add an AI key (Anthropic, OpenAI or Gemini) on the server"}>
+          <label className="flex items-center gap-2 text-[13px] text-text" title={aiOn ? "" : "Add an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server"}>
             <Checkbox checked={f.useAi} disabled={!aiOn} onChange={(e) => setF({ ...f, useAi: e.target.checked })} />
             Write the brief with AI {aiOn ? "" : "(not configured — the brief is built from research)"}
           </label>

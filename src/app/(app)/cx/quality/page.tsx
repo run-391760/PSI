@@ -147,7 +147,7 @@ export default async function QualityPage({ searchParams }: PageProps<"/cx/quali
           </BrandMeta>
         }
       />
-      {!aiConfigured() && tab === "overview" && <Callout className="mb-4" title="Connect an AI key for pre-scoring">Reviews are fully manual now. With an AI key (Anthropic, OpenAI or Gemini) configured, a model suggests an answer and a reason for every criterion; the reviewer still decides.</Callout>}
+      {!aiConfigured() && tab === "overview" && <Callout className="mb-4" title="Connect an AI key for pre-scoring">Reviews are fully manual now. With an AI key (Anthropic, OpenAI, Gemini or Sarvam) configured, a model suggests an answer and a reason for every criterion; the reviewer still decides.</Callout>}
       <TabsNav
         className="mb-4"
         items={[

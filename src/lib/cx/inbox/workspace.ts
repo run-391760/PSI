@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { query, transaction } from "@/lib/db";
 import { AppError } from "@/lib/domain";
-import { complete } from "@/lib/cx/ai";
+import { complete, languageOf } from "@/lib/cx/ai";
+import { isIndicLanguage, sarvamConfigured, sarvamDetectLanguage, sarvamTranslatePreserving, toSarvamCode } from "@/lib/providers/sarvam";
 import { getFieldDefs, getTicketFields } from "@/lib/cx/admin/fields";
 import type { EmailConfig } from "./channels";
 import { sendEmail } from "./email";
@@ -303,10 +304,49 @@ export async function assignWithNote(projectId: string, ticketId: string, user: 
 
 // ---------------------------------------------------------------- AI helpers (null when no key)
 
+/** Function words common in English and rare in other Latin-script languages. */
+const EN_WORDS = /\b(the|and|is|are|was|were|to|of|my|you|your|it|not|for|this|that|have|has|with|please|can|will|does|be|we|our|from|but|what|when|how|why|i|i'm|thanks?)\b/gi;
+/** Sarvam's language identification only knows English and Indian languages, so Spanish or French can come back as en-IN. */
+function looksEnglish(text: string) {
+  const words = text.match(/\p{Script=Latin}+/gu)?.length ?? 0;
+  const hits = text.match(EN_WORDS)?.length ?? 0;
+  return hits >= Math.max(1, Math.ceil(words * 0.1));
+}
+
+/**
+ * Sarvam translation when the text or the target is an Indian language (placeholders, links and line
+ * breaks kept). The source comes from Sarvam's language identification, not the script guess (Devanagari
+ * is also Marathi, Nepali, Konkani…; an English message may quote one Hindi name). Null, so the caller
+ * falls back to the general AI model, when the source is unknown, not English or Indian, already the
+ * target (the general model decides whether it really is), when Sarvam echoes the input, or on failure.
+ */
+async function indicTranslate(text: string, lang: string): Promise<string | null> {
+  const target = toSarvamCode(lang);
+  const guess = languageOf(text);
+  if (!sarvamConfigured() || !target || !(isIndicLanguage(lang) || isIndicLanguage(guess))) return null;
+  // languageOf reads every Latin text as English; any other script it reports must be a Sarvam language.
+  if (guess !== "en" && !toSarvamCode(guess)) return null;
+  try {
+    const { language: source } = await sarvamDetectLanguage(text);
+    if (!source || source === target || (source === "en-IN" && !looksEnglish(text))) return null;
+    // Replies into an Indian language read best colloquial; translations into English stay formal.
+    const r = await sarvamTranslatePreserving(text, { source, target, mode: target === "en-IN" ? "formal" : "modern-colloquial" });
+    const out = r.text.trim();
+    return out && out !== text.trim() ? out : null;
+  } catch (e) {
+    console.warn(`[inbox] Sarvam translation failed, using the AI model: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
 export async function aiRewrite(kind: "grammar" | "translate", text: string, lang = "English") {
   const t = text.trim().slice(0, 8000);
   if (!t) throw new AppError("Write something first.");
   const keep = "Keep placeholders like {{name}}, markdown links [text](url), line breaks and the meaning. Return only the resulting text, nothing else.";
+  if (kind === "translate") {
+    const indic = await indicTranslate(t, lang);
+    if (indic) return indic;
+  }
   return kind === "grammar"
     ? complete(`You fix spelling, grammar and punctuation in customer-support replies without changing their tone or language. ${keep}`, t, 1500)
     : complete(`You translate customer-support replies into ${lang}, natural and polite. ${keep}`, t, 1800);
@@ -317,8 +357,10 @@ export async function translateMessage(projectId: string, messageId: string, lan
   const key = lang.slice(0, 40);
   const [c] = await query<{ text: string }>("SELECT text FROM cx_inbox_translations WHERE message_id=$1 AND lang=$2", [messageId, key]);
   if (c) return c.text;
-  const out = await complete(`Translate the customer's message into ${key}. Return only the translation. If it already is in ${key}, return it unchanged.`, m.body.slice(0, 8000), 1800);
-  if (out) await query("INSERT INTO cx_inbox_translations(message_id,lang,text) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", [messageId, key, out]);
+  const body = m.body.slice(0, 8000);
+  const out = (await indicTranslate(body, key)) ?? (await complete(`Translate the customer's message into ${key}. Return only the translation. If it already is in ${key}, return it unchanged.`, body, 1800));
+  // An unchanged answer is not cached: it may be a wrong "already in that language" verdict worth retrying.
+  if (out && out.trim() !== body.trim()) await query("INSERT INTO cx_inbox_translations(message_id,lang,text) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", [messageId, key, out]);
   return out;
 }
 export async function summarizeTicket(projectId: string, ticketId: string) {

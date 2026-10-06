@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { AgentAudit } from "@/components/optimizer/agents/agent-audit";
 import { FindingCard } from "@/components/optimizer/finding-card";
 import { OptimizerEmpty, OptimizerHeader } from "@/components/optimizer/page-parts";
 import { FixItList, SectionRewriter } from "@/components/optimizer/panels/ai";
@@ -18,7 +19,7 @@ import { featuresOf, moduleById } from "@/lib/optimizer/features";
 import { moduleScores, workflowState } from "@/lib/optimizer/progress";
 import { listBriefs } from "@/lib/optimizer/store";
 import type { ModuleId } from "@/lib/optimizer/types";
-import { loadOptimizer } from "../data";
+import { loadAgentAudit, loadOptimizer, verifiedScore } from "../data";
 
 export async function generateMetadata({ params }: PageProps<"/optimizer/[module]">): Promise<Metadata> {
   const m = moduleById((await params).module);
@@ -66,6 +67,7 @@ export default async function OptimizerModulePage({ params, searchParams }: Page
   const checks = featuresOf(id).filter((f) => f.kind === "check");
   const score = moduleScores(report).find((m) => m.id === id)!;
   const findingOf = (fid: string) => report.findings.find((f) => f.feature === fid)!;
+  const agents = id === "reporting" ? await loadAgentAudit(data.user.id, draft, bundle, report) : null;
 
   const panels: Partial<Record<ModuleId, React.ReactNode>> = {
     "search-intent": <ResearchPanel draft={draft} research={bundle.research} serpOn={data.serpOn} />,
@@ -93,9 +95,10 @@ export default async function OptimizerModulePage({ params, searchParams }: Page
     reporting: (
       <div className="space-y-4">
         <Grid cols={2}>
-          <ScoreCard report={report} draftId={draft.id} baseline={draft.baselineScore} />
+          <ScoreCard report={report} draftId={draft.id} baseline={draft.baselineScore} verified={agents && verifiedScore(agents)} />
           <BeforeAfter revisions={data.revisions} report={report} />
         </Grid>
+        {agents && <AgentAudit draftId={draft.id} {...agents} />}
         <Recommendations report={report} ai={data.aiStale ? null : bundle.ai} draftId={draft.id} />
         <Card>
           <CardBody className="pt-4">

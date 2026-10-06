@@ -158,7 +158,7 @@ export default async function MentionsPage({ searchParams }: { searchParams: Pro
               brandId={brand.id}
               mentions={feed.rows.map((m) => ({
                 id: m.id, topic_name: m.topic_name, topic_kind: m.topic_kind, source: m.source, url: m.url, author: m.author, author_handle: m.author_handle,
-                author_followers: m.author_followers, title: m.title, body: m.body.slice(0, 1200), language: m.language, published_at: m.published_at,
+                author_followers: m.author_followers, title: m.title, body: m.body.slice(0, 1200), language: m.language, translation: m.translation?.slice(0, 1200) ?? null, published_at: m.published_at,
                 sentiment: m.sentiment, intent: m.intent, engagement: m.engagement, status: m.status, tags: m.tags, ticket_id: m.ticket_id, ticket_number: m.ticket_number,
               }))}
             />

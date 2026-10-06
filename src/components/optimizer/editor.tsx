@@ -11,6 +11,7 @@ import type { OtherDraft } from "@/lib/optimizer/context";
 import { aiFresh } from "@/lib/optimizer/hash";
 import type { Draft, DraftInput, ResearchBundle } from "@/lib/optimizer/types";
 import { cn } from "@/lib/utils";
+import type { VerifiedScore } from "@/lib/optimizer/agents/types";
 import { ScoreCard } from "./score-card";
 
 type Save = { status: "saved" | "dirty" | "saving" | "error"; at: string; error?: string };
@@ -21,11 +22,12 @@ const counter = (n: number, lo: number, hi: number) => (n === 0 ? "text-text-3" 
  * Write / paste step: the draft's search-facing fields and Markdown body, autosaved, with the full
  * audit re-run in the browser on every change so the score updates while you write.
  */
-export function DraftEditor({ draft, bundle, others }: { draft: Draft; bundle: ResearchBundle; others: OtherDraft[] }) {
+export function DraftEditor({ draft, bundle, others, verified }: { draft: Draft; bundle: ResearchBundle; others: OtherDraft[]; verified?: VerifiedScore | null }) {
   const router = useRouter();
   const [f, setF] = useState({ title: draft.title, keyword: draft.keyword, keywords: draft.keywords.join(", "), metaDescription: draft.metaDescription, slug: draft.slug, url: draft.url, body: draft.body });
   const [save, setSave] = useState<Save>({ status: "saved", at: draft.updatedAt });
   const saved = useRef(JSON.stringify(f));
+  const initial = useRef(saved.current);
   const seq = useRef(0);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
   const input = useMemo<DraftInput>(() => ({ ...f, keywords: f.keywords.split(",").map((k) => k.trim()).filter(Boolean).slice(0, 10), meta: draft.meta }), [f, draft.meta]);
@@ -98,7 +100,8 @@ export function DraftEditor({ draft, bundle, others }: { draft: Draft; bundle: R
         </div>
       </Card>
       <div className="min-w-0 xl:sticky xl:top-28 xl:self-start">
-        <ScoreCard report={report} draftId={draft.id} baseline={draft.baselineScore} compact />
+        {/* The agent-verified score describes the saved draft: show it until the first edit, then the live engine score. */}
+        <ScoreCard report={report} draftId={draft.id} baseline={draft.baselineScore} compact verified={JSON.stringify(f) === initial.current ? verified : null} />
         <p className="mt-2 px-1 text-[11.5px] text-text-3">Scores update as you type{bundle.research ? "" : "; run SERP research to score topical coverage"}.</p>
       </div>
     </div>

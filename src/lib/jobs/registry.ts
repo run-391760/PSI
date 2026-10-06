@@ -16,6 +16,7 @@ import { jobs as cxPublishing } from "@/lib/cx/publishing/jobs";
 import { jobs as cxInsights } from "@/lib/cx/insights/jobs";
 import { jobs as cxAdmin } from "@/lib/cx/admin/jobs";
 import { jobs as cxOps } from "@/lib/cx/ops/jobs";
+import { jobs as optimizerAgents } from "@/lib/optimizer/agents/jobs";
 
 /** Built-in: health check job used by /api/health. */
 const core: Record<string, JobHandler> = {
@@ -47,6 +48,7 @@ export const handlers: Record<string, JobHandler> = {
   ...cxInsights,
   ...cxAdmin,
   ...cxOps,
+  ...optimizerAgents,
 };
 
 // Publish the freshest handler set for the worker loop (which starts in a separate bundle and would

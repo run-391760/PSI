@@ -96,7 +96,7 @@ export function FixActions({ draftId, feature, fixes, aiOn, className }: { draft
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       {fixes.map((o) =>
         o.ai ? (
-          <Button key={o.id} size="sm" variant="secondary" disabled={!aiOn || !!busy} loading={busy === o.id} title={aiOn ? o.description : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to use AI fixes"} onClick={() => propose(o)}>
+          <Button key={o.id} size="sm" variant="secondary" disabled={!aiOn || !!busy} loading={busy === o.id} title={aiOn ? o.description : "Add an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to use AI fixes"} onClick={() => propose(o)}>
             {busy !== o.id && <Sparkles className="h-3.5 w-3.5 text-brand-ink" />}
             {o.label}
           </Button>

@@ -1,29 +1,70 @@
-import { Lightbulb, OctagonAlert } from "lucide-react";
+import { Lightbulb, OctagonAlert, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ScoreRing } from "@/components/ui/progress";
+import { Tooltip } from "@/components/ui/tooltip";
+import type { VerifiedScore } from "@/lib/optimizer/agents/types";
 import { CATEGORIES, featureById } from "@/lib/optimizer/features";
 import type { Report } from "@/lib/optimizer/types";
 import { Bar10, color10, fmt10, PublishBadge } from "./ui";
 
-/** Headline score card (PDF page 4): overall /10, category scores with weights, issue counts, status, top recommendation. */
-export function ScoreCard({ report, draftId, baseline, compact }: { report: Report; draftId: string; baseline: number | null; compact?: boolean }) {
-  const delta = baseline != null && report.overall != null ? Math.round((report.overall - baseline) * 10) / 10 : null;
+/**
+ * Headline score card (PDF page 4): overall /10, category scores with weights, issue counts, status, top
+ * recommendation. With a current agent audit (`verified`, not stale) it shows the agent-verified values
+ * and says so; otherwise the engine's deterministic score, labelled "Engine score".
+ */
+export function ScoreCard({ report: engine, draftId, baseline, compact, verified }: { report: Report; draftId: string; baseline: number | null; compact?: boolean; verified?: VerifiedScore | null }) {
+  const agent = verified && !verified.stale ? verified : null;
+  const report: Report = agent ? { ...engine, ...agent.final } : engine;
+  // Before-vs-after compares engine scores (the baseline is an engine score).
+  const delta = baseline != null && engine.overall != null ? Math.round((engine.overall - baseline) * 10) / 10 : null;
   const moduleOf = (feature: string) => featureById(feature)?.module;
   const href = (feature: string) => `/optimizer/${moduleOf(feature)}?doc=${draftId}#${feature}`;
   const partial = report.categories.filter((c) => c.score == null);
   return (
     <Card>
-      <CardHeader title="Pre-publish SEO score" description="Weighted across the eight categories; blockers decide whether it can be published." info="Search Intent 20%, Content Quality 20%, Topical Coverage 15%, On-Page 15%, E-E-A-T 10%, SERP/AI 10%, Linking/UX/Conversion 5%, Technical/Schema 5%. A technically optimized article cannot score highly if it fails search intent or the reader." />
+      <CardHeader
+        title="Pre-publish SEO score"
+        description="Weighted across the eight categories; blockers decide whether it can be published."
+        info="Search Intent 20%, Content Quality 20%, Topical Coverage 15%, On-Page 15%, E-E-A-T 10%, SERP/AI 10%, Linking/UX/Conversion 5%, Technical/Schema 5%. A technically optimized article cannot score highly if it fails search intent or the reader."
+        actions={
+          agent ? (
+            agent.confidence === "low" ? (
+              <Tooltip content={`The agent audit only partly verified these values (confidence: low): agent stages failed or disagreed, so many checks keep their engine scores. Engine score: ${fmt10(agent.engineOverall)}. See the agent audit for details.`}>
+                <Badge tone="warning">
+                  <ShieldCheck className="h-3 w-3" /> Partly verified
+                </Badge>
+              </Tooltip>
+            ) : (
+              <Tooltip content={`Verified by the four-agent audit (confidence: ${agent.confidence === "none" ? "n/a" : agent.confidence}). Engine score: ${fmt10(agent.engineOverall)}.`}>
+                <Badge tone="good">
+                  <ShieldCheck className="h-3 w-3" /> Agent-verified
+                </Badge>
+              </Tooltip>
+            )
+          ) : (
+            <Tooltip content={verified?.stale ? "The draft, its research or the engine's result changed since the last agent audit, so its values are not used. Run the agent audit again to verify this version." : "Deterministic engine score from the 58 checks. Run the agent audit to have it verified."}>
+              <Badge>{verified?.stale ? "Engine score · audit out of date" : "Engine score"}</Badge>
+            </Tooltip>
+          )
+        }
+      />
       <CardBody className="space-y-4">
         <div className="flex flex-wrap items-center gap-4">
           <ScoreRing value={(report.overall ?? 0) * 10} label={fmt10(report.overall)} sub="out of 10" size={compact ? 92 : 108} color={color10(report.overall)} />
           <div className="min-w-0 flex-1 space-y-1.5">
             <PublishBadge status={report.status} />
+            {agent && (
+              <div className="text-[12px] text-text-3">
+                Engine score <b className="text-text-2 tabular-nums">{fmt10(agent.engineOverall)}</b> · agent audit confidence {agent.confidence === "none" ? "n/a" : agent.confidence}
+              </div>
+            )}
             <div className="text-[12.5px] text-text-2">
               Publish readiness <b className="text-text tabular-nums">{report.readiness}%</b>
               {delta != null && delta !== 0 && (
                 <span className={delta > 0 ? "ml-2 text-good-ink" : "ml-2 text-critical-ink"}>
+                  {agent ? "engine " : ""}
                   {delta > 0 ? "+" : ""}
                   {delta} since the first audit ({baseline!.toFixed(1)})
                 </span>

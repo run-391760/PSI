@@ -103,7 +103,7 @@ export function EventTools({ brandId, eventId, untickedNegative, aiReady }: { br
           <Sparkles className="h-4 w-4" /> Draft holding statement
         </Button>
       ) : (
-        <p className="text-[12px] text-text-3">Connect an AI key (Anthropic, OpenAI or Gemini) to draft holding statements and reply templates.</p>
+        <p className="text-[12px] text-text-3">Connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) to draft holding statements and reply templates.</p>
       )}
       <Note msg={msg} />
       {draft != null && (

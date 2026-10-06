@@ -4,6 +4,7 @@ import { liveEngine } from "@/lib/providers/ai-engines";
 import { llmConfigured, llmLabel } from "@/lib/providers/llm";
 import { newsEnabled } from "@/lib/providers/news";
 import { pagespeedEnabled } from "@/lib/providers/pagespeed";
+import { sarvamModel } from "@/lib/providers/sarvam";
 import { flagEnabled, liveEnabled } from "@/lib/providers/source";
 
 /**
@@ -62,7 +63,7 @@ const SHARED_AI: Power[] = [
   cx("Dashboard chart insights", "/cx/dashboards"),
   cx("Report insights", "/cx/reports"),
 ];
-const SHARED_AI_NOTE = "Pre-Publish Optimizer and CX AI features use one AI key, in order Anthropic → OpenAI → Gemini (the next one is tried if a call fails).";
+const SHARED_AI_NOTE = "Pre-Publish Optimizer and CX AI features use one AI key (Anthropic, OpenAI, Gemini or Sarvam), in order Anthropic → OpenAI → Gemini → Sarvam (the next one is tried if a call fails).";
 
 export const CREDENTIALS: Credential[] = [
   // ------------------------------------------------------------------------------------- AI models
@@ -107,6 +108,24 @@ export const CREDENTIALS: Credential[] = [
     powers: [seo("AI Visibility: Gemini answers", "/ai-visibility"), ...SHARED_AI],
     note: SHARED_AI_NOTE,
     docs: "https://aistudio.google.com/apikey",
+  },
+  {
+    id: "sarvam",
+    label: "Sarvam AI",
+    provider: "Sarvam AI",
+    storage: "env",
+    kind: "key",
+    env: [["SARVAM_API_KEY"]],
+    optional: ["SARVAM_MODEL"],
+    configured: () => isSet("SARVAM_API_KEY"),
+    detail: () => sarvamModel(),
+    powers: [
+      ...SHARED_AI,
+      cx("Listening: Indian-language detection, English translation and sentiment", "/cx/listening"),
+      cx("Inbox translation to and from Indian languages", "/cx/inbox"),
+    ],
+    note: `${SHARED_AI_NOTE} Sarvam also translates new Indian-language listening mentions (Hindi, Bengali, Gujarati, Tamil, Telugu and more, plus romanized Hindi) to English before sentiment and intent scoring, up to 200 per fetch run, and handles inbox translation whenever either side is an Indian language.`,
+    docs: "https://docs.sarvam.ai/api-reference/authentication",
   },
   {
     id: "perplexity",

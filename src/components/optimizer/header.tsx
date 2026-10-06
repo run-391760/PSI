@@ -176,7 +176,7 @@ export function DraftActions({ draftId, status, published, aiOn, serpOn, hasComp
       <Button
         loading={busy === "ai"}
         disabled={!!busy || !aiOn}
-        title={aiOn ? "Claude scores intent, usefulness, originality, information gain and experience, and flags risky claims" : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to enable AI reviews"}
+        title={aiOn ? "Claude scores intent, usefulness, originality, information gain and experience, and flags risky claims" : "Add an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to enable AI reviews"}
         onClick={() => run("ai", () => aiReviewAction(draftId), (d: { before: number | null; after: number | null; status: string }) => ({ title: "Claude review added", before: d.before, after: d.after, status: d.status }))}
       >
         {busy !== "ai" && <Bot className="h-4 w-4" />} Claude review

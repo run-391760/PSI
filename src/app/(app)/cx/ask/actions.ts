@@ -18,7 +18,7 @@ async function brand(projectId: string, write = true) {
   return user;
 }
 const needAi = () => {
-  if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI or Gemini) on the server to use this.", 400);
+  if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server to use this.", 400);
 };
 
 export async function askAction(projectId: string, question: string, days: number): Promise<ActionResult<{ answer: string }>> {
