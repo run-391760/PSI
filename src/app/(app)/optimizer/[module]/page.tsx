@@ -30,7 +30,8 @@ export default async function OptimizerModulePage({ params, searchParams }: Page
   const mod = moduleById(module);
   if (!mod) notFound();
   const id = mod.id as ModuleId;
-  const data = await loadOptimizer(await searchParams, { revisions: id === "workflow" || id === "reporting" });
+  const sp = await searchParams;
+  const data = await loadOptimizer(sp, { revisions: id === "workflow" || id === "reporting" });
   const basePath = `/optimizer/${id}`;
   const header = <OptimizerHeader data={data} title={mod.label} description={mod.description} basePath={basePath} />;
 
@@ -39,7 +40,15 @@ export default async function OptimizerModulePage({ params, searchParams }: Page
     return (
       <Page>
         {header}
-        <BriefGenerator briefs={briefs} aiOn={data.aiOn} serpOn={data.serpOn} defaultKeyword={data.draft?.keyword} />
+        <BriefGenerator
+          key={`${typeof sp.q === "string" ? sp.q : ""}|${typeof sp.db === "string" ? sp.db : ""}`}
+          briefs={briefs}
+          aiOn={data.aiOn}
+          serpOn={data.serpOn}
+          defaultKeyword={data.draft?.keyword}
+          defaultDb={data.draft?.meta.db}
+          query={{ q: typeof sp.q === "string" ? sp.q : undefined, db: typeof sp.db === "string" ? sp.db : undefined }}
+        />
         <ScoreFlash />
       </Page>
     );

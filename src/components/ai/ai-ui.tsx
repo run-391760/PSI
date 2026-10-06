@@ -13,6 +13,7 @@ import { DomainAvatar, Sparkline } from "@/components/seo/badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog, Menu } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Textarea } from "@/components/ui/input";
@@ -229,6 +230,7 @@ export function PromptsTable({ projectId, rows, brand, live = true }: { projectI
   const [open, setOpen] = useState<PromptSummary | null>(null);
   const [engine, setEngine] = useState<EngineId>("chatgpt");
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const remove = (ids: string[], clear?: () => void) =>
     start(async () => {
       await removePromptsAction(projectId, ids);
@@ -272,7 +274,7 @@ export function PromptsTable({ projectId, rows, brand, live = true }: { projectI
       sortable: false,
       noExport: true,
       render: (r) => (
-        <Button size="sm" variant="ghost" aria-label="Remove prompt" title="Remove prompt" disabled={pending} onClick={() => confirm(`Stop tracking “${r.prompt}”?`) && remove([r.id])}>
+        <Button size="sm" variant="ghost" aria-label="Remove prompt" title="Remove prompt" disabled={pending} onClick={async () => (await confirm({ title: "Stop tracking this prompt?", description: `“${r.prompt}”`, confirmLabel: "Stop tracking" })) && remove([r.id])}>
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       ),
@@ -292,12 +294,13 @@ export function PromptsTable({ projectId, rows, brand, live = true }: { projectI
         exportName="ai-prompts"
         selectable
         selectionActions={(sel, clear) => (
-          <Button size="sm" variant="danger" disabled={pending} onClick={() => confirm(`Stop tracking ${sel.length} prompt(s)?`) && remove(sel.map((s) => s.id), clear)}>
+          <Button size="sm" variant="danger" disabled={pending} onClick={async () => (await confirm({ title: `Stop tracking ${sel.length} prompt${sel.length === 1 ? "" : "s"}?`, confirmLabel: "Stop tracking" })) && remove(sel.map((s) => s.id), clear)}>
             <Trash2 className="h-3.5 w-3.5" /> Remove
           </Button>
         )}
         toolbar={<EngineLegend />}
       />
+      {confirmDialog}
       <Dialog open={!!open} onClose={() => setOpen(null)} title={open ? `“${open.prompt}”` : ""} description={open ? `${open.mentioned} of ${open.answers} answers mention ${brand} in the last 7 days${live ? "" : " · Demo data"}` : undefined} size="xl">
         {open && (
           <div className="space-y-4">
@@ -531,7 +534,7 @@ export function LiveResultsTable({ rows, brand, engines }: { rows: LiveResult[];
                 <Badge tone={open.mentioned ? "good" : "critical"}>{open.mentioned ? `${brand} mentioned at #${open.position}` : `${brand} not mentioned`}</Badge>
                 <Badge tone={open.cited ? "good" : "neutral"}>{open.cited ? "Your site is cited" : "Your site is not cited"}</Badge>
               </div>
-              <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border bg-surface-2 p-3.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-text">{highlight(open.answer, [brand, ...open.competitors])}</div>
+              <div className="rounded-lg border border-border bg-surface-2 p-3.5 text-[13.5px] leading-relaxed break-words whitespace-pre-wrap text-text">{highlight(open.answer, [brand, ...open.competitors])}</div>
               {open.citedUrls.length > 0 && (
                 <div>
                   <div className="mb-1 text-[12.5px] font-medium text-text-2">Your cited pages</div>

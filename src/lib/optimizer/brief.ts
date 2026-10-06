@@ -1,3 +1,4 @@
+import { briefCompetitors } from "./brief-export";
 import { buildContext } from "./context";
 import { FORMAT_LABEL, FUNNEL_FOR, INTENT_LABEL } from "./intent";
 import { titleVariants } from "./checks/onpage";
@@ -47,6 +48,8 @@ export function researchBrief(keyword: string, db: string, research: Research | 
     sources: sources.length ? sources : ["Query wording only (add competitor URLs or configure DataForSEO for richer briefs)"],
     generatedBy: "research",
     createdAt: new Date().toISOString(),
+    competitors: briefCompetitors(research),
+    serpFeatures: research?.serpSource === "serp" ? research.features : [],
   };
 }
 

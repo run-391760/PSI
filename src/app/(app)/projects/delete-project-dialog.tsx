@@ -2,10 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
-import { Field, Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { deleteProjectAction } from "./actions";
 
 /** Confirm-by-typing dialog for deleting a project and all of its tool data. */
@@ -22,15 +19,13 @@ export function DeleteProjectDialog({
   redirectTo?: string;
 }) {
   const router = useRouter();
-  const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const close = () => {
-    setTyped("");
     setError(null);
     onClose();
   };
-  const confirm = () =>
+  const remove = () =>
     project &&
     start(async () => {
       const res = await deleteProjectAction(project.id);
@@ -39,32 +34,25 @@ export function DeleteProjectDialog({
       if (redirectTo) router.push(redirectTo);
       router.refresh();
     });
-  const matches = !!project && typed.trim().toLowerCase() === project.domain.toLowerCase();
   return (
-    <Dialog
+    <ConfirmDialog
       open={open && !!project}
-      onClose={close}
+      onCancel={close}
+      onConfirm={remove}
       title="Delete project?"
-      description={project ? `${project.name} (${project.domain})` : undefined}
-      size="sm"
-      footer={
+      description={
         <>
-          <Button variant="ghost" onClick={close}>
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={confirm} disabled={!matches} loading={pending}>
-            Delete project
-          </Button>
+          <span className="font-medium text-text">
+            {project?.name} ({project?.domain})
+          </span>
+          <br />
+          This permanently deletes the project with its audits, tracked keywords, schedules, reports and history. This cannot be undone.
         </>
       }
-    >
-      <div className="space-y-3 text-[13px] text-text-2">
-        {error && <Callout tone="critical">{error}</Callout>}
-        <p>This permanently deletes the project with its audits, tracked keywords, schedules, reports and history. This cannot be undone.</p>
-        <Field label={<>Type <span className="font-semibold text-text">{project?.domain}</span> to confirm</>} htmlFor="confirm-domain">
-          <Input id="confirm-domain" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" placeholder={project?.domain} onKeyDown={(e) => e.key === "Enter" && matches && confirm()} />
-        </Field>
-      </div>
-    </Dialog>
+      confirmLabel="Delete project"
+      requireText={project?.domain ?? ""}
+      busy={pending}
+      error={error}
+    />
   );
 }

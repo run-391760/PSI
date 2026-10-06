@@ -189,7 +189,8 @@ export function DomainAvatar({ domain, size = 18 }: { domain: string; size?: num
 /** Domain name that links to Domain Overview. */
 export function DomainLink({ domain, db, className, avatar = true }: { domain: string; db?: string; className?: string; avatar?: boolean }) {
   return (
-    <Link href={`/domain-overview?q=${encodeURIComponent(domain)}${db ? `&db=${db}` : ""}`} className={cn("inline-flex min-w-0 items-center gap-1.5 text-link hover:underline", className)}>
+    // Table rows render dozens of these; prefetching each one would make the server render a full report per row.
+    <Link prefetch={false} href={`/domain-overview?q=${encodeURIComponent(domain)}${db ? `&db=${db}` : ""}`} className={cn("inline-flex min-w-0 items-center gap-1.5 text-link hover:underline", className)}>
       {avatar && <DomainAvatar domain={domain} />}
       <span className="truncate">{domain}</span>
     </Link>
@@ -199,7 +200,7 @@ export function DomainLink({ domain, db, className, avatar = true }: { domain: s
 /** Keyword that links to Keyword Overview. */
 export function KeywordLink({ keyword, db, className }: { keyword: string; db?: string; className?: string }) {
   return (
-    <Link href={`/keyword-overview?q=${encodeURIComponent(keyword)}${db ? `&db=${db}` : ""}`} className={cn("text-link hover:underline", className)}>
+    <Link prefetch={false} href={`/keyword-overview?q=${encodeURIComponent(keyword)}${db ? `&db=${db}` : ""}`} className={cn("text-link hover:underline", className)}>
       {keyword}
     </Link>
   );

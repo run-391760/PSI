@@ -7,6 +7,7 @@ import { createStarterScorecardAction, deleteScorecardAction, saveScorecardActio
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select } from "@/components/ui/input";
@@ -35,6 +36,7 @@ export function ScorecardsPanel({ brand, scorecards, teams = [] }: { brand: stri
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) =>
     start(async () => {
       setError(null);
@@ -49,6 +51,7 @@ export function ScorecardsPanel({ brand, scorecards, teams = [] }: { brand: stri
   const [tagText, setTagText] = useState("");
   const openDraft = (d: Draft) => {
     setDraft(d);
+    setError(null);
     setTagText(d.tags.join(", "));
   };
   const setSection = (i: number, p: Partial<QaSection>) => draft && setDraft({ ...draft, sections: draft.sections.map((s, j) => (j === i ? { ...s, ...p } : s)) });
@@ -102,7 +105,7 @@ export function ScorecardsPanel({ brand, scorecards, teams = [] }: { brand: stri
                     <Button size="sm" onClick={() => openDraft({ id: s.id, name: s.name, description: s.description, pass_score: s.pass_score, active: s.active, sections: s.sections, form_type: s.form_type ?? "evaluation", team_id: s.team_id ?? null, due_days: s.due_days ?? null, auto_accept: !!s.auto_accept, tags: s.tags ?? [] })}>
                       <Pencil className="h-3.5 w-3.5" /> Edit
                     </Button>
-                    <Button size="icon" variant="ghost" aria-label={`Delete ${s.name}`} onClick={() => confirm(`Delete scorecard ${s.name}? Existing reviews keep their scores.`) && run(() => deleteScorecardAction(brand, s.id))}>
+                    <Button size="icon" variant="ghost" aria-label={`Delete ${s.name}`} onClick={async () => (await confirm({ title: `Delete the form “${s.name}”?`, description: "Existing reviews keep their scores." })) && run(() => deleteScorecardAction(brand, s.id))}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -117,19 +120,20 @@ export function ScorecardsPanel({ brand, scorecards, teams = [] }: { brand: stri
         onClose={() => setDraft(null)}
         size="xl"
         title={draft?.id ? `Edit ${draft.form_type} form` : `New ${draft?.form_type ?? "evaluation"} form`}
-        description={draft ? `Total weight of scored criteria: ${totalWeight(draft)} (scores are normalized, so weights need not add up to 100).` : undefined}
+        error={draft ? error : null}
+        footerStart={draft && <span className="text-[12px] text-text-3">Total weight of scored criteria: {totalWeight(draft)}</span>}
         footer={
           <>
-            <Button onClick={() => setDraft(null)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
             <Button variant="primary" loading={pending} onClick={() => draft && run(() => saveScorecardAction(brand, { ...draft, tags: tagText.split(",").map((t) => t.trim()).filter(Boolean) }, draft.id), () => setDraft(null))}>Save form</Button>
           </>
         }
       >
         {draft && (
           <div className="space-y-3">
-            {error && <Callout tone="critical">{error}</Callout>}
+            <p className="text-[12.5px] text-text-3">Scores are normalized, so the weights of scored criteria need not add up to 100.</p>
             <div className="grid gap-3 sm:grid-cols-[1fr_1fr_120px]">
-              <Field label="Name" htmlFor="sc-name"><Input id="sc-name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+              <Field label="Name" htmlFor="sc-name"><Input id="sc-name" autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
               <Field label="Description" htmlFor="sc-desc"><Input id="sc-desc" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></Field>
               <Field label="Pass score %" htmlFor="sc-pass"><Input id="sc-pass" type="number" min={0} max={100} value={draft.pass_score} onChange={(e) => setDraft({ ...draft, pass_score: Number(e.target.value) })} /></Field>
             </div>
@@ -202,6 +206,7 @@ export function ScorecardsPanel({ brand, scorecards, teams = [] }: { brand: stri
           </div>
         )}
       </Dialog>
+      {confirmDialog}
     </Card>
   );
 }

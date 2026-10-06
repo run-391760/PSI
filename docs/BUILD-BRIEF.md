@@ -94,7 +94,8 @@ deeper tools (DomainLink → Domain Overview, KeywordLink → Keyword Overview),
   actions, CSV export. Columns contain render functions → define them in a "use client" component.
 - `MiniTable` (`ui/mini-table`, server-safe) for widget tables.
 - `TabsNav` (URL `?tab=` tabs; preserves other params), `Tabs` (local), `Segmented` (`ui/tabs`).
-- `Dialog, Menu, MenuItem` (`ui/dialog`); `EmptyState, Callout, Skeleton, Spinner` (`ui/feedback`);
+- `Dialog` (size sm|md|lg|xl|full; `footerStart` for destructive/secondary actions, `error` shown inside the dialog, `onSubmit` so Enter submits, `dismissible={false}` while a one-time secret is shown), `Menu, MenuItem` (`ui/dialog`); `useConfirm` (`ui/confirm`) instead of window.confirm. Footer order: Cancel (ghost) then the primary action; use `<Button loading>` rather than 'Saving…' text.
+  `EmptyState, Callout, Skeleton, Spinner` (`ui/feedback`);
   `Bar, ScoreRing, Gauge, DistributionBar` (`ui/progress`); `PrintButton` (`ui/print-button`).
 - Charts (client, `components/charts/*`): `TrendChart` (line/area/stacked, `ranges` = MONTH_RANGES /
   DAY_RANGES, `reversed` for rank positions, `markers`), `BarChart` (columns/bars, stacked, valueLabels,

@@ -515,6 +515,8 @@ function ChatItem({ t, active, checked, onCheck, href, full }: ItemProps) {
 type Due = { id: string; ticket_id: string; number: number; subject: string; note: string; remind_at: string; created_by_name: string };
 function ReminderPopup({ brand }: { brand: string }) {
   const [due, setDue] = useState<Due[]>([]);
+  // Closing (Esc, backdrop, X) only hides these for now; they stay due until dismissed explicitly.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const router = useRouter();
   useEffect(() => {
     let stop = false;
@@ -535,11 +537,19 @@ function ReminderPopup({ brand }: { brand: string }) {
     setDue((d) => d.filter((x) => x.id !== id));
     await fetch(`/api/cx/inbox/reminders?brand=${brand}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
   };
-  if (!due.length) return null;
+  const shown = due.filter((d) => !hidden.has(d.id));
+  if (!shown.length) return null;
   return (
-    <Dialog open onClose={() => due.forEach((d) => dismiss(d.id))} size="sm" title={due.length > 1 ? `${due.length} reminders` : "Reminder"}>
+    <Dialog
+      open
+      onClose={() => setHidden((h) => new Set([...h, ...shown.map((d) => d.id)]))}
+      size="sm"
+      title={shown.length > 1 ? `${shown.length} reminders` : "Reminder"}
+      initialFocus="none"
+      footer={shown.length > 1 ? <Button variant="ghost" onClick={() => shown.forEach((d) => dismiss(d.id))}>Dismiss all</Button> : undefined}
+    >
       <ul className="space-y-3">
-        {due.map((r) => (
+        {shown.map((r) => (
           <li key={r.id} className="rounded-md border border-border p-2.5">
             <div className="flex items-center gap-1.5 text-[12px] text-text-3"><AlarmClock className="h-3.5 w-3.5 text-warning-ink" /><span suppressHydrationWarning>{dateTimeLabel(r.remind_at)}</span> · set by {r.created_by_name}</div>
             <div className="mt-0.5 text-[13px] font-medium text-text">#{r.number} {r.subject}</div>
@@ -588,12 +598,23 @@ function NewTicket({ brand, onClose, onCreated }: { brand: string; onClose: () =
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const r = await newTicketAction(brand, f);
+    setBusy(false);
+    if (r.ok) onCreated(r.data.id); else setError(r.error);
+  };
   return (
-    <Dialog open onClose={onClose} title="New ticket" description="Log a conversation that happened outside connected channels (phone, walk-in, etc.)."
-      footer={<><Button variant="ghost" className="mr-auto" onClick={() => { setF(empty); setError(null); }}>Reset</Button><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={async () => { setBusy(true); const r = await newTicketAction(brand, f); setBusy(false); if (r.ok) onCreated(r.data.id); else setError(r.error); }}>{busy ? "Creating…" : "Create ticket"}</Button></>}>
+    <Dialog open onClose={onClose} size="lg" title="New ticket" description="Log a conversation that happened outside connected channels (phone, walk-in, etc.)."
+      error={error}
+      onSubmit={create}
+      footerStart={<Button variant="ghost" disabled={busy} onClick={() => { setF(empty); setError(null); }}>Reset</Button>}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy}>Create ticket</Button></>}>
       <div className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Customer name" htmlFor="nt-n"><Input id="nt-n" value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
+          <Field label="Customer name" htmlFor="nt-n"><Input id="nt-n" autoFocus value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
           <Field label="Email" htmlFor="nt-e"><Input id="nt-e" type="email" value={f.email} onChange={(e) => set("email", e.target.value)} /></Field>
           <Field label="Phone" htmlFor="nt-p"><Input id="nt-p" value={f.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
         </div>
@@ -606,7 +627,6 @@ function NewTicket({ brand, onClose, onCreated }: { brand: string; onClose: () =
           </Field>
         </div>
         <Field label="What the customer said" htmlFor="nt-b"><Textarea id="nt-b" rows={5} value={f.body} onChange={(e) => set("body", e.target.value)} /></Field>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

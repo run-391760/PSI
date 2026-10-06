@@ -7,6 +7,20 @@ import { Dialog, Menu } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { PROFILE_COLORS, isHexColor } from "@/lib/cx/admin/pure/settings";
 import { cn } from "@/lib/utils";
+import type { useRun } from "./ui";
+
+type Run = ReturnType<typeof useRun>["run"];
+type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/**
+ * run() that resolves to whether the action succeeded. Some actions return `data: null`, so run()'s
+ * own return value can't tell success apart; dialogs use this to close only when the save worked.
+ */
+export async function runOk<T>(run: Run, key: string, p: Promise<Result<T>> | (() => Promise<Result<T>>), done?: (d: T) => string | void): Promise<boolean> {
+  let ok = false;
+  await run(key, p, (d: T) => { ok = true; return done?.(d); });
+  return ok;
+}
 
 /** Konnect-style gear + caret menu for table rows and cards. */
 export function GearMenu({ label, children }: { label: string; children: ReactNode | ((close: () => void) => ReactNode) }) {
@@ -51,12 +65,13 @@ export function ColorDot({ color, className, label }: { color: string; className
   return <span role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true} className={cn("inline-block h-2.5 w-2.5 shrink-0 rounded-full", className)} style={{ background: color }} />;
 }
 
-/** Pick one of the palette colors or type a hex value. */
-export function ColorDialog({ open, title, value, onClose, onSave, busy }: { open: boolean; title: string; value: string; onClose: () => void; onSave: (c: string) => void; busy?: boolean }) {
+/** Pick one of the palette colors or type a hex value. Enter in the hex field saves. */
+export function ColorDialog({ open, title, value, onClose, onSave, busy, error }: { open: boolean; title: string; value: string; onClose: () => void; onSave: (c: string) => void; busy?: boolean; error?: ReactNode }) {
   const [c, setC] = useState(value);
+  const valid = isHexColor(c);
   return (
-    <Dialog open={open} onClose={onClose} size="sm" title={title}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!isHexColor(c)} onClick={() => onSave(c)}>Save</Button></>}>
+    <Dialog open={open} onClose={onClose} size="sm" title={title} error={error} onSubmit={() => valid && !busy && onSave(c)}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy} disabled={!valid || busy}>Save</Button></>}>
       <div className="space-y-3">
         <div className="grid grid-cols-6 gap-2">
           {PROFILE_COLORS.map((p) => (
@@ -64,7 +79,7 @@ export function ColorDialog({ open, title, value, onClose, onSave, busy }: { ope
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <input type="color" aria-label="Custom color" value={isHexColor(c) ? c : "#3e63dd"} onChange={(e) => setC(e.target.value)} className="h-8 w-10 cursor-pointer rounded border border-border bg-surface" />
+          <input type="color" aria-label="Custom color" value={valid ? c : "#3e63dd"} onChange={(e) => setC(e.target.value)} className="h-8 w-10 cursor-pointer rounded border border-border bg-surface" />
           <Input aria-label="Hex color" value={c} onChange={(e) => setC(e.target.value.trim())} className="w-32 font-mono" />
         </div>
       </div>

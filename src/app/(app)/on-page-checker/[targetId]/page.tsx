@@ -11,6 +11,7 @@ import { compact, dateTimeLabel, displayUrl, num } from "@/lib/format";
 import { findProject } from "@/lib/projects";
 import { IdeaList } from "@/components/content/onpage/idea-list";
 import { RunButton } from "@/components/content/onpage/run-button";
+import { OpenInOptimizerButton } from "@/components/optimizer/open-in-optimizer";
 import { DomainLink, KeywordLink, SerpFeatureIcons } from "@/components/seo/badges";
 import { DataSourceBadge } from "@/components/seo/source-badge";
 import { Page, PageHeader } from "@/components/shell/page";
@@ -79,6 +80,7 @@ export default async function PageIdeas({ params, searchParams }: PageProps<"/on
           <ButtonLink href={target.url} target="_blank" rel="noopener noreferrer">
             <ExternalLink className="h-4 w-4" /> Open page
           </ButtonLink>
+          <OpenInOptimizerButton keyword={target.keyword} url={target.url} db={db} />
         </>
       }
     />

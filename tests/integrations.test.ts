@@ -140,3 +140,136 @@ test("separate service accounts for Search Console and GA4", async () => {
   delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   delete process.env.GOOGLE_GA4_SERVICE_ACCOUNT_JSON;
 });
+
+// ------------------------------------------------------------------ credential registry (one key map)
+
+test("registry: ids are unique and every env credential names a variable from .env.example", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { CREDENTIALS, credentialEnvVars } = await import("../src/lib/integrations/registry");
+  const { PROVIDER_INFO } = await import("../src/lib/data-mode");
+  const documented = new Set([...readFileSync(new URL("../.env.example", import.meta.url), "utf8").matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]));
+  assert.equal(new Set(CREDENTIALS.map((c) => c.id)).size, CREDENTIALS.length);
+  for (const c of CREDENTIALS) {
+    for (const v of credentialEnvVars(c)) assert.ok(documented.has(v), `${c.id}: ${v} is missing from .env.example`);
+    if (c.storage === "env") assert.ok(c.configured, `${c.id}: env credentials need a configured() resolver`);
+    else assert.ok(c.savedAt && !c.configured, `${c.id}: saved credentials say where they are saved`);
+    assert.ok(c.powers.length > 0, `${c.id}: powers nothing`);
+  }
+  for (const [id, info] of Object.entries(PROVIDER_INFO)) for (const v of info.env) assert.ok(documented.has(v), `PROVIDER_INFO.${id}: ${v} is missing from .env.example`);
+});
+
+test("registry: every powers and savedAt link is a real route", async () => {
+  const { readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { CREDENTIALS } = await import("../src/lib/integrations/registry");
+  const app = fileURLToPath(new URL("../src/app", import.meta.url));
+  const routes = new Set<string>();
+  const walk = (dir: string, parts: string[]) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) walk(join(dir, e.name), /^\(.*\)$/.test(e.name) ? parts : [...parts, e.name]);
+      else if (e.name === "page.tsx") routes.add(`/${parts.join("/")}`);
+    }
+  };
+  walk(app, []);
+  assert.ok(routes.has("/optimizer") && routes.has("/cx/inbox"), "route scan found the app");
+  for (const c of CREDENTIALS) {
+    const links = [...c.powers.map((p) => p.href), ...(c.savedAt ? [c.savedAt.href] : [])];
+    for (const href of links) assert.ok(routes.has(href.split("?")[0]), `${c.id}: ${href} is not a route`);
+    for (const p of c.powers) assert.equal(p.href.startsWith("/cx"), p.workspace === "CX", `${c.id}: ${p.feature} is in the wrong workspace`);
+  }
+});
+
+test("registry: Pre-Publish Optimizer and CX AI are mapped to the right keys", async () => {
+  const { credential } = await import("../src/lib/integrations/registry");
+  const powers = (id: string) => credential(id)!.powers.map((p) => p.href);
+  for (const id of ["anthropic", "openai", "gemini", "dataforseo", "google", "pagespeed"]) assert.ok(powers(id).includes("/optimizer"), `${id} powers the optimizer`);
+  assert.ok(!powers("perplexity").includes("/optimizer"));
+  for (const id of ["anthropic", "openai", "gemini"]) for (const h of ["/cx/inbox", "/cx/ask", "/cx/quality", "/cx/crisis", "/cx/publishing"]) assert.ok(powers(id).includes(h), `${id} powers ${h}`);
+  assert.ok(powers("openai").includes("/cx/publishing/assets"), "image generation needs OpenAI");
+  assert.ok(!powers("pagespeed").includes("/on-page-checker"), "PageSpeed is not read by the On Page SEO Checker");
+  for (const id of ["meta", "whatsapp", "linkedin", "x", "youtube", "reddit", "bluesky"]) assert.ok(powers(id).some((h) => h.startsWith("/cx")), `${id} is a CX channel`);
+});
+
+test("credentialStatus reports flags and never secret values", async () => {
+  const { credentialStatus } = await import("../src/lib/integrations/registry");
+  const saved = { ...process.env };
+  process.env.DATAFORSEO_LOGIN = "login-value-xyz";
+  process.env.DATAFORSEO_PASSWORD = "password-value-xyz";
+  process.env.OPENAI_API_KEY = "sk-value-xyz";
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.ENABLE_PAGESPEED = "false";
+  try {
+    const st = credentialStatus();
+    const json = JSON.stringify(st);
+    assert.ok(!/value-xyz/.test(json), "no values in the status");
+    const by = (id: string) => st.items.find((i) => i.id === id)!;
+    assert.equal(by("dataforseo").configured, true);
+    assert.equal(by("anthropic").configured, false);
+    assert.equal(by("openai").configured, true);
+    assert.equal(by("pagespeed").configured, false);
+    assert.equal(by("pagespeed").unsetOk, true);
+    assert.equal(by("db-mailbox").configured, null);
+    assert.equal(st.llm, true);
+    assert.deepEqual(by("dataforseo").env, [[{ name: "DATAFORSEO_LOGIN", set: true }, { name: "DATAFORSEO_PASSWORD", set: true }]]);
+  } finally {
+    for (const k of ["DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ENABLE_PAGESPEED"]) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test("providerStatus: PageSpeed follows pagespeedEnabled() and llm follows llmConfigured()", async () => {
+  const { providerStatus } = await import("../src/lib/data-mode");
+  const saved = { ...process.env };
+  try {
+    delete process.env.PAGESPEED_API_KEY;
+    delete process.env.ENABLE_PAGESPEED;
+    for (const k of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"]) delete process.env[k];
+    process.env.PERPLEXITY_API_KEY = "pplx-test";
+    const st = providerStatus();
+    assert.equal(st.pagespeed, true, "PageSpeed works without a key");
+    assert.equal(st.ai, true, "any AI-visibility engine counts");
+    assert.equal(st.llm, false, "Perplexity alone does not power writing features");
+  } finally {
+    for (const k of ["PAGESPEED_API_KEY", "ENABLE_PAGESPEED", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"]) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test("registry: token-per-brand channels are not 'Configured' without keys, and the token pair counts", async () => {
+  const { credentialStatus } = await import("../src/lib/integrations/registry");
+  const keys = ["META_APP_SECRET", "META_VERIFY_TOKEN", "META_PAGE_ACCESS_TOKEN", "LINKEDIN_ACCESS_TOKEN", "THREADS_USER_ID", "THREADS_ACCESS_TOKEN", "GBP_LOCATION", "GBP_ACCESS_TOKEN"];
+  const saved = { ...process.env };
+  try {
+    for (const k of keys) delete process.env[k];
+    let by = (id: string) => credentialStatus().items.find((i) => i.id === id)!;
+    for (const id of ["meta", "linkedin", "threads", "gbp"]) {
+      assert.equal(by(id).configured, false, `${id} is not configured without keys`);
+      assert.equal(by(id).unsetOk, true, `${id}: a brand-saved token can serve, so no warning`);
+    }
+    assert.ok(!by("meta").env.flat().some((v) => v.name === "META_APP_ID"), "META_APP_ID is read by no API call");
+    assert.ok(!by("linkedin").env.flat().some((v) => v.name.startsWith("LINKEDIN_CLIENT")), "LinkedIn reads only a token");
+    process.env.META_PAGE_ACCESS_TOKEN = "page-token";
+    process.env.THREADS_USER_ID = "1";
+    process.env.THREADS_ACCESS_TOKEN = "t";
+    by = (id: string) => credentialStatus().items.find((i) => i.id === id)!;
+    assert.equal(by("meta").configured, true);
+    assert.match(by("meta").hint ?? "", /META_APP_SECRET/, "webhook pair still missing");
+    assert.equal(by("threads").configured, true, "the Threads token pair is enough");
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test(".env.example has no inline comments (docker --env-file keeps them in the value)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const lines = readFileSync(new URL("../.env.example", import.meta.url), "utf8").split("\n");
+  for (const l of lines) if (/^[A-Z][A-Z0-9_]*=/.test(l)) assert.ok(!/\s#/.test(l), `inline comment: ${l}`);
+});

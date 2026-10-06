@@ -8,6 +8,7 @@ import { restoreRevisionAction, setChecklistAction } from "@/app/(app)/optimizer
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Checkbox } from "@/components/ui/input";
 import { dateTimeLabel } from "@/lib/format";
 import { bySeverity } from "@/lib/optimizer/analyze";
@@ -152,6 +153,7 @@ export function Blockers({ report, draftId }: { report: Report; draftId: string 
 export function HistoryTable({ draftId, revisions }: { draftId: string; revisions: Revision[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const rows = [...revisions].reverse();
   return (
     <Card>
@@ -187,8 +189,9 @@ export function HistoryTable({ draftId, revisions }: { draftId: string; revision
                         size="sm"
                         variant="ghost"
                         loading={busy === r.id}
+                        disabled={!!busy}
                         onClick={async () => {
-                          if (!confirm("Restore this version? The current version stays in the history.")) return;
+                          if (!(await confirm({ title: "Restore this version?", description: "The current version stays in the history.", confirmLabel: "Restore", tone: "primary" }))) return;
                           setBusy(r.id);
                           const res = await restoreRevisionAction(draftId, r.id);
                           setBusy(null);
@@ -206,6 +209,7 @@ export function HistoryTable({ draftId, revisions }: { draftId: string; revision
             })}
           </tbody>
         </table>
+        {confirmDialog}
       </CardBody>
     </Card>
   );

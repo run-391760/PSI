@@ -9,14 +9,20 @@ import { compact, dateLabel, timeAgo } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type Column, DataTable } from "@/components/ui/data-table";
-import { Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm";
 
 export type AnalysisListRow = { id: string; name: string; origin: "upload" | "sample"; size: number; lines: number; parsed: number; botHits: number; from: string | null; to: string | null; created: string };
 
 export function AnalysisList({ rows }: { rows: AnalysisListRow[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [confirm, setConfirm] = useState<AnalysisListRow[] | null>(null);
+  const [confirm, setConfirm] = useState<{ rows: AnalysisListRow[]; clear: () => void } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const close = () => {
+    setConfirm(null);
+    setError(null);
+  };
+  const n = confirm?.rows.length ?? 0;
   const columns: Column<AnalysisListRow>[] = [
     {
       key: "name",
@@ -46,46 +52,41 @@ export function AnalysisList({ rows }: { rows: AnalysisListRow[] }) {
         defaultSort={{ key: "created", dir: "desc" }}
         pageSize={10}
         selectionActions={(sel, clear) => (
-          <Button size="sm" variant="danger" onClick={() => (setConfirm(sel), clear())}>
+          <Button size="sm" variant="danger" onClick={() => setConfirm({ rows: sel, clear })}>
             <Trash2 className="h-3.5 w-3.5" /> Delete {sel.length}
           </Button>
         )}
       />
-      <Dialog
+      <ConfirmDialog
         open={!!confirm}
-        onClose={() => setConfirm(null)}
-        title={`Delete ${confirm?.length ?? 0} analysis${(confirm?.length ?? 0) === 1 ? "" : "es"}?`}
-        description="Only the stored aggregates are deleted; your original log files are never kept."
-        size="sm"
-        footer={
+        onCancel={close}
+        onConfirm={() =>
+          start(async () => {
+            if (!confirm) return;
+            setError(null);
+            const res = await deleteAnalysesAction(confirm.rows.map((c) => c.id));
+            if (!res.ok) return setError(res.error);
+            confirm.clear();
+            close();
+            router.refresh();
+          })
+        }
+        title={`Delete ${n} analys${n === 1 ? "is" : "es"}?`}
+        description={
           <>
-            <Button variant="ghost" onClick={() => setConfirm(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              loading={pending}
-              onClick={() =>
-                start(async () => {
-                  if (confirm) await deleteAnalysesAction(confirm.map((c) => c.id));
-                  setConfirm(null);
-                  router.refresh();
-                })
-              }
-            >
-              Delete
-            </Button>
+            <ul className="mb-2 space-y-1">
+              {confirm?.rows.map((c) => (
+                <li key={c.id} className="truncate font-medium text-text">
+                  {c.name}
+                </li>
+              ))}
+            </ul>
+            Only the stored aggregates are deleted; your original log files are never kept.
           </>
         }
-      >
-        <ul className="space-y-1 text-[13px] text-text-2">
-          {confirm?.map((c) => (
-            <li key={c.id} className="truncate">
-              {c.name}
-            </li>
-          ))}
-        </ul>
-      </Dialog>
+        busy={pending}
+        error={error}
+      />
     </>
   );
 }

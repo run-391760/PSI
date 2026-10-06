@@ -2,7 +2,7 @@
 
 import { Plus, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useMemo, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useState, useTransition } from "react";
 import { saveLbSetupAction } from "@/app/(app)/link-building/actions";
 import { looseRootDomain } from "@/lib/backlinks/normalize";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,20 @@ export type LbSetupProps = {
   keywordSuggestions: string[];
 };
 
-export function LbSetupForm({ projectId, initialKeywords, initialCompetitors, competitorOptions, keywordSuggestions, submitLabel = "Find prospects", onDone }: LbSetupProps & { submitLabel?: string; onDone?: () => void }) {
+type FormState = { pending: boolean; error: string | null };
+
+/** With `onStateChange` the form leaves its submit button and error out, so a Dialog footer can render them (`form={formId}`). */
+export function LbSetupForm({
+  projectId,
+  initialKeywords,
+  initialCompetitors,
+  competitorOptions,
+  keywordSuggestions,
+  submitLabel = "Find prospects",
+  onDone,
+  formId,
+  onStateChange,
+}: LbSetupProps & { submitLabel?: string; onDone?: () => void; formId?: string; onStateChange?: (s: FormState) => void }) {
   const router = useRouter();
   const [keywords, setKeywords] = useState(initialKeywords.join("\n"));
   const [selected, setSelected] = useState<string[]>(initialCompetitors);
@@ -32,6 +45,7 @@ export function LbSetupForm({ projectId, initialKeywords, initialCompetitors, co
   const [custom, setCustom] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error }), [pending, error, onStateChange]);
   const kwList = useMemo(
     () =>
       keywords
@@ -52,6 +66,7 @@ export function LbSetupForm({ projectId, initialKeywords, initialCompetitors, co
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (pending) return;
     if (!kwList.length) return setError("Add at least one target keyword.");
     if (kwList.length > MAX_KW) return setError(`Add at most ${MAX_KW} keywords (you have ${kwList.length}).`);
     start(async () => {
@@ -63,8 +78,8 @@ export function LbSetupForm({ projectId, initialKeywords, initialCompetitors, co
     });
   };
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-4">
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <div className="grid gap-5 lg:grid-cols-2">
         <div>
           <Field label={`Target keywords (${kwList.length}/${MAX_KW})`} htmlFor="lb-keywords" hint="One per line. Sites ranking for these keywords become prospects." error={kwList.length > MAX_KW ? `Remove ${kwList.length - MAX_KW} keyword(s).` : undefined}>
@@ -110,24 +125,50 @@ export function LbSetupForm({ projectId, initialKeywords, initialCompetitors, co
           </div>
         </div>
       </div>
-      <div className="flex justify-end">
-        <Button type="submit" variant="primary" loading={pending}>
-          {submitLabel}
-        </Button>
-      </div>
+      {!onStateChange && (
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary" loading={pending}>
+            {submitLabel}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
 
 export function LbSettingsButton(props: LbSetupProps) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button onClick={() => setOpen(true)}>
         <Settings2 className="h-4 w-4" /> Settings
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Link Building settings" description="Target keywords and competitors used to find prospects." size="xl">
-        <LbSetupForm {...props} submitLabel="Save and refresh prospects" onDone={() => setOpen(false)} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Link Building settings"
+        description="Target keywords and competitors used to find prospects."
+        size="xl"
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              Save and refresh prospects
+            </Button>
+          </>
+        }
+      >
+        <LbSetupForm {...props} formId={formId} onStateChange={setState} onDone={close} />
       </Dialog>
     </>
   );

@@ -12,6 +12,8 @@ export function LinkSegmented({ items, className }: { items: { href: string; lab
           <Link
             key={i}
             href={it.href}
+            // Views of the same heavy report: rendering every one ahead of time costs more than it saves.
+            prefetch={false}
             role="tab"
             aria-selected={it.active}
             className={cn(

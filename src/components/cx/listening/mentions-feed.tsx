@@ -100,13 +100,13 @@ export function MentionsFeed({ brandId, mentions }: { brandId: string; mentions:
           {selected.size ? `${selected.size} selected` : "Select"}
         </label>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Button size="sm" disabled={!selected.size} loading={busy === "read"} onClick={() => bulk("read")}>
+          <Button size="sm" disabled={busy === "read" || !selected.size} loading={busy === "read"} onClick={() => bulk("read")}>
             <MailOpen className="h-3.5 w-3.5" /> Mark read
           </Button>
-          <Button size="sm" disabled={!selected.size} loading={busy === "new"} onClick={() => bulk("new")}>
+          <Button size="sm" disabled={busy === "new" || !selected.size} loading={busy === "new"} onClick={() => bulk("new")}>
             Mark unread
           </Button>
-          <Button size="sm" disabled={!selected.size} loading={busy === "ignored"} onClick={() => bulk("ignored")}>
+          <Button size="sm" disabled={busy === "ignored" || !selected.size} loading={busy === "ignored"} onClick={() => bulk("ignored")}>
             <EyeOff className="h-3.5 w-3.5" /> Ignore
           </Button>
           <form
@@ -117,7 +117,7 @@ export function MentionsFeed({ brandId, mentions }: { brandId: string; mentions:
             }}
           >
             <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag" maxLength={40} className="h-7 w-28 text-[12.5px]" aria-label="Tag name" />
-            <Button size="sm" type="submit" disabled={!selected.size || !tag.trim()} loading={busy === "tag"}>
+            <Button size="sm" type="submit" disabled={busy === "tag" || !selected.size || !tag.trim()} loading={busy === "tag"}>
               <Tag className="h-3.5 w-3.5" /> Tag
             </Button>
           </form>

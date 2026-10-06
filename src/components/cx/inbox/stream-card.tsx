@@ -2,7 +2,7 @@
 
 import {
   ArrowLeft, Ban, BookOpen, ChevronDown, CircleCheck, Copy, Download, ExternalLink, FileText, Globe, Inbox, LayoutGrid, Link2, Loader2, Mail, MessageCircle,
-  MessagesSquare, MoreHorizontal, Pencil, PlayCircle, Send, Smile, SquareCheckBig, SquarePlus, Trash2, UserPlus, X, Zap,
+  MessagesSquare, MoreHorizontal, Pencil, PlayCircle, Send, Smile, SquareCheckBig, SquarePlus, Trash2, UserPlus, Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -370,8 +370,8 @@ function QuickReply({ c, onDone }: { c: CardItem; onDone: () => void }) {
         </select>
         <Link href={ticketHref(brand, c.ticketId!)} className={cn("text-[12px] hover:underline", ACCENT_TEXT)}>Full composer (attachments, canned, private reply) →</Link>
         <span className="ml-auto flex gap-2">
-          <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => send(true)}>{busy === "note" ? "Saving…" : "Add note"}</Button>
-          <Button size="sm" variant="primary" disabled={!!busy} onClick={() => send(false)}><Send className="h-3.5 w-3.5" />{busy === "reply" ? "Sending…" : c.isPublic ? "Comment" : "Reply"}</Button>
+          <Button size="sm" variant="ghost" disabled={!!busy} loading={busy === "note"} onClick={() => send(true)}>Add note</Button>
+          <Button size="sm" variant="primary" disabled={!!busy} loading={busy === "reply"} onClick={() => send(false)}>{busy !== "reply" && <Send className="h-3.5 w-3.5" />}{c.isPublic ? "Comment" : "Reply"}</Button>
         </span>
       </div>
     </div>
@@ -388,10 +388,20 @@ function NoteDialog({ c, onClose }: { c: CardItem; onClose: () => void }) {
   const router = useRouter();
   const [note, setNote] = useState(c.note ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    const r = await bookmarkNoteAction(brand, c.bookmarkId!, note);
+    setSaving(false);
+    if (!r.ok) return setError(r.error);
+    onClose();
+    router.refresh();
+  };
   return (
-    <Dialog open onClose={onClose} title="Bookmark note" size="sm" footer={<><Button onClick={onClose}><X className="h-3.5 w-3.5" />Cancel</Button><Button variant="primary" onClick={async () => { const r = await bookmarkNoteAction(brand, c.bookmarkId!, note); if (!r.ok) return setError(r.error); onClose(); router.refresh(); }}>Save</Button></>}>
-      <Textarea rows={3} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} aria-label="Note" placeholder="Why you saved this (only you see it)" />
-      {error && <p className="mt-1 text-[12px] text-critical-ink">{error}</p>}
+    <Dialog open onClose={onClose} title="Bookmark note" size="sm" error={error} onSubmit={save} footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={saving}>Save</Button></>}>
+      <Textarea rows={3} value={note} maxLength={500} autoFocus onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); } }} aria-label="Note" placeholder="Why you saved this (only you see it)" />
     </Dialog>
   );
 }

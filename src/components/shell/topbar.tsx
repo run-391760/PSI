@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Check, Focus, LogOut, Menu as MenuIcon, Moon, RotateCcw, Search, Settings, SlidersHorizontal, Sun, User, X } from "lucide-react";
+import { Bell, Check, Focus, LogOut, Menu as MenuIcon, Moon, RotateCcw, Search, Settings, SlidersHorizontal, Sun, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -12,12 +12,15 @@ import { restorePanels } from "@/lib/cx/ui/prefs-logic";
 import { OptimizerTabs } from "@/components/optimizer/module-tabs";
 import { CX_SEARCH } from "./cx-nav";
 import { CustomizeMenuDialog } from "./customize-menu";
-import { ALL_TOOLS } from "./nav";
+import { ALL_TOOLS, POPULAR_TOOLS, SEARCH_ONLY } from "./nav";
 import { useUiPrefs } from "./ui-prefs";
 
 type Suggestion = { label: string; sub: string; href: string };
 
 const isCx = (pathname: string) => pathname === "/cx" || pathname.startsWith("/cx/");
+
+/** Every SEO page the search can open, including tools hidden from the sidebar. */
+const SEO_PAGES = [...ALL_TOOLS, ...SEARCH_ONLY];
 
 /** "surface" = the SEO workspace's light topbar; "brand" = the CX workspace's dark brand-blue header. */
 export type BarVariant = "surface" | "brand";
@@ -59,10 +62,11 @@ export function GlobalSearch({ variant = "surface", className }: { variant?: Bar
         .map((t) => ({ label: t.group && t.group !== t.label ? `${t.label} · ${t.group}` : t.label, sub: t.description, href: t.href }));
       return [...pages.slice(0, 7), { label: `Search tickets for "${value}"`, sub: "Subject, message text, contact or ticket number", href: `/cx/inbox?view=all&q=${encodeURIComponent(value)}` }];
     }
-    if (!value) return ALL_TOOLS.slice(2, 8).map((t) => ({ label: t.label, sub: t.description, href: t.href }));
+    if (!value) return POPULAR_TOOLS.map((t) => ({ label: t.label, sub: t.description, href: t.href }));
     const c = classifyQuery(value);
     const enc = encodeURIComponent(c.value);
     const out: Suggestion[] = [];
+    const extra: Suggestion[] = [];
     if (c.kind === "domain" || c.kind === "url") {
       const domain = c.kind === "url" ? new URL(c.value).hostname.replace(/^www\./, "") : c.value;
       const d = encodeURIComponent(domain);
@@ -72,17 +76,22 @@ export function GlobalSearch({ variant = "surface", className }: { variant?: Bar
         { label: `Backlink Analytics · ${domain}`, sub: "Referring domains, anchors, velocity", href: `/backlink-analytics?q=${d}` },
         { label: `Traffic Analytics · ${domain}`, sub: "Visits, channels, audience", href: `/traffic-analytics?q=${d}` },
       );
-      if (c.kind === "url") out.push({ label: `SEO Content Template · ${c.value}`, sub: "Brief from the page's keyword", href: `/seo-content-template?q=${enc}` });
     } else {
       out.push(
         { label: `Keyword Overview · ${c.value}`, sub: "Volume, difficulty, intent, SERP", href: `/keyword-overview?q=${enc}` },
         { label: `Keyword Magic Tool · ${c.value}`, sub: "Thousands of related keyword ideas", href: `/keyword-magic-tool?q=${enc}` },
         { label: `Topic Research · ${c.value}`, sub: "Content ideas and questions", href: `/topic-research?q=${enc}` },
       );
+      extra.push({ label: `Content brief · ${c.value}`, sub: "Pre-Publish Optimizer brief from the top-ranking pages", href: `/optimizer/content-planning?q=${enc}` });
     }
+    // Pages: label matches first (someone typing a tool's name wants the tool), then description/group matches.
     const needle = value.toLowerCase();
-    for (const t of ALL_TOOLS) if (t.label.toLowerCase().includes(needle)) out.push({ label: t.label, sub: t.description, href: t.href });
-    return out.slice(0, 8);
+    const byLabel = SEO_PAGES.filter((t) => t.label.toLowerCase().includes(needle));
+    // Skipped when the Optimizer itself matched by name, so /optimizer is not listed twice.
+    if (c.kind !== "domain" && !byLabel.some((t) => t.href === "/optimizer")) extra.push({ label: "Optimize a draft", sub: "Score and fix content before you publish it", href: "/optimizer" });
+    const byText = SEO_PAGES.filter((t) => !byLabel.includes(t) && `${t.description} ${t.group}`.toLowerCase().includes(needle));
+    const page = (t: (typeof SEO_PAGES)[number]) => ({ label: t.label, sub: t.description, href: t.href });
+    return [...out, ...byLabel.map(page), ...extra, ...byText.map(page)].slice(0, 8);
   }, [q, cx]);
 
   const go = (s?: Suggestion) => {
@@ -246,12 +255,10 @@ export function DisplayMenu({ variant }: { variant?: BarVariant }) {
               <span className="text-text-2">Theme</span>
               <Segmented size="sm" value={dark ? "dark" : "light"} onChange={(v) => setDark(v === "dark")} options={[{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} />
             </div>
-            {(cx || hiddenCount > 0) && <div className="my-1 border-t border-border" />}
-            {cx && (
-              <MenuItem icon={<SlidersHorizontal className="h-4 w-4 text-text-3" />} onClick={() => (close(), setCustomizing(true))}>
-                Customize menu…
-              </MenuItem>
-            )}
+            <div className="my-1 border-t border-border" />
+            <MenuItem icon={<SlidersHorizontal className="h-4 w-4 text-text-3" />} onClick={() => (close(), setCustomizing(true))}>
+              Customize menu…
+            </MenuItem>
             {hiddenCount > 0 && (
               <MenuItem icon={<RotateCcw className="h-4 w-4 text-text-3" />} onClick={() => (close(), update({ panels: restorePanels(prefs.panels) }).then(() => router.refresh()))}>
                 Show all hidden panels ({hiddenCount})
@@ -260,7 +267,7 @@ export function DisplayMenu({ variant }: { variant?: BarVariant }) {
           </div>
         )}
       </Menu>
-      {cx && <CustomizeMenuDialog open={customizing} onClose={() => setCustomizing(false)} />}
+      <CustomizeMenuDialog open={customizing} onClose={() => setCustomizing(false)} workspace={cx ? "cx" : "seo"} />
     </>
   );
 }
@@ -275,7 +282,7 @@ export function AlertsBell({ unread, variant }: { unread: number; variant?: BarV
   );
 }
 
-/** Avatar menu: account, settings, sign out. `extra` adds workspace-specific entries. */
+/** Avatar menu: account settings (profile included), sign out. `extra` adds workspace-specific entries. */
 export function AccountMenu({ user, logoutAction, variant, extra }: { user: { name: string; email: string }; logoutAction: () => Promise<void>; variant?: BarVariant; extra?: ReactNode }) {
   return (
     <Menu
@@ -294,9 +301,6 @@ export function AccountMenu({ user, logoutAction, variant, extra }: { user: { na
       <MenuItem href="/settings" icon={<Settings className="h-4 w-4 text-text-3" />}>
         Account settings
       </MenuItem>
-      <MenuItem href="/settings?tab=profile" icon={<User className="h-4 w-4 text-text-3" />}>
-        Profile
-      </MenuItem>
       <form action={logoutAction}>
         <button type="submit" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-text hover:bg-surface-3">
           <LogOut className="h-4 w-4 text-text-3" /> Sign out
@@ -306,17 +310,20 @@ export function AccountMenu({ user, logoutAction, variant, extra }: { user: { na
   );
 }
 
-/** SEO workspace topbar with the Pre-Publish Optimizer module tabs as its second row (the CX workspace uses <CxHeader>). */
+/**
+ * SEO workspace topbar, light, at the CX header's proportions (42px bar, 14px icons), with the
+ * Pre-Publish Optimizer module tabs as its second row (the CX workspace uses <CxHeader>).
+ */
 export function Topbar({ user, unread, onMenu, logoutAction }: { user: { name: string; email: string }; unread: number; onMenu: () => void; logoutAction: () => Promise<void> }) {
   return (
     <header className="no-print sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
-      <div className="flex h-14 items-center gap-3 px-4">
-        <button onClick={onMenu} className="rounded-md p-2 text-text-2 hover:bg-surface-3 lg:hidden" aria-label="Open navigation">
+      <div className="flex h-12 items-center gap-1.5 px-2 sm:gap-2 sm:px-3">
+        <button type="button" onClick={onMenu} className={cn(iconBtn(), "lg:hidden")} aria-label="Open navigation" aria-haspopup="dialog">
           <MenuIcon className="h-5 w-5" />
         </button>
         <WorkspaceSwitch />
-        <GlobalSearch />
-        <div className="ml-auto flex items-center gap-1">
+        <GlobalSearch className="min-w-0" />
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <FocusToggle />
           <DisplayMenu />
           <ThemeToggle className="hidden sm:block" />

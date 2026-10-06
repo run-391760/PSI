@@ -8,6 +8,7 @@ import { AppError, database } from "@/lib/domain";
 import { aiBrief, aiFix, aiReview, type AiProposal } from "@/lib/optimizer/ai";
 import { STATUS_LABEL, summarize } from "@/lib/optimizer/analyze";
 import { briefToMarkdown, researchBrief } from "@/lib/optimizer/brief";
+import { briefCompetitors } from "@/lib/optimizer/brief-export";
 import { applyFix } from "@/lib/optimizer/fixes";
 import { checkLinks, checkLive, importPage, loadSitemap, researchInputOf, runResearch } from "@/lib/optimizer/research";
 import {
@@ -354,7 +355,9 @@ export async function generateBriefAction(raw: z.input<typeof briefInput>): Prom
     const input = briefInput.parse(raw);
     const db = database(input.db ?? "US").code;
     const research = await runResearch(user.id, { keyword: input.keyword, db, competitors: input.competitors?.filter(Boolean) });
-    const brief = input.useAi ? await aiBrief(input.keyword, db, research, input.audience) : researchBrief(input.keyword, db, research);
+    const made = input.useAi ? await aiBrief(input.keyword, db, research, input.audience) : researchBrief(input.keyword, db, research);
+    // Keep what the brief was built from (shown in the brief and its Markdown export).
+    const brief: Brief = { ...made, competitors: briefCompetitors(research), serpFeatures: research.serpSource === "serp" ? research.features : [] };
     const briefId = await saveBrief(user.id, brief);
     done();
     return { ok: true, data: { id: briefId, brief } };

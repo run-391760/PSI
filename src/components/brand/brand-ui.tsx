@@ -2,7 +2,7 @@
 
 import { Archive, CheckCheck, Download, ExternalLink, Inbox, RefreshCw, Settings2, Tags } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useMemo, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useState, useTransition } from "react";
 import { fetchMentionsAction, saveBrandSettingsAction, setMentionStatusAction, setMentionTagsAction } from "@/app/(app)/brand-monitoring/actions";
 import { downloadCsv } from "@/lib/csv";
 import { compact, dateLabel, timeAgo } from "@/lib/format";
@@ -24,12 +24,31 @@ const split = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "Save & fetch mentions" }: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean; demoAvailable?: boolean }; onDone?: () => void; submitLabel?: string }) {
+type FormState = { pending: boolean; error: string | null };
+
+/** With `onStateChange` the form leaves its buttons and error out, so a Dialog footer can render them (`form={formId}`). */
+export function BrandSettingsForm({
+  projectId,
+  initial,
+  onDone,
+  submitLabel = "Save & fetch mentions",
+  formId,
+  onStateChange,
+}: {
+  projectId: string;
+  initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean; demoAvailable?: boolean };
+  onDone?: () => void;
+  submitLabel?: string;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error }), [pending, error, onStateChange]);
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (pending) return;
     const f = new FormData(e.currentTarget);
     const terms = split(String(f.get("terms") ?? ""));
     const competitorTerms = split(String(f.get("competitors") ?? ""));
@@ -44,8 +63,8 @@ export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "S
     });
   };
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-4">
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <Field label="Brand terms" htmlFor="bm-terms" hint="Exact phrases to track, one per line (max 5). Saved as the project's brand terms.">
         <Textarea id="bm-terms" name="terms" defaultValue={initial.terms.join("\n")} rows={3} className="min-h-0" required />
       </Field>
@@ -70,29 +89,54 @@ export function BrandSettingsForm({ projectId, initial, onDone, submitLabel = "S
           </label>
         )}
       </div>
-      <div className="flex justify-end gap-2 border-t border-border pt-3">
-        {onDone && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      {!onStateChange && (
+        <div className="flex justify-end gap-2 border-t border-border pt-3">
+          {onDone && (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" variant="primary" loading={pending}>
+            {submitLabel}
           </Button>
-        )}
-        <Button type="submit" variant="primary" loading={pending}>
-          {submitLabel}
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }
 
 export function BrandSettingsButton(props: { projectId: string; initial: { terms: string[]; competitorTerms: string[]; demoSocial: boolean; daily: boolean; demoAvailable?: boolean } }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button onClick={() => setOpen(true)}>
         <Settings2 className="h-4 w-4" /> Settings
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Brand monitoring settings" description="Tracked terms, competitors and sources." size="lg">
-        <BrandSettingsForm {...props} onDone={() => setOpen(false)} submitLabel="Save settings" />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Brand monitoring settings"
+        description="Tracked terms, competitors and sources."
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              Save settings
+            </Button>
+          </>
+        }
+      >
+        <BrandSettingsForm {...props} onDone={close} formId={formId} onStateChange={setState} />
       </Dialog>
     </>
   );
@@ -148,6 +192,11 @@ export function MentionsTable({ projectId, mentions, terms, initialSentiment }: 
   const [tagText, setTagText] = useState("");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const closeTags = () => {
+    setTagsFor(null);
+    setTagError(null);
+  };
   const channels = useMemo(() => [...new Set(mentions.map((m) => m.channel))], [mentions]);
   const hasDemo = mentions.some((m) => m.source === "demo");
   const rows = useMemo(() => {
@@ -337,30 +386,36 @@ export function MentionsTable({ projectId, mentions, terms, initialSentiment }: 
       />
       <Dialog
         open={!!tagsFor}
-        onClose={() => setTagsFor(null)}
+        onClose={closeTags}
         title="Edit tags"
         description={tagsFor?.title}
         size="sm"
+        dismissible={!pending}
+        error={tagError}
+        onSubmit={() =>
+          !pending &&
+          start(async () => {
+            if (!tagsFor) return;
+            setTagError(null);
+            const res = await setMentionTagsAction(projectId, tagsFor.id, split(tagText));
+            if (!res.ok) return setTagError(res.error);
+            closeTags();
+            router.refresh();
+          })
+        }
         footer={
-          <Button
-            variant="primary"
-            loading={pending}
-            onClick={() =>
-              start(async () => {
-                if (!tagsFor) return;
-                const res = await setMentionTagsAction(projectId, tagsFor.id, split(tagText));
-                if (!res.ok) return setError(res.error);
-                setTagsFor(null);
-                router.refresh();
-              })
-            }
-          >
-            Save tags
-          </Button>
+          <>
+            <Button type="button" variant="ghost" onClick={closeTags} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={pending}>
+              Save tags
+            </Button>
+          </>
         }
       >
         <Field label="Tags" htmlFor="bm-tags" hint="Comma separated, up to 8.">
-          <Input id="bm-tags" value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="PR, Crisis, Campaign" />
+          <Input id="bm-tags" value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="PR, Crisis, Campaign" autoFocus />
         </Field>
       </Dialog>
     </>

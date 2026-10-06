@@ -2,7 +2,7 @@
 
 import { Check, Pencil, RefreshCw, Send, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { distributeAction, fetchReviewsAction, refreshGoogleListingAction } from "@/app/(app)/local/actions";
 import { KIND_LABELS } from "@/lib/local/directories";
 import { FIELD_LABELS, STATUS_META, type FieldKey, type FoundListing, type ListingRow, type ListingStatus } from "@/lib/local/listing-meta";
@@ -19,13 +19,37 @@ import { ProfileForm } from "./profile-form";
 
 export function EditProfileButton({ projectId, initial, variant = "secondary" }: { projectId: string; initial: ProfileInput; variant?: "secondary" | "primary" }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button variant={variant} onClick={() => setOpen(true)}>
         <Pencil className="h-3.5 w-3.5" /> Edit profile
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Business profile" description="The source of truth pushed to every directory." size="xl">
-        <ProfileForm projectId={projectId} initial={initial} onDone={() => setOpen(false)} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Business profile"
+        description="The source of truth pushed to every directory."
+        size="xl"
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              Save profile
+            </Button>
+          </>
+        }
+      >
+        <ProfileForm projectId={projectId} initial={initial} onDone={close} formId={formId} onStateChange={setState} />
       </Dialog>
     </>
   );
@@ -66,7 +90,21 @@ export function ListingsTable({ projectId, rows, expected, busy }: { projectId: 
   const [detail, setDetail] = useState<ListingRow | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailPending, startDetail] = useTransition();
   const [, start] = useTransition();
+  const closeDetail = () => {
+    setDetail(null);
+    setDetailError(null);
+  };
+  const syncDetail = (id: string) =>
+    startDetail(async () => {
+      setDetailError(null);
+      const res = await distributeAction(projectId, [id]);
+      if (!res.ok) return setDetailError(res.error);
+      closeDetail();
+      router.refresh();
+    });
   const sync = (ids: string[]) =>
     start(async () => {
       setError(null);
@@ -196,13 +234,25 @@ export function ListingsTable({ projectId, rows, expected, busy }: { projectId: 
           </Button>
         )}
       />
-      <Dialog open={!!detail} onClose={() => setDetail(null)} title={detail?.name ?? ""} description={detail ? `${KIND_LABELS[detail.kind]} · ${detail.domain} · Demo data` : undefined} size="lg"
+      <Dialog
+        open={!!detail}
+        onClose={closeDetail}
+        title={detail?.name ?? ""}
+        description={detail ? `${KIND_LABELS[detail.kind]} · ${detail.domain} · Demo data` : undefined}
+        size="lg"
+        dismissible={!detailPending}
+        error={detailError}
         footer={
-          detail && detail.status !== "synced" && detail.status !== "in_review" ? (
-            <Button variant="primary" disabled={busy} onClick={() => (sync([detail.id]), setDetail(null))}>
-              <Send className="h-3.5 w-3.5" /> {detail.status === "not_listed" ? "Create listing" : "Push profile to this directory"}
+          <>
+            <Button variant="ghost" onClick={closeDetail} disabled={detailPending}>
+              Close
             </Button>
-          ) : undefined
+            {detail && detail.status !== "synced" && detail.status !== "in_review" && (
+              <Button variant="primary" disabled={detailPending || busy || !!pendingId} loading={detailPending} onClick={() => syncDetail(detail.id)}>
+                {!detailPending && <Send className="h-3.5 w-3.5" />} {detail.status === "not_listed" ? "Create listing" : "Push profile to this directory"}
+              </Button>
+            )}
+          </>
         }
       >
         {detail && <ListingDetail row={detail} expected={expected} />}

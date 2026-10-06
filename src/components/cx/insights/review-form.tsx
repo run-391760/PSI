@@ -6,6 +6,7 @@ import { useMemo, useState, useTransition } from "react";
 import { acceptReviewAction, aiPrescoreAction, deleteReviewAction, disputeAction, resolveDisputeAction, saveReviewAction } from "@/app/(app)/cx/quality/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
@@ -73,6 +74,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
   const [response, setResponse] = useState("");
   const [msg, setMsg] = useState<{ tone: "good" | "critical"; text: string } | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const live = useMemo(() => scoreReview(sections, toFractions(sections, answers, review.answers ?? {})), [sections, answers, review.answers]);
   const total = sections.reduce((s, x) => s + x.criteria.filter(scored).length, 0);
   const answered = sections.flatMap((x) => x.criteria).filter((c) => scored(c) && c.id in answers).length;
@@ -110,7 +112,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
               <Sparkles className="h-4 w-4" /> AI pre-score
             </Button>
           ) : (
-            <span className="max-w-56 text-[12px] text-text-3">AI pre-scoring needs an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY). Manual scoring works now.</span>
+            <span className="max-w-56 text-[12px] text-text-3">AI pre-scoring needs an AI key (Anthropic, OpenAI or Gemini). Manual scoring works now.</span>
           )}
         </CardBody>
       </Card>
@@ -218,7 +220,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
           <Field label="Coaching notes for the agent" htmlFor="rv-coach"><Textarea id="rv-coach" rows={3} value={coaching} disabled={locked} onChange={(e) => setCoaching(e.target.value)} placeholder="What to keep doing, what to change, resources…" /></Field>
         </CardBody>
         <CardFooter className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="ghost" className="mr-auto" disabled={pending} onClick={() => confirm("Delete this review?") && run(() => deleteReviewAction(brand, review.id), "Deleted", () => router.push(`/cx/quality?brand=${brand}&tab=queue`))}>
+          <Button variant="ghost" className="mr-auto" disabled={pending} onClick={async () => (await confirm({ title: "Delete this review?" })) && run(() => deleteReviewAction(brand, review.id), "Deleted", () => router.push(`/cx/quality?brand=${brand}&tab=queue`))}>
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
           {!locked && (
@@ -247,6 +249,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
           </CardBody>
         </Card>
       )}
+      {confirmDialog}
     </div>
   );
 }

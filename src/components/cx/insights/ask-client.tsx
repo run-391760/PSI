@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { aiSignalAction, askAction, briefNowAction, briefSettingsAction, connectorTokenAction, revokeConnectorAction } from "@/app/(app)/cx/ask/actions";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/input";
 
@@ -35,7 +36,7 @@ export function AskBox({ brand, days }: { brand: string; days: number }) {
         }}
       >
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about volume, speed, SLA, CSAT, agents…" aria-label="Question" maxLength={500} className="min-w-0 flex-1" />
-        <Button type="submit" variant="primary" loading={pending} disabled={!q.trim()}>
+        <Button type="submit" variant="primary" loading={pending} disabled={pending || !q.trim()}>
           <Send className="h-4 w-4" /> Ask
         </Button>
       </form>
@@ -113,6 +114,7 @@ export function ConnectorTokens({ brand, tokens }: { brand: string; tokens: { to
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
   const endpoint = `${origin}/api/cx/insights/mcp`;
@@ -139,12 +141,13 @@ export function ConnectorTokens({ brand, tokens }: { brand: string; tokens: { to
             <span className="font-medium text-text">{t.label || "MCP connector"}</span>
             <span className="font-mono text-[12px] text-text-3">{t.token.slice(0, 6)}…</span>
             <span className="text-[12px] text-text-3">{t.last_used_at ? `last used ${new Date(t.last_used_at).toISOString().slice(0, 16).replace("T", " ")} UTC` : "never used"}</span>
-            <Button size="icon" variant="ghost" className="ml-auto" aria-label="Revoke token" onClick={() => confirm("Revoke this token? Connectors using it stop working.") && start(async () => { const r = await revokeConnectorAction(brand, t.token); if (r.ok) router.refresh(); else setError(r.error); })}>
+            <Button size="icon" variant="ghost" className="ml-auto" aria-label="Revoke token" onClick={async () => (await confirm({ title: "Revoke this token?", description: "Connectors using it stop working.", confirmLabel: "Revoke" })) && start(async () => { const r = await revokeConnectorAction(brand, t.token); if (r.ok) router.refresh(); else setError(r.error); })}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
         ))}
       </div>
+      {confirmDialog}
     </div>
   );
 }

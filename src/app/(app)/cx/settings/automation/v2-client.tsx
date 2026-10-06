@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/feedback";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import { AUTO_FIELDS, AUTO_OP_LABELS, type AutoActions } from "@/lib/cx/admin/pu
 import type { QuickAction, QuickActionDef } from "@/lib/cx/admin/quick-actions";
 import { SETTABLE_STATUSES } from "@/lib/cx/inbox/model";
 import { ConditionsEditor, type ConditionContext } from "../_admin/conditions";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, ListInput, When, useRun } from "../_admin/ui";
 import { cloneAutomationAction, deleteAutomationAction, deleteQuickActionAction, moveAutomationAction, saveAutomationAction, saveQuickActionAction, toggleAutomationAction } from "./admin-actions";
 
@@ -43,9 +45,16 @@ function summary(a: AutomationRow, refs: AutoRefs) {
 }
 
 export function AutomationsPanel({ brand, list, refs }: { brand: string; list: AutomationRow[]; refs: AutoRefs }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<AutomationInput | null>(null);
   const [clone, setClone] = useState<{ id: string; channel: string; brandId: string } | null>(null);
+  const open = (a: AutomationInput) => { setError(null); setEdit(a); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveAutomationAction(brand, edit), () => `${edit.name || "Automation"} saved.`))) setEdit(null); };
+  const doClone = async () => {
+    if (!clone || busy === "clone") return;
+    if (await runOk(run, "clone", cloneAutomationAction(brand, clone.id, { channel: clone.channel || null, brandId: clone.brandId }), () => "Cloned. The copy is switched off.")) setClone(null);
+  };
   const cond = (a: AutomationRow) => a.conditions.map((c) => `${AUTO_FIELDS.find((f) => f.value === c.field)?.label ?? c.field}${c.key ? ` (${c.key})` : ""} ${AUTO_OP_LABELS[c.op]} ${c.field === "classification" ? refs.classifications.find((n) => n.id === c.value)?.path ?? c.value : c.value}`).join(a.match === "all" ? " and " : " or ");
 
   return (
@@ -53,7 +62,7 @@ export function AutomationsPanel({ brand, list, refs }: { brand: string; list: A
       <CardHeader
         title="Automations"
         description="Run on new tickets or when the customer replies, in order. Every matching automation applies; later ones override single values, tags merge, and “stop” ends the chain."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit(blank())}><Plus className="h-3.5 w-3.5" />New automation</Button>}
+        actions={<Button size="sm" variant="primary" onClick={() => open(blank())}><Plus className="h-3.5 w-3.5" />New automation</Button>}
       />
       <CardBody>
         {messages}
@@ -78,9 +87,9 @@ export function AutomationsPanel({ brand, list, refs }: { brand: string; list: A
                   <CheckRow checked={a.active} onChange={(v) => run("t", toggleAutomationAction(brand, a.id, v))} label={<span className="sr-only">Active</span>} />
                   <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Move up" disabled={i === 0} onClick={() => run("m", moveAutomationAction(brand, a.id, -1))}><ArrowUp className="h-3.5 w-3.5" /></Button>
                   <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Move down" disabled={i === list.length - 1} onClick={() => run("m", moveAutomationAction(brand, a.id, 1))}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Clone" onClick={() => setClone({ id: a.id, channel: "", brandId: brand })}><Copy className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Edit" onClick={() => setEdit({ ...a })}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Delete" onClick={() => confirm(`Delete "${a.name}"?`) && run("d", deleteAutomationAction(brand, a.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Clone" onClick={() => { setError(null); setClone({ id: a.id, channel: "", brandId: brand }); }}><Copy className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Edit" onClick={() => open({ ...a })}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Delete" onClick={async () => { if (await confirm({ title: `Delete “${a.name}”?`, description: "New tickets and replies stop running through it. To pause it instead, switch it off." })) run("d", deleteAutomationAction(brand, a.id), () => `${a.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               </li>
             ))}
@@ -88,13 +97,14 @@ export function AutomationsPanel({ brand, list, refs }: { brand: string; list: A
         ) : <EmptyState icon={<Zap className="h-5 w-5" />} title="No automations yet" description="Route, tag, classify, prioritise or auto-reply to tickets based on channel, keywords, sentiment, fields, business hours and more." />}
       </CardBody>
 
-      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit automation" : "New automation"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveAutomationAction(brand, edit)))) setEdit(null); }}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit automation" : "New automation"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && <AutomationForm value={edit} onChange={setEdit} refs={refs} />}
       </Dialog>
 
-      <Dialog size="sm" open={!!clone} onClose={() => setClone(null)} title="Clone automation" description="The copy starts switched off so you can review it."
-        footer={<><Button onClick={() => setClone(null)}>Cancel</Button><Button variant="primary" loading={busy === "clone"} onClick={async () => { if (clone && (await run("clone", cloneAutomationAction(brand, clone.id, { channel: clone.channel || null, brandId: clone.brandId }), () => "Cloned. The copy is switched off."))) setClone(null); }}>Clone</Button></>}>
+      <Dialog size="sm" open={!!clone} onClose={() => setClone(null)} title="Clone automation" description="The copy starts switched off so you can review it." error={error} onSubmit={doClone}
+        footer={<><Button variant="ghost" onClick={() => setClone(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "clone"}>Clone</Button></>}>
         {clone && (
           <div className="space-y-3">
             <Field label="Brand"><Select value={clone.brandId} onChange={(e) => setClone({ ...clone, brandId: e.target.value })}>{refs.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select></Field>
@@ -189,15 +199,18 @@ function AutomationForm({ value: a, onChange, refs }: { value: AutomationInput; 
 type QAEdit = { id?: string; name: string; description: string; actions: QuickActionDef };
 
 export function QuickActionsPanel({ brand, list, refs }: { brand: string; list: QuickAction[]; refs: AutoRefs }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<QAEdit | null>(null);
+  const open = (q: QAEdit) => { setError(null); setEdit(q); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveQuickActionAction(brand, edit), () => `${edit.name || "Quick action"} saved.`))) setEdit(null); };
   const x = edit?.actions ?? {};
   const setX = (p: Partial<QuickActionDef>) => edit && setEdit({ ...edit, actions: { ...edit.actions, ...p } });
   const describe = (a: QuickActionDef) => [a.reply && "reply", a.note && "note", a.status && `status ${a.status}`, a.priority && `priority ${a.priority}`, a.assignee && `assign ${refs.agents.find((g) => g.id === a.assignee)?.name ?? ""}`, a.team && `team ${a.team}`, a.addTags?.length && `+${a.addTags.join(", +")}`, a.removeTags?.length && `-${a.removeTags.join(", -")}`, a.classificationId && "classify", a.severity && `severity ${a.severity}`].filter(Boolean).join(" · ");
   return (
     <Card>
       <CardHeader title="Quick actions" description="One-click macros agents run from the inbox on one or many selected tickets. Replies need the Public reply permission; statuses follow the agent's role."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit({ name: "", description: "", actions: {} })}><Plus className="h-3.5 w-3.5" />New quick action</Button>} />
+        actions={<Button size="sm" variant="primary" onClick={() => open({ name: "", description: "", actions: {} })}><Plus className="h-3.5 w-3.5" />New quick action</Button>} />
       <CardBody>
         {messages}
         {list.length ? (
@@ -209,15 +222,16 @@ export function QuickActionsPanel({ brand, list, refs }: { brand: string; list: 
                   {q.description && <p className="text-[12px] text-text-2">{q.description}</p>}
                   <p className="text-[12px] text-text-3">{describe(q.actions)}</p>
                 </div>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Edit" onClick={() => setEdit({ id: q.id, name: q.name, description: q.description, actions: q.actions })}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Delete" onClick={() => confirm(`Delete "${q.name}"?`) && run("d", deleteQuickActionAction(brand, q.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Edit" onClick={() => open({ id: q.id, name: q.name, description: q.description, actions: q.actions })}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Delete" onClick={async () => { if (await confirm({ title: `Delete “${q.name}”?`, description: "Agents can no longer run it from the inbox." })) run("d", deleteQuickActionAction(brand, q.id), () => `${q.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
               </li>
             ))}
           </ul>
         ) : <EmptyState icon={<Zap className="h-5 w-5" />} title="No quick actions" description="For example: “Refund processed” sends a templated reply, tags refund and resolves the ticket." />}
       </CardBody>
-      <Dialog size="lg" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit quick action" : "New quick action"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveQuickActionAction(brand, edit)))) setEdit(null); }}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="lg" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit quick action" : "New quick action"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name"><Input autoFocus value={edit.name} maxLength={80} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>

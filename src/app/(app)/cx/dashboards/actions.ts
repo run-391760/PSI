@@ -91,7 +91,7 @@ export async function widgetInsightAction(projectId: string, dashboardId: string
   try {
     const user = await requireUser();
     await getCxBrand(user.id, projectId, { write: false });
-    if (!aiConfigured()) throw new AppError("Connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) for chart insights.", 400);
+    if (!aiConfigured()) throw new AppError("Connect an AI key (Anthropic, OpenAI or Gemini) on the server for chart insights.", 400);
     const d = await getDashboard(projectId, user.id, dashboardId);
     const w = d.widgets.find((x) => x.id === widgetId);
     if (!w) throw new AppError("Widget not found.", 404);

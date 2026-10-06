@@ -6,13 +6,14 @@ import { useState } from "react";
 import { NetworkIcon } from "@/components/cx/network-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog, MenuItem } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Input, Select } from "@/components/ui/input";
 import type { SocialProfile } from "@/lib/cx/admin/social-profiles";
 import { SOCIAL_NETWORKS, SOCIAL_RELATIONS, parseSocialHandle, socialNetwork } from "@/lib/cx/admin/pure/settings";
 import { cn } from "@/lib/utils";
-import { ColorDialog, ColorDot, GearMenu, KAvatar, KButton, KDate, KSection } from "../_admin/k-ui";
+import { ColorDialog, ColorDot, GearMenu, KAvatar, KButton, KDate, KSection, runOk } from "../_admin/k-ui";
 import { Field, useRun } from "../_admin/ui";
 import { deleteSocialProfileAction, fetchSocialProfileAction, saveSocialProfileAction, socialProfileActiveAction, socialProfileColorAction } from "./actions";
 
@@ -20,8 +21,9 @@ const relLabel = (r: string) => SOCIAL_RELATIONS.find((x) => x.id === r)?.label 
 
 /** More Social Profiles: per-network sections of public profiles tracked without login. */
 export function SocialClient({ brand, profiles, keys, canEdit }: { brand: string; profiles: SocialProfile[]; keys: { reddit: boolean; youtube: boolean }; canEdit: boolean }) {
-  const { run, busy, messages } = useRun();
-  const [dlg, setDlg] = useState<null | { t: "edit"; p: SocialProfile | null } | { t: "color"; p: SocialProfile } | { t: "del"; p: SocialProfile }>(null);
+  const { run, busy, error, setError, messages } = useRun();
+  const [dlg, setDlgState] = useState<null | { t: "edit"; p: SocialProfile | null } | { t: "color"; p: SocialProfile } | { t: "del"; p: SocialProfile }>(null);
+  const setDlg = (d: typeof dlg) => { if (d) setError(null); setDlgState(d); };
   const networks = SOCIAL_NETWORKS.filter((n) => profiles.some((p) => p.network === n.id));
   return (
     <div className="space-y-4">
@@ -84,19 +86,18 @@ export function SocialClient({ brand, profiles, keys, canEdit }: { brand: string
         {profiles.some((p) => p.posts > 0) && <p className="mt-3 text-[12.5px] text-text-3">Their posts are stored as mentions without a topic. <Link href={`/cx/listening?brand=${brand}`} className="text-link hover:underline">Open Mentions →</Link></p>}
       </KSection>
       {dlg?.t === "edit" && <ProfileDialog brand={brand} p={dlg.p} keys={keys} onClose={() => setDlg(null)} />}
-      {dlg?.t === "color" && <ColorDialog open title={`Color for ${dlg.p.name}`} value={dlg.p.color} busy={busy === "color"} onClose={() => setDlg(null)} onSave={async (c) => { await run("color", socialProfileColorAction(brand, dlg.p.id, c), () => "Color saved."); setDlg(null); }} />}
+      {dlg?.t === "color" && <ColorDialog open title={`Color for ${dlg.p.name}`} value={dlg.p.color} busy={busy === "color"} error={error} onClose={() => setDlg(null)} onSave={async (c) => { if (await runOk(run, "color", socialProfileColorAction(brand, dlg.p.id, c), () => "Color saved.")) setDlg(null); }} />}
       {dlg?.t === "del" && (
-        <Dialog open onClose={() => setDlg(null)} size="sm" title="Stop tracking this profile?" description="Posts already collected stay in Mentions."
-          footer={<><Button onClick={() => setDlg(null)}>Cancel</Button><Button variant="danger" loading={busy === "del"} onClick={async () => { await run("del", deleteSocialProfileAction(brand, dlg.p.id), () => `${dlg.p.name} removed.`); setDlg(null); }}>Delete</Button></>}>
-          <p className="text-[13px] text-text-2">{dlg.p.name} ({dlg.p.handle})</p>
-        </Dialog>
+        <ConfirmDialog open onCancel={() => setDlg(null)} title={`Stop tracking ${dlg.p.name}?`} confirmLabel="Stop tracking" busy={busy === "del"} error={error}
+          description={<>{dlg.p.handle} is removed from this list. Posts already collected stay in Mentions.</>}
+          onConfirm={async () => { if (await runOk(run, "del", deleteSocialProfileAction(brand, dlg.p.id), () => `${dlg.p.name} removed.`)) setDlg(null); }} />
       )}
     </div>
   );
 }
 
 function ProfileDialog({ brand, p, keys, onClose }: { brand: string; p: SocialProfile | null; keys: { reddit: boolean; youtube: boolean }; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [network, setNetwork] = useState(p?.network ?? "bluesky");
   const [handle, setHandle] = useState(p?.handle ?? "");
   const [name, setName] = useState(p?.name ?? "");
@@ -105,15 +106,15 @@ function ProfileDialog({ brand, p, keys, onClose }: { brand: string; p: SocialPr
   const parsed = handle.trim() ? parseSocialHandle(network, handle) : null;
   const keyed = network === "reddit" ? keys.reddit : network === "youtube" ? keys.youtube || /^UC[\w-]{22}$/.test(handle.trim()) : true;
   return (
-    <Dialog open onClose={onClose} title={p ? "Edit public profile" : "Add public profile"}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { const r = await run("save", saveSocialProfileAction(brand, { id: p?.id, network, handle, name, relation }), (d) => (d.fetched ? `Saved. ${d.fetched.fetched} recent posts read, ${d.fetched.inserted} new.` : d.fetchError ? `Saved. ${d.fetchError}` : "Saved.")); if (r) onClose(); }}>Save</Button></>}>
+    <Dialog open onClose={onClose} title={p ? "Edit public profile" : "Add public profile"} error={error}
+      onSubmit={async () => { if (busy !== "save" && (await runOk(run, "save", saveSocialProfileAction(brand, { id: p?.id, network, handle, name, relation }), (d) => (d.fetched ? `Saved. ${d.fetched.fetched} recent posts read, ${d.fetched.inserted} new.` : d.fetchError ? `Saved. ${d.fetchError}` : "Saved.")))) onClose(); }}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
       <div className="space-y-3">
-        {messages}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Network"><Select value={network} onChange={(e) => setNetwork(e.target.value)}>{SOCIAL_NETWORKS.map((n) => <option key={n.id} value={n.id}>{n.name}{n.access === "api" ? " (needs API)" : ""}</option>)}</Select></Field>
           <Field label="Relation"><Select value={relation} onChange={(e) => setRelation(e.target.value)}>{SOCIAL_RELATIONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</Select></Field>
         </div>
-        <Field label="Handle or profile URL" hint={parsed ? (parsed.ok ? `Saved as ${parsed.handle}` : parsed.error) : undefined}><Input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder={net.placeholder} autoComplete="off" /></Field>
+        <Field label="Handle or profile URL" hint={parsed ? (parsed.ok ? `Saved as ${parsed.handle}` : parsed.error) : undefined}><Input autoFocus value={handle} onChange={(e) => setHandle(e.target.value)} placeholder={net.placeholder} autoComplete="off" /></Field>
         <Field label="Display name (optional)"><Input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder="e.g. Competitor Inc" /></Field>
         <Callout tone={net.access === "free" && keyed ? "good" : net.access === "api" ? "warning" : keyed ? "good" : "info"} title={net.access === "free" && keyed ? "Free: fetched with listening" : net.access === "api" ? "Needs an API" : keyed ? "Ready" : "Needs keys"}>{net.note}</Callout>
       </div>

@@ -29,6 +29,7 @@ import { KeywordLink } from "@/components/seo/badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -71,7 +72,7 @@ function MatchSelect({ value, onChange, className, label = "Match type" }: { val
 export function PpcPlanner({ detail, selected }: { detail: CampaignDetail; selected: string }) {
   const router = useRouter();
   const { campaign, groups } = detail;
-  const { run, pending, error, notice } = useRun();
+  const { run, pending, error, notice, setError } = useRun();
   const [ctr, setCtr] = useState(String(Math.round(campaign.ctr * 1000) / 10));
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -150,7 +151,7 @@ export function PpcPlanner({ detail, selected }: { detail: CampaignDetail; selec
           </Menu>
         </div>
       </div>
-      {error && <Callout tone="critical" className="mb-3">{error}</Callout>}
+      {error && !renaming && !deleting && <Callout tone="critical" className="mb-3">{error}</Callout>}
       {notice && <Callout tone="good" className="mb-3">{notice}</Callout>}
 
       <div className="mb-4 rounded-lg border border-border bg-surface shadow-card">
@@ -212,15 +213,18 @@ export function PpcPlanner({ detail, selected }: { detail: CampaignDetail; selec
 
       <Dialog
         open={renaming}
-        onClose={() => setRenaming(false)}
+        onClose={() => (setRenaming(false), setError(null))}
         title="Rename campaign"
         size="sm"
+        dismissible={!pending}
+        error={renaming ? error : null}
+        onSubmit={() => name.trim() && !pending && run(() => updateCampaignAction(campaign.id, { name }), () => setRenaming(false))}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setRenaming(false)}>
+            <Button variant="ghost" onClick={() => (setRenaming(false), setError(null))} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={!name.trim()} onClick={() => run(() => updateCampaignAction(campaign.id, { name }), () => setRenaming(false))}>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !name.trim()}>
               Save
             </Button>
           </>
@@ -228,37 +232,24 @@ export function PpcPlanner({ detail, selected }: { detail: CampaignDetail; selec
       >
         <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="Campaign name" autoFocus />
       </Dialog>
-      <Dialog
+      <ConfirmDialog
         open={deleting}
-        onClose={() => setDeleting(false)}
-        title="Delete this campaign?"
-        description={`“${campaign.name}”, its ad groups, keywords and negatives will be removed.`}
-        size="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setDeleting(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              loading={pending}
-              onClick={() =>
-                run(
-                  () => deleteCampaignAction(campaign.id),
-                  () => {
-                    setDeleting(false);
-                    router.push("/ppc-keyword-tool");
-                  },
-                )
-              }
-            >
-              Delete campaign
-            </Button>
-          </>
+        onCancel={() => (setDeleting(false), setError(null))}
+        onConfirm={() =>
+          run(
+            () => deleteCampaignAction(campaign.id),
+            () => {
+              setDeleting(false);
+              router.push("/ppc-keyword-tool");
+            },
+          )
         }
-      >
-        <p className="text-[13px] text-text-2">This cannot be undone. Export the campaign first if you may need it again.</p>
-      </Dialog>
+        title="Delete this campaign?"
+        description={`“${campaign.name}”, its ad groups, keywords and negatives will be removed. This cannot be undone. Export the campaign first if you may need it again.`}
+        confirmLabel="Delete campaign"
+        busy={pending}
+        error={deleting ? error : null}
+      />
     </div>
   );
 }
@@ -291,7 +282,7 @@ function GroupsOverview({ detail }: { detail: CampaignDetail }) {
 function GroupPanel({ group, detail }: { group: PpcGroup; detail: CampaignDetail }) {
   const router = useRouter();
   const { campaign } = detail;
-  const { run, pending, error, notice } = useRun();
+  const { run, pending, error, notice, setError } = useRun();
   const [text, setText] = useState("");
   const [match, setMatch] = useState<AdMatch>("phrase");
   const [renaming, setRenaming] = useState(false);
@@ -351,7 +342,7 @@ function GroupPanel({ group, detail }: { group: PpcGroup; detail: CampaignDetail
             </Button>
           </div>
         </div>
-        {error && <Callout tone="critical" className="mx-4 mb-3">{error}</Callout>}
+        {error && !renaming && <Callout tone="critical" className="mx-4 mb-3">{error}</Callout>}
         {notice && <Callout tone="good" className="mx-4 mb-3">{notice}</Callout>}
         <form onSubmit={add} className="flex flex-col gap-2 border-t border-border bg-surface-2 px-4 py-3 sm:flex-row sm:items-start">
           <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder="Add keywords to this ad group, one per line or comma separated" className="min-h-0 flex-1" aria-label="Keywords to add" />
@@ -439,15 +430,18 @@ function GroupPanel({ group, detail }: { group: PpcGroup; detail: CampaignDetail
       <NegativesCard title="Ad group negative keywords" description="Searches that must not trigger this ad group. Cross-group negatives are added automatically." campaignId={campaign.id} groupId={group.id} negatives={group.negatives} />
       <Dialog
         open={renaming}
-        onClose={() => setRenaming(false)}
+        onClose={() => (setRenaming(false), setError(null))}
         title="Rename ad group"
         size="sm"
+        dismissible={!pending}
+        error={renaming ? error : null}
+        onSubmit={() => name.trim() && !pending && run(() => renameGroupAction(campaign.id, group.id, name), () => setRenaming(false))}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setRenaming(false)}>
+            <Button variant="ghost" onClick={() => (setRenaming(false), setError(null))} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={!name.trim()} onClick={() => run(() => renameGroupAction(campaign.id, group.id, name), () => setRenaming(false))}>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !name.trim()}>
               Save
             </Button>
           </>

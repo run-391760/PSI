@@ -46,7 +46,9 @@ export function RuleDialog({ open, onClose, projects, rule, defaultProject }: { 
           : null;
   const preview = kind.describe(threshold || 0, draft.competitor || null);
 
+  const canSubmit = !!project && !thresholdError && !pending;
   const submit = () =>
+    canSubmit &&
     start(async () => {
       setError(null);
       const input = {
@@ -72,12 +74,16 @@ export function RuleDialog({ open, onClose, projects, rule, defaultProject }: { 
       onClose={onClose}
       title={rule ? "Edit alert rule" : "New alert rule"}
       description="Rules are evaluated after every rank check; matches appear in Alerts and the bell."
+      size="lg"
+      dismissible={!pending}
+      error={error}
+      onSubmit={submit}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button variant="primary" loading={pending} disabled={!project || Boolean(thresholdError)} onClick={submit}>
+          <Button type="submit" variant="primary" loading={pending} disabled={pending || !project || Boolean(thresholdError)}>
             {rule ? "Save rule" : "Create rule"}
           </Button>
         </>
@@ -87,7 +93,6 @@ export function RuleDialog({ open, onClose, projects, rule, defaultProject }: { 
         <Callout tone="info">Set up Position Tracking for a project first — alert rules watch tracked keywords.</Callout>
       ) : (
         <div className="space-y-3.5">
-          {error && <Callout tone="critical">{error}</Callout>}
           <Field label="Project" htmlFor="rule-project">
             <Select id="rule-project" value={draft.projectId} onChange={(e) => set({ projectId: e.target.value, tagId: "", competitor: "" })} disabled={Boolean(rule) || projects.length === 1}>
               {projects.map((p) => (

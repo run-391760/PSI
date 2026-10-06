@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { deleteTemplateAction, downloadFileAction, exportNowAction, saveScheduleAction, saveTemplateAction, scheduleFlagAction } from "@/app/(app)/cx/reports/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -29,6 +30,7 @@ export function DownloadCentre({ brand, templates, schedules, files, fieldColumn
   const [sched, setSched] = useState(false);
   const [msg, setMsg] = useState<{ tone: "good" | "critical"; text: string } | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, ok?: string, after?: () => void) =>
     start(async () => {
       const r = await fn();
@@ -89,7 +91,7 @@ export function DownloadCentre({ brand, templates, schedules, files, fieldColumn
               t.basis === "business" ? "Business hours" : "Calendar",
               <span key="a" className="inline-flex gap-1">
                 <Button size="sm" onClick={() => setEdit(t.builtin ? { ...t, id: "", name: `${t.name} (copy)` } : t)}><Pencil className="h-3.5 w-3.5" /> {t.builtin ? "Customize" : "Edit"}</Button>
-                {!t.builtin && <Button size="icon" variant="ghost" aria-label={`Delete ${t.name}`} onClick={() => confirm(`Delete template ${t.name} and its schedules?`) && run(() => deleteTemplateAction(brand, t.id))}><Trash2 className="h-4 w-4" /></Button>}
+                {!t.builtin && <Button size="icon" variant="ghost" aria-label={`Delete ${t.name}`} onClick={async () => (await confirm({ title: `Delete the template “${t.name}”?`, description: "Its scheduled exports are deleted too." })) && run(() => deleteTemplateAction(brand, t.id))}><Trash2 className="h-4 w-4" /></Button>}
               </span>,
             ])}
           />
@@ -115,7 +117,7 @@ export function DownloadCentre({ brand, templates, schedules, files, fieldColumn
               <span key="l" className="text-[12px] text-text-2">{s.last_status ?? "Not run yet"}</span>,
               <span key="a" className="inline-flex gap-1">
                 <Button size="sm" variant="ghost" onClick={() => run(() => scheduleFlagAction(brand, s.id, s.enabled ? "pause" : "resume"))}>{s.enabled ? "Pause" : "Resume"}</Button>
-                <Button size="icon" variant="ghost" aria-label="Delete schedule" onClick={() => confirm("Delete this schedule?") && run(() => scheduleFlagAction(brand, s.id, "delete"))}><Trash2 className="h-4 w-4" /></Button>
+                <Button size="icon" variant="ghost" aria-label="Delete schedule" onClick={async () => (await confirm({ title: "Delete this scheduled export?", description: `${s.template} is no longer exported on this schedule.` })) && run(() => scheduleFlagAction(brand, s.id, "delete"))}><Trash2 className="h-4 w-4" /></Button>
               </span>,
             ])}
           />
@@ -141,6 +143,7 @@ export function DownloadCentre({ brand, templates, schedules, files, fieldColumn
       </Card>
 
       {edit && <TemplateEditor brand={brand} initial={edit} fieldColumns={fieldColumns} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); router.refresh(); }} />}
+      {confirmDialog}
       {sched && <ScheduleDialog brand={brand} templates={templates.filter((t) => !t.builtin)} onClose={() => setSched(false)} onSaved={() => { setSched(false); setMsg({ tone: "good", text: "Schedule saved." }); router.refresh(); }} />}
     </div>
   );
@@ -165,17 +168,17 @@ function TemplateEditor({ brand, initial, fieldColumns, onClose, onSaved }: { br
       onClose={onClose}
       size="xl"
       title={t.id ? "Edit template" : "New export template"}
+      error={error}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" loading={pending} onClick={() => start(async () => { const r = await saveTemplateAction(brand, { name: t.name, source: t.source, basis: t.basis, columns: t.columns }, t.id || undefined); if (r.ok) onSaved(); else setError(r.error); })}>Save template</Button>
         </>
       }
     >
       <div className="space-y-3">
-        {error && <Callout tone="critical">{error}</Callout>}
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Name" htmlFor="tp-name"><Input id="tp-name" value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} placeholder="e.g. Daily agent dump" /></Field>
+          <Field label="Name" htmlFor="tp-name"><Input id="tp-name" autoFocus value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} placeholder="e.g. Daily agent dump" /></Field>
           <Field label="Data" htmlFor="tp-src">
             <Select id="tp-src" value={t.source} onChange={(e) => { const source = e.target.value as ExportSource; setT({ ...t, source, columns: EXPORT_COLUMNS[source].slice(0, 6) }); }}>
               <option value="tickets">Tickets (one row per ticket)</option>
@@ -231,15 +234,16 @@ function ScheduleDialog({ brand, templates, onClose, onSaved }: { brand: string;
       onClose={onClose}
       title="Schedule an export"
       description="Runs at 06:00 UTC."
+      error={error}
+      onSubmit={() => !pending && start(async () => { const r = await saveScheduleAction(brand, { template_id: templateId, period: period === "today" ? "yesterday" : period, cadence, recipients: recipients.split(/[\s,;]+/).filter(Boolean) }); if (r.ok) onSaved(); else setError(r.error); })}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={pending} onClick={() => start(async () => { const r = await saveScheduleAction(brand, { template_id: templateId, period: period === "today" ? "yesterday" : period, cadence, recipients: recipients.split(/[\s,;]+/).filter(Boolean) }); if (r.ok) onSaved(); else setError(r.error); })}>Save schedule</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={pending}>Save schedule</Button>
         </>
       }
     >
       <div className="space-y-3">
-        {error && <Callout tone="critical">{error}</Callout>}
         <Field label="Template" htmlFor="sc-tpl"><Select id="sc-tpl" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>{templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Data period" htmlFor="sc-period"><Select id="sc-period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>{PERIODS.filter((p) => p.value !== "today").map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}</Select></Field>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { declareWinnerAction, deleteAbTestAction, endAbTestAction, startAbTestAction } from "@/app/(app)/cx/ab-testing/actions";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ export function AbDetailActions(p: Props) {
   const [at, setAt] = useState("");
   const [noneOk, setNoneOk] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   if (!p.canAuthor) return null;
 
   const act = (fn: () => Promise<{ ok: true; data: unknown } | { ok: false; error: string }>, after?: (data: unknown) => void) =>
@@ -69,9 +71,9 @@ export function AbDetailActions(p: Props) {
             {p.status === "running" && (
               <MenuItem
                 icon={<Square className="h-3.5 w-3.5" />}
-                onClick={() => {
+                onClick={async () => {
                   close();
-                  if (confirm("End the test now? Clicks after this moment are no longer counted. You can still declare the winner afterwards.")) act(() => endAbTestAction(p.brandId, p.id));
+                  if (await confirm({ title: "End the test now?", description: "Clicks after this moment are no longer counted. You can still declare the winner afterwards.", tone: "primary", confirmLabel: "End test" })) act(() => endAbTestAction(p.brandId, p.id));
                 }}
               >
                 End test
@@ -80,9 +82,9 @@ export function AbDetailActions(p: Props) {
             <MenuItem
               danger
               icon={<Trash2 className="h-3.5 w-3.5" />}
-              onClick={() => {
+              onClick={async () => {
                 close();
-                if (confirm("Delete this A/B test? Its two posts and their tracked links stay in Publishing.")) act(() => deleteAbTestAction(p.brandId, p.id), () => router.push(`/cx/ab-testing?brand=${p.brandId}`));
+                if (await confirm({ title: "Delete this A/B test?", description: "Its two posts and their tracked links stay in Publishing." })) act(() => deleteAbTestAction(p.brandId, p.id), () => router.push(`/cx/ab-testing?brand=${p.brandId}`));
               }}
             >
               Delete test
@@ -98,6 +100,7 @@ export function AbDetailActions(p: Props) {
         onClose={() => setDialog(null)}
         title="Start the test"
         description="Both variant posts go out at the same time on every channel of the test."
+        error={dialog === "start" ? error : null}
         footer={
           <>
             <Button variant="ghost" onClick={() => setDialog(null)} disabled={pending}>Cancel</Button>
@@ -121,7 +124,6 @@ export function AbDetailActions(p: Props) {
           {p.requireApproval && (
             <Callout tone="warning">This brand requires approval. Drafts are submitted for approval; already approved posts are {mode === "schedule" ? "scheduled" : "published"} now.</Callout>
           )}
-          {error && <Callout tone="critical">{error}</Callout>}
         </div>
       </Dialog>
 
@@ -130,12 +132,15 @@ export function AbDetailActions(p: Props) {
         onClose={() => setDialog(null)}
         title="Declare the winner"
         description="Declaring ends the test: clicks after now are no longer counted."
+        error={dialog === "decide" ? error : null}
+        footerStart={
+          <Button variant="secondary" disabled={!noneOk || pending} onClick={() => act(() => declareWinnerAction(p.brandId, p.id, "none"))}>
+            <Flag className="h-4 w-4" /> No winner
+          </Button>
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setDialog(null)} disabled={pending}>Cancel</Button>
-            <Button variant="secondary" disabled={!noneOk || pending} onClick={() => act(() => declareWinnerAction(p.brandId, p.id, "none"))}>
-              <Flag className="h-4 w-4" /> No winner
-            </Button>
             <Button variant="primary" disabled={!p.significant || pending} loading={pending} onClick={() => act(() => declareWinnerAction(p.brandId, p.id, "winner"))}>
               <Trophy className="h-4 w-4" /> {p.significant && p.leader ? `Variant ${p.leader.toUpperCase()} wins` : "No significant winner"}
             </Button>
@@ -149,9 +154,9 @@ export function AbDetailActions(p: Props) {
             <Checkbox checked={noneOk} onChange={(e) => setNoneOk(e.target.checked)} className="mt-0.5" />
             <span>I want to close this test with <b>no winner</b>.</span>
           </label>
-          {error && <Callout tone="critical">{error}</Callout>}
         </div>
       </Dialog>
+      {confirmDialog}
     </>
   );
 }

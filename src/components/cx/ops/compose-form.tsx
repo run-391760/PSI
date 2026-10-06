@@ -115,7 +115,7 @@ export function ComposeForm({ brand, me, readOnly, channels, agents, allowedDoma
               </Callout>
             )}
             <div className="flex justify-end">
-              <Button variant="primary" disabled={busy || readOnly || !addrs.valid.length || addrs.invalid.length > 0 || blocked.length > 0 || uploads.busy} onClick={send}>{busy ? "Sending…" : <><Send className="h-3.5 w-3.5" />Send and create ticket</>}</Button>
+              <Button variant="primary" disabled={busy || readOnly || !addrs.valid.length || addrs.invalid.length > 0 || blocked.length > 0 || uploads.busy} loading={busy} onClick={send}>{!busy && <Send className="h-3.5 w-3.5" />}Send and create ticket</Button>
             </div>
           </>
         )}

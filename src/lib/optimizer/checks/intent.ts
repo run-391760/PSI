@@ -30,16 +30,18 @@ export function matchScore(ctx: Ctx) {
 }
 
 function intentSources(ctx: Ctx) {
-  return ["content" as const, ...(ctx.research?.serpSource === "serp" ? (["serp"] as const) : ctx.competitors.length ? (["competitors"] as const) : []), ...(ctx.ai ? (["ai"] as const) : [])];
+  return ["content" as const, ...(ctx.research?.serpSource === "serp" ? (["serp"] as const) : ctx.competitors.length ? (["competitors"] as const) : []), ...(ctx.intent.dataforseo ? (["keyword-data"] as const) : []), ...(ctx.ai ? (["ai"] as const) : [])];
 }
 
 export function intentAnalyzer(ctx: Ctx): Finding {
   if (!ctx.kw) return na("intent-analyzer", "Set a primary keyword to analyze search intent.");
-  const { dominant, keyword, serp, ai, format } = ctx.intent;
+  const { dominant, keyword, serp, ai, format, dataforseo } = ctx.intent;
   const fit = formatFit(dominant, format);
-  const from = ai ? "Claude's review" : serp ? (ctx.research?.serpSource === "serp" ? "the live Google results" : "the competitor pages") : "the query wording";
+  const from = ai ? "Claude's review" : serp ? (ctx.research?.serpSource === "serp" ? "the live Google results" : "the competitor pages") : dataforseo ? "DataForSEO's keyword intent" : "the query wording";
+  const kd = ctx.research?.keywordData;
   const items = [
     { label: `Query wording: ${INTENT_LABEL[keyword]}`, detail: ctx.intent.keywordSignals.join("; "), tone: "neutral" as const },
+    ...(dataforseo && kd ? [{ label: `DataForSEO keyword intent: ${INTENT_LABEL[dataforseo]}`, detail: kd.intents.length > 1 ? `Also ${kd.intents.slice(1).map((i) => INTENT_LABEL[i].toLowerCase()).join(", ")}` : undefined, tone: "neutral" as const }] : []),
     serp
       ? { label: `Ranking pages: ${INTENT_LABEL[serp]}`, detail: Object.entries(ctx.intent.serpFormats).map(([f, n]) => `${FORMAT_LABEL[f as ContentFormat]} ×${n}`).join(", "), tone: "neutral" as const }
       : { label: "Ranking pages: not analyzed", detail: "Run SERP research (or add competitor URLs) to read the intent from the pages that rank.", tone: "warning" as const },

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { createLinkAction, deleteLinkAction } from "@/app/(app)/cx/publishing/actions";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Callout } from "@/components/ui/feedback";
@@ -106,6 +107,7 @@ export type LinkItem = { id: string; code: string; short: string; target_url: st
 export function LinksTable({ brandId, rows }: { brandId: string; rows: LinkItem[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const cols: Column<LinkItem>[] = [
     {
       key: "short",
@@ -142,11 +144,16 @@ export function LinksTable({ brandId, rows }: { brandId: string; rows: LinkItem[
       sortable: false,
       noExport: true,
       render: (r) => (
-        <Button size="icon" variant="ghost" title="Delete link (stops redirecting)" disabled={pending} onClick={() => confirm("Delete this short link? It will stop redirecting.") && start(async () => { await deleteLinkAction(brandId, r.id); router.refresh(); })}>
+        <Button size="icon" variant="ghost" title="Delete link (stops redirecting)" disabled={pending} onClick={async () => (await confirm({ title: "Delete this short link?", description: `/l/${r.code} stops redirecting.` })) && start(async () => { await deleteLinkAction(brandId, r.id); router.refresh(); })}>
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       ),
     },
   ];
-  return <DataTable rows={rows} columns={cols} rowKey={(r) => r.id} searchable searchText={(r) => `${r.code} ${r.label} ${r.target_url} ${r.campaign ?? ""}`} exportName="short-links" defaultSort={{ key: "clicks", dir: "desc" }} emptyText="No short links yet. Create one above or add a link to a post." />;
+  return (
+    <>
+      <DataTable rows={rows} columns={cols} rowKey={(r) => r.id} searchable searchText={(r) => `${r.code} ${r.label} ${r.target_url} ${r.campaign ?? ""}`} exportName="short-links" defaultSort={{ key: "clicks", dir: "desc" }} emptyText="No short links yet. Create one above or add a link to a post." />
+      {confirmDialog}
+    </>
+  );
 }

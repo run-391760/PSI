@@ -3,12 +3,13 @@
 import { Crosshair, MapPin, Plus, Radar, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useState, useTransition } from "react";
 import { deleteScanAction, scanScheduleAction, startScanAction } from "@/app/(app)/local/actions";
 import { dateTimeLabel } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
@@ -17,13 +18,31 @@ import { GeoGrid, RankLegend, bandFor, type GridPoint } from "./geo-grid";
 const GRIDS = [3, 5, 7, 9] as const;
 const RADII = [1, 2, 3, 5, 10];
 
-export function ScanForm({ projectId, suggestions, defaults, onDone }: { projectId: string; suggestions: string[]; defaults?: { keywords: string[]; grid: number; radiusKm: number }; onDone?: () => void }) {
+type FormState = { pending: boolean; error: string | null };
+
+/** With `onStateChange` the form leaves its buttons and error out, so a Dialog footer can render them (`form={formId}`). */
+export function ScanForm({
+  projectId,
+  suggestions,
+  defaults,
+  onDone,
+  formId,
+  onStateChange,
+}: {
+  projectId: string;
+  suggestions: string[];
+  defaults?: { keywords: string[]; grid: number; radiusKm: number };
+  onDone?: () => void;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [keywords, setKeywords] = useState((defaults?.keywords ?? suggestions.slice(0, 2)).join("\n"));
   const [grid, setGrid] = useState<string>(String(defaults?.grid ?? 5));
   const [radius, setRadius] = useState(String(defaults?.radiusKm ?? 3));
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error }), [pending, error, onStateChange]);
   const list = keywords
     .split(/\n|,/)
     .map((k) => k.trim())
@@ -34,6 +53,7 @@ export function ScanForm({ projectId, suggestions, defaults, onDone }: { project
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (pending) return;
     if (!list.length) return setError("Add at least one keyword.");
     if (list.length > 5) return setError("A scan can track up to 5 keywords.");
     if (!(r >= 0.5 && r <= 25)) return setError("Radius must be between 0.5 and 25 km.");
@@ -47,8 +67,8 @@ export function ScanForm({ projectId, suggestions, defaults, onDone }: { project
     });
   };
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-4">
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <Field label="Keywords" htmlFor="scan-kw" hint={`One per line, up to 5 (${list.length}/5).`}>
         <Textarea id="scan-kw" value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={4} className="min-h-0" placeholder={"dentist near me\nbest dentist in austin"} />
       </Field>
@@ -99,29 +119,55 @@ export function ScanForm({ projectId, suggestions, defaults, onDone }: { project
       <p className="text-[12px] text-text-3">
         {list.length * g * g} grid checks · Demo simulation: rankings are generated deterministically, not fetched from Google Maps.
       </p>
-      <div className="flex justify-end gap-2 border-t border-border pt-3">
-        {onDone && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      {!onStateChange && (
+        <div className="flex justify-end gap-2 border-t border-border pt-3">
+          {onDone && (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" variant="primary" loading={pending}>
+            <Radar className="h-4 w-4" /> Run scan
           </Button>
-        )}
-        <Button type="submit" variant="primary" loading={pending}>
-          <Radar className="h-4 w-4" /> Run scan
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }
 
 export function NewScanButton(props: { projectId: string; suggestions: string[]; defaults?: { keywords: string[]; grid: number; radiusKm: number }; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button variant="primary" onClick={() => setOpen(true)} disabled={props.disabled} title={props.disabled ? "A scan is already running" : undefined}>
         <Radar className="h-4 w-4" /> New scan
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="New grid scan" description="Check where you appear in the local pack from points around your business." size="lg">
-        <ScanForm {...props} onDone={() => setOpen(false)} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="New grid scan"
+        description="Check where you appear in the local pack from points around your business."
+        size="lg"
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              {!state.pending && <Radar className="h-4 w-4" />} Run scan
+            </Button>
+          </>
+        }
+      >
+        <ScanForm {...props} onDone={close} formId={formId} onStateChange={setState} />
       </Dialog>
     </>
   );
@@ -226,6 +272,7 @@ export type HistoryRow = { id: string; createdAt: string; keywords: string[]; gr
 export function ScanHistory({ projectId, rows, currentId, compareId }: { projectId: string; rows: HistoryRow[]; currentId: string | null; compareId: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const base = `/local/map-rank-tracker?project=${projectId}`;
   const columns: Column<HistoryRow>[] = [
     {
@@ -273,14 +320,14 @@ export function ScanHistory({ projectId, rows, currentId, compareId }: { project
               variant="ghost"
               aria-label="Delete scan"
               disabled={pending}
-              onClick={() =>
-                confirm("Delete this scan?") &&
+              onClick={async () => {
+                if (!(await confirm({ title: "Delete this scan?", description: `${dateTimeLabel(r.createdAt)} · ${r.keywords.join(", ")}`, confirmLabel: "Delete scan" }))) return;
                 start(async () => {
                   await deleteScanAction(projectId, r.id);
                   router.push(base);
                   router.refresh();
-                })
-              }
+                });
+              }}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -289,5 +336,10 @@ export function ScanHistory({ projectId, rows, currentId, compareId }: { project
       ),
     },
   ];
-  return <DataTable rows={rows} columns={columns} rowKey={(r) => r.id} defaultSort={{ key: "createdAt", dir: "desc" }} pageSize={10} exportName="map-scans" dense />;
+  return (
+    <>
+      <DataTable rows={rows} columns={columns} rowKey={(r) => r.id} defaultSort={{ key: "createdAt", dir: "desc" }} pageSize={10} exportName="map-scans" dense />
+      {confirmDialog}
+    </>
+  );
 }

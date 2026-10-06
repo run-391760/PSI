@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
 import type { Topic } from "@/lib/cx/listening/data";
@@ -106,6 +106,7 @@ export function TopicEditor({ brand, topic, sources, defaults, canEdit, base }: 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const set = <K extends keyof ReturnType<typeof init>>(k: K, v: ReturnType<typeof init>[K]) => setF((x) => ({ ...x, [k]: v }));
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   const query = useMemo(() => displayQuery({ contains: f.contains, andContains: f.andContains, excluded: f.excluded }), [f.contains, f.andContains, f.excluded]);
@@ -136,7 +137,7 @@ export function TopicEditor({ brand, topic, sources, defaults, canEdit, base }: 
           {topic && canEdit && (
             <>
               <Button size="icon" aria-label="Duplicate topic" title="Duplicate topic" loading={busy === "dup"} onClick={async () => { setBusy("dup"); const r = await duplicateTopicEditorAction(brand, topic.id); setBusy(null); if (r.ok) router.push(href(r.data)); else setError(r.error); }}><Copy className="h-4 w-4" /></Button>
-              <Button size="icon" aria-label="Delete topic" title="Delete topic" className="text-critical-ink" onClick={() => setConfirmDelete(true)}><Trash2 className="h-4 w-4" /></Button>
+              <Button size="icon" aria-label="Delete topic" title="Delete topic" className="text-critical-ink" onClick={() => { setDeleteError(null); setConfirmDelete(true); }}><Trash2 className="h-4 w-4" /></Button>
             </>
           )}
           {canEdit && <Link href={href("new")} className="inline-flex h-8.5 items-center gap-1.5 rounded-md bg-good px-3.5 text-[12.5px] font-semibold tracking-[0.06em] text-white uppercase shadow-card hover:opacity-90"><Plus className="h-3.5 w-3.5" />Add new topic</Link>}
@@ -301,10 +302,24 @@ export function TopicEditor({ brand, topic, sources, defaults, canEdit, base }: 
         </div>
       </div>
 
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} size="sm" title="Delete topic?" description="Its mentions stay but lose their topic; clusters drop it."
-        footer={<><Button onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" loading={busy === "del"} onClick={async () => { if (!topic) return; setBusy("del"); const r = await deleteTopicEditorAction(brand, topic.id); setBusy(null); setConfirmDelete(false); if (r.ok) router.push(base); else setError(r.error); }}>Delete</Button></>}>
-        <p className="text-[13px] text-text-2">{topic?.name}</p>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmDelete}
+        onCancel={() => setConfirmDelete(false)}
+        title={topic ? `Delete the topic “${topic.name}”?` : "Delete topic?"}
+        description="Its mentions stay but lose their topic; clusters drop it."
+        busy={busy === "del"}
+        error={deleteError}
+        onConfirm={async () => {
+          if (!topic) return;
+          setBusy("del");
+          setDeleteError(null);
+          const r = await deleteTopicEditorAction(brand, topic.id);
+          setBusy(null);
+          if (!r.ok) return setDeleteError(r.error);
+          setConfirmDelete(false);
+          router.push(base);
+        }}
+      />
     </div>
   );
 }

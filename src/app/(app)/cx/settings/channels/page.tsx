@@ -4,6 +4,7 @@ import { Page } from "@/components/shell/page";
 import { CHANNELS } from "@/lib/cx/channels";
 import { CONNECT_CARDS, CONNECTORS, cardConfigured } from "@/lib/cx/admin/connectors";
 import { listProfiles } from "@/lib/cx/admin/profiles";
+import { pickWhatsAppSender } from "@/lib/cx/providers";
 import { requestOrigin, settingsPage, SettingsHeader } from "../_admin/settings-page";
 import { ProfilesClient, type ApiInfo } from "./profiles-client";
 
@@ -14,9 +15,14 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
   const { el, ctx } = await settingsPage(await searchParams, { title: "Omni-Channel Setup", path: "/cx/settings/channels", perm: "page:settings.channels" });
   if (!ctx) return el;
   const [profiles, origin] = await Promise.all([listProfiles(ctx.brand.id), requestOrigin()]);
+  // Replies go out from each WhatsApp profile's own phone number id (WHATSAPP_PHONE_NUMBER_ID is the fallback),
+  // and Meta API calls only need the Page token; META_APP_SECRET + META_VERIFY_TOKEN are for webhooks.
+  const whatsapp = profiles.filter((p) => p.kind === "whatsapp");
   const env = {
     whatsappVerify: !!process.env.WHATSAPP_VERIFY_TOKEN,
-    whatsappSend: !!process.env.WHATSAPP_TOKEN && !!process.env.WHATSAPP_PHONE_NUMBER_ID,
+    whatsappSend: whatsapp.length
+      ? whatsapp.every((p) => !!pickWhatsAppSender({ phoneId: p.config?.accountId ?? null, token: p.has_secret ? "stored" : null }, process.env))
+      : !!pickWhatsAppSender(null, process.env),
     metaVerify: !!process.env.META_VERIFY_TOKEN,
     metaSecret: !!process.env.META_APP_SECRET,
   };

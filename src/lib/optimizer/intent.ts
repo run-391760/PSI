@@ -3,9 +3,10 @@ import type { ParsedDoc } from "./parse";
 import type { AiReview, CompetitorPage, ContentFormat, Funnel, Intent, IntentProfile, Research } from "./types";
 
 /**
- * Search intent from three independent signals: the query's wording, the formats of the pages that
- * rank (live SERP or the competitor URLs the user supplied) and, when configured, Claude's review.
- * The SERP outranks the wording because it shows what Google actually rewards.
+ * Search intent from independent signals: the query's wording, DataForSEO's intent classification of
+ * the keyword (when keyword data was fetched), the formats of the pages that rank (live SERP or the
+ * competitor URLs the user supplied) and, when configured, the AI review. The SERP outranks the
+ * classifier and the wording because it shows what Google actually rewards.
  */
 
 const RULES: { intent: Intent; re: RegExp; label: string }[] = [
@@ -85,6 +86,13 @@ export const INTENT_LABEL: Record<Intent, string> = { informational: "Informatio
 export const FORMAT_LABEL: Record<ContentFormat, string> = { "how-to": "How-to / step-by-step", guide: "Guide / explainer", listicle: "List (best / top)", comparison: "Comparison", review: "Review", landing: "Landing / sales page", news: "News / update" };
 export const FUNNEL_FOR: Record<Intent, Funnel> = { informational: "awareness", commercial: "consideration", transactional: "decision", navigational: "decision", local: "decision" };
 
+/** DataForSEO's main intent for the keyword, only when the stored keyword data is for the current keyword. */
+export function dataforseoIntent(keyword: string, research: Research | null): Intent | null {
+  const k = research?.keywordData;
+  if (!k?.intents.length || normalizeText(k.keyword) !== normalizeText(keyword)) return null;
+  return k.intents[0];
+}
+
 export function intentProfile(keyword: string, title: string, doc: ParsedDoc, research: Research | null, ai: AiReview | null): IntentProfile {
   const kw = keywordIntent(keyword);
   const { format, signals } = detectFormat(title, doc);
@@ -104,8 +112,9 @@ export function intentProfile(keyword: string, title: string, doc: ParsedDoc, re
     }
     serp = (Object.entries(votes) as [Intent, number][]).sort((a, b) => b[1] - a[1])[0][0];
   }
-  const dominant = ai?.intent.dominant ?? serp ?? kw.intent;
-  return { keyword: kw.intent, keywordSignals: kw.signals, serp, serpFormats, ai: ai?.intent.dominant ?? null, dominant, format, formatSignals: signals, contentIntent: FORMAT_INTENT[format] };
+  const dataforseo = dataforseoIntent(keyword, research);
+  const dominant = ai?.intent.dominant ?? serp ?? dataforseo ?? kw.intent;
+  return { keyword: kw.intent, keywordSignals: kw.signals, serp, serpFormats, dataforseo, ai: ai?.intent.dominant ?? null, dominant, format, formatSignals: signals, contentIntent: FORMAT_INTENT[format] };
 }
 
 /** Intent-specific content signals (0..1) and what is missing. */

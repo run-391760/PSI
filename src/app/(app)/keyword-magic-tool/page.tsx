@@ -55,7 +55,7 @@ export default async function KeywordMagicToolPage({ searchParams }: PageProps<"
             action={
               <div className="flex flex-wrap justify-center gap-2">
                 {EXAMPLES.map((e) => (
-                  <ButtonLink key={e} href={`/keyword-magic-tool?q=${encodeURIComponent(e)}&db=${db}`} size="sm">
+                  <ButtonLink key={e} prefetch={false} href={`/keyword-magic-tool?q=${encodeURIComponent(e)}&db=${db}`} size="sm">
                     {e}
                   </ButtonLink>
                 ))}

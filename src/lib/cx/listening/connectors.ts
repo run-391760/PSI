@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import type { LiveReview } from "@/lib/local/dfs-map";
 import { booleanQuery, hashtagsFor, parseAppId, simpleQueries, type ListenSource } from "./sources";
 import { engineQueries, hashtagsOf, newsEditions, plainQueries, type TopicSpec } from "./topic-query";
 
@@ -6,7 +7,8 @@ import { engineQueries, hashtagsOf, newsEditions, plainQueries, type TopicSpec }
  * Listening connectors: pure mappers (API response → RawMention, fixture-tested) and fetchers.
  * Free: Google News RSS, Hacker News Algolia, Mastodon hashtag timelines, Apple customer reviews RSS.
  * Keyed: Reddit (REDDIT_CLIENT_ID/SECRET), YouTube (YOUTUBE_API_KEY), Bluesky (BLUESKY_HANDLE/APP_PASSWORD).
- * No database or AI imports here.
+ * Paid: Google reviews (DataForSEO, through the SEO Local reviews fetcher, loaded lazily).
+ * No static database or AI imports here.
  */
 export type RawMention = {
   source: ListenSource;
@@ -307,6 +309,75 @@ export function mapBluesky(json: J): RawMention[] {
   });
 }
 
+// ------------------------------------------------------------------ Google reviews (SEO Local, DataForSEO)
+
+/** Stored SEO Local reviews (newest first) → mentions; `placeUrl` links the business on Google Maps. */
+export function mapGoogleReviews(reviews: LiveReview[], place: { name?: string | null; url?: string | null } = {}): RawMention[] {
+  return (Array.isArray(reviews) ? reviews : []).flatMap((r) => {
+    if (!r?.id) return [];
+    const rating = numOrNull(r.rating);
+    return [
+      {
+        source: "google-reviews" as const,
+        externalId: `review:${r.id}`,
+        url: place.url ?? null,
+        author: str(r.author) || "Google user",
+        authorHandle: null,
+        authorFollowers: null,
+        title: `${rating == null ? "" : `${rating}★ `}Google review${place.name ? ` of ${place.name}` : ""}`,
+        body: str(r.text),
+        language: null,
+        country: null,
+        publishedAt: iso(r.date),
+        engagement: eng({ rating, replied: r.ownerReply ? 1 : 0 }),
+      },
+    ];
+  });
+}
+
+/** Google Maps link of a stored listing (place id, else CID). */
+export const googlePlaceUrl = (l: { placeId?: string | null; cid?: string | null } | null | undefined) =>
+  l?.placeId ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(l.placeId)}` : l?.cid ? `https://maps.google.com/?cid=${encodeURIComponent(l.cid)}` : null;
+
+/** Stored reviews are refreshed through DataForSEO at most this often (task-based, ~$0.0075 per 100 reviews). */
+export const REVIEWS_REFRESH_MS = 24 * 3600_000;
+/** After a refresh attempt (failed, cancelled or still running) no new paid task is posted for this long. */
+export const REVIEWS_RETRY_HOURS = 6;
+
+/**
+ * The brand's Google reviews: the reviews SEO Local already stored (local_reviews), refreshed through the
+ * same fetcher (budgeted dfs() call, stored for SEO too) when missing or older than a day. The business is
+ * found from the Local SEO business profile (or its matched Google listing). Every refresh attempt is
+ * recorded in provider_cache first, so a failed or slow task is not re-posted (and paid for) by the next
+ * topic or run for REVIEWS_RETRY_HOURS. A failed refresh keeps the stored reviews; a brand with no profile
+ * and no stored reviews has nothing to collect, so the source is skipped quietly.
+ */
+async function fetchGoogleReviewMentions(brand: ListenBrand, cancelled?: () => Promise<boolean>): Promise<RawMention[]> {
+  const [live, { getProfile }, { query }] = await Promise.all([import("@/lib/local/live"), import("@/lib/local/profile"), import("@/lib/db")]);
+  let data = await live.getLiveReviews(brand.projectId);
+  if (!data || Date.now() - Date.parse(data.fetchedAt) > REVIEWS_REFRESH_MS) {
+    const stored = await getProfile(brand.projectId);
+    const key = `cx-reviews-attempt:${brand.projectId}`;
+    const [recent] = stored ? await query("SELECT 1 FROM provider_cache WHERE key=$1 AND expires_at>now()", [key]) : [];
+    if (stored && !recent) {
+      await query(
+        `INSERT INTO provider_cache(key,source,payload,fetched_at,expires_at) VALUES($1,'dataforseo','{}'::jsonb,now(),now()+($2 * interval '1 hour'))
+         ON CONFLICT(key) DO UPDATE SET fetched_at=now(), expires_at=excluded.expires_at`,
+        [key, REVIEWS_RETRY_HOURS],
+      );
+      try {
+        const fresh = await live.fetchGoogleReviews(brand.ownerId, { id: brand.projectId, country: brand.country }, stored.profile, async () => (await cancelled?.()) ?? false);
+        if (fresh) data = await live.getLiveReviews(brand.projectId);
+      } catch (e) {
+        if (!data) throw e;
+      }
+    }
+  }
+  if (!data) return [];
+  const listing = (await live.getGoogleListing(brand.projectId))?.listing;
+  return mapGoogleReviews(data.reviews, { name: listing?.name, url: googlePlaceUrl(listing) });
+}
+
 // ------------------------------------------------------------------ fetchers
 
 export type TopicQuery = {
@@ -317,7 +388,14 @@ export type TopicQuery = {
   language: string;
   /** Full topic spec (AND CONTAINS, exclusions, regional). When set, queries are built from it with chunking. */
   spec?: TopicSpec;
+  /** The brand being listened for (needed by brand-owned sources such as Google reviews). */
+  brand?: ListenBrand;
+  /** Topic kind: Google reviews belong to the brand's own business, so only brand topics collect them. */
+  topicKind?: string;
+  /** The listening job's cancel check; long waits (the Google reviews task) stop when it returns true. */
+  cancelled?: () => Promise<boolean>;
 };
+export type ListenBrand = { projectId: string; ownerId: string; country: string };
 
 const UA = "Mozilla/5.0 (compatible; SynapseSEO-Listening/1.0)";
 async function get(url: string, init: RequestInit = {}): Promise<Response> {
@@ -431,6 +509,11 @@ export async function fetchSource(source: ListenSource, t: TopicQuery): Promise<
       for (const q of plan.plain(2).slice(0, 6)) out.push(...mapBluesky(await getJson(`https://bsky.social/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&sort=latest&limit=50`, { headers: { Authorization: `Bearer ${jwt}` } })));
       break;
     }
+    case "google-reviews":
+      // Reviews belong to the brand's own business; a fetch without a brand (or for another topic kind) skips them.
+      if (!t.brand || (t.topicKind && t.topicKind !== "brand")) break;
+      out.push(...(await fetchGoogleReviewMentions(t.brand, t.cancelled)));
+      break;
   }
   return out;
 }

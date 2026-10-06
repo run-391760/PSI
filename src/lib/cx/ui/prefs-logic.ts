@@ -156,17 +156,39 @@ export function moveItem<I extends Item>(nav: NavPrefs, group: Group<I>, href: s
   return { ...nav, order: { ...nav.order, [group.id]: list } };
 }
 
-/** Move a pinned item within the pinned list. */
-export function movePinned(nav: NavPrefs, href: string, dir: -1 | 1): NavPrefs {
+/**
+ * Move a pinned item within the pinned list. `within` limits the move to the items it accepts (one
+ * workspace's pins: the list is shared by SEO and CX), skipping over the others.
+ */
+export function movePinned(nav: NavPrefs, href: string, dir: -1 | 1, within?: (href: string) => boolean): NavPrefs {
   const list = [...nav.pinned];
   const i = list.indexOf(href);
-  const j = i + dir;
+  let j = i + dir;
+  if (within) while (j >= 0 && j < list.length && !within(list[j])) j += dir;
   if (i < 0 || j < 0 || j >= list.length) return nav;
   [list[i], list[j]] = [list[j], list[i]];
   return { ...nav, pinned: list };
 }
 
 export const navIsDefault = (nav: NavPrefs) => !nav.pinned.length && !nav.hidden.length && !nav.shown.length && !Object.keys(nav.order).length;
+
+/**
+ * The part of the nav prefs that belongs to one menu (prefs.nav is shared by the SEO and CX
+ * workspaces): `scoped` = whether it has any customisation, `reset()` = prefs without it.
+ */
+export function scopeNav<I extends Item>(nav: NavPrefs, groups: Group<I>[]) {
+  const hrefs = new Set(groups.flatMap((g) => g.items.map((i) => i.href)));
+  const ids = new Set(groups.map((g) => g.id));
+  const own = (h: string) => hrefs.has(h);
+  const scoped = nav.pinned.some(own) || nav.hidden.some(own) || nav.shown.some(own) || Object.keys(nav.order).some((k) => ids.has(k));
+  const reset = (): NavPrefs => ({
+    pinned: nav.pinned.filter((h) => !own(h)),
+    hidden: nav.hidden.filter((h) => !own(h)),
+    shown: nav.shown.filter((h) => !own(h)),
+    order: Object.fromEntries(Object.entries(nav.order).filter(([k]) => !ids.has(k))),
+  });
+  return { own, scoped, pinned: nav.pinned.filter(own), reset };
+}
 
 /** Longest matching href wins, so a parent (/cx/listening) isn't highlighted on its sub-pages. */
 export function activeHref(pathname: string, hrefs: string[]) {

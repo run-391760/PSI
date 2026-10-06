@@ -7,6 +7,7 @@ import { useState } from "react";
 import { deleteBoardAction, saveBoardAction } from "@/app/(app)/cx/command/actions";
 import { createTicketAction } from "@/app/(app)/cx/listening/actions";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import type { StreamDef, StreamItem } from "@/lib/cx/listening/command";
@@ -85,8 +86,11 @@ export function BoardEditor({ brandId, board, topics, sources, compact }: { bran
   const [d, setD] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const start = () =>
+  const { confirm, confirmDialog } = useConfirm();
+  const start = () => {
+    setErr(null);
     setD(board ? structuredClone(board) : { name: "War room", streams: [{ name: "All mentions" }, { name: "Negative", sentiment: "negative" }, ...topics.slice(0, 2).map((t) => ({ name: t.label, topic: t.value }))] });
+  };
   const save = async () => {
     if (!d) return;
     setSaving(true);
@@ -99,7 +103,7 @@ export function BoardEditor({ brandId, board, topics, sources, compact }: { bran
     router.refresh();
   };
   const remove = async () => {
-    if (!board?.id || !confirm("Delete this board?")) return;
+    if (!board?.id || !(await confirm({ title: `Delete the board “${board.name}”?`, description: "Its streams are removed. Mentions are not affected." }))) return;
     await deleteBoardAction(brandId, board.id);
     router.push(`/cx/command/streams?brand=${brandId}`);
     router.refresh();
@@ -112,9 +116,22 @@ export function BoardEditor({ brandId, board, topics, sources, compact }: { bran
         {board && <Button size="sm" variant="ghost" onClick={remove} aria-label="Delete board"><Trash2 className="h-3.5 w-3.5" /></Button>}
       </span>
       {d && (
-        <Dialog open onClose={() => setD(null)} title={d.id ? "Edit board" : "New board"} description="A board is a set of streams; each stream is a filtered, live column of mentions." size="lg">
+        <Dialog
+          open
+          onClose={() => setD(null)}
+          title={d.id ? "Edit board" : "New board"}
+          description="A board is a set of streams; each stream is a filtered, live column of mentions."
+          size="lg"
+          error={err}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setD(null)}>Cancel</Button>
+              <Button variant="primary" onClick={save} loading={saving}>Save board</Button>
+            </>
+          }
+        >
           <div className="grid gap-3">
-            <Field label="Board name" htmlFor="b-n"><Input id="b-n" value={d.name} maxLength={60} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
+            <Field label="Board name" htmlFor="b-n"><Input id="b-n" autoFocus value={d.name} maxLength={60} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
             {d.streams.map((s, i) => (
               <div key={i} className="grid grid-cols-2 gap-2 rounded-md border border-border p-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_auto]">
                 <Input aria-label="Stream name" value={s.name} maxLength={40} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Name" />
@@ -137,14 +154,10 @@ export function BoardEditor({ brandId, board, topics, sources, compact }: { bran
               </div>
             ))}
             {d.streams.length < 8 && <Button variant="secondary" size="sm" className="justify-self-start" onClick={() => setD({ ...d, streams: [...d.streams, { name: `Stream ${d.streams.length + 1}` }] })}><Plus className="h-3.5 w-3.5" /> Add stream</Button>}
-            {err && <p className="text-[12.5px] text-critical-ink">{err}</p>}
-            <div className="flex gap-2">
-              <Button variant="primary" onClick={save} loading={saving}>Save board</Button>
-              <Button variant="ghost" onClick={() => setD(null)}>Cancel</Button>
-            </div>
           </div>
         </Dialog>
       )}
+      {confirmDialog}
     </>
   );
 }

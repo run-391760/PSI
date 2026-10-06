@@ -139,7 +139,7 @@ export function OneClickReport({
               <Button
                 variant="primary"
                 loading={busy === "xlsx"}
-                disabled={selected.count === 0 || busy === "csv"}
+                disabled={selected.count === 0 || !!busy}
                 onClick={() =>
                   run("xlsx", async () => {
                     setMsg(null);
@@ -175,7 +175,7 @@ export function OneClickReport({
             </Field>
             <Button
               loading={busy === "csv"}
-              disabled={busy === "xlsx"}
+              disabled={!!busy}
               onClick={() =>
                 run("csv", async () => {
                   setQuickMsg(null);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useState, useTransition } from "react";
 import { saveProfileAction } from "@/app/(app)/local/actions";
 import { CATEGORY_SUGGESTIONS, DAYS, profileInput, type ProfileInput } from "@/lib/local/profile-schema";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,27 @@ import { cn } from "@/lib/utils";
 
 type Errors = Partial<Record<string, string>>;
 
-/** Business profile editor (name, address, phone, website, categories, hours, description, photos). */
-export function ProfileForm({ projectId, initial, onDone, submitLabel = "Save profile" }: { projectId: string; initial: ProfileInput; onDone?: () => void; submitLabel?: string }) {
+type FormState = { pending: boolean; error: string | null };
+
+/**
+ * Business profile editor (name, address, phone, website, categories, hours, description, photos).
+ * With `onStateChange` the form leaves its buttons and error out, so a Dialog footer can render them (`form={formId}`).
+ */
+export function ProfileForm({
+  projectId,
+  initial,
+  onDone,
+  submitLabel = "Save profile",
+  formId,
+  onStateChange,
+}: {
+  projectId: string;
+  initial: ProfileInput;
+  onDone?: () => void;
+  submitLabel?: string;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [hours, setHours] = useState(initial.hours);
   const [description, setDescription] = useState(initial.description ?? "");
@@ -20,9 +39,11 @@ export function ProfileForm({ projectId, initial, onDone, submitLabel = "Save pr
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error: formError }), [pending, formError, onStateChange]);
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (pending) return;
     const f = new FormData(e.currentTarget);
     const s = (k: string) => String(f.get(k) ?? "").trim();
     const num = (k: string) => (s(k) === "" ? null : Number(s(k)));
@@ -75,8 +96,8 @@ export function ProfileForm({ projectId, initial, onDone, submitLabel = "Save pr
   const setDay = (i: number, patch: Partial<(typeof hours)[number]>) => setHours((h) => h.map((d, j) => (j === i ? { ...d, ...patch } : d)));
 
   return (
-    <form onSubmit={submit} className="space-y-5" noValidate>
-      {formError && <Callout tone="critical">{formError}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-5" noValidate>
+      {formError && !onStateChange && <Callout tone="critical">{formError}</Callout>}
       {saved && !formError && !onDone && <Callout tone="good">Profile saved.</Callout>}
       <section>
         <h3 className="mb-2.5 text-[12px] font-semibold tracking-wide text-text-3 uppercase">Business</h3>
@@ -157,16 +178,18 @@ export function ProfileForm({ projectId, initial, onDone, submitLabel = "Save pr
           <Input id="bp-photos" name="photos" type="number" min={0} max={10000} defaultValue={Number(initial.photos ?? 0)} />
         </Field>
       </section>
-      <div className="flex justify-end gap-2 border-t border-border pt-4">
-        {onDone && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      {!onStateChange && (
+        <div className="flex justify-end gap-2 border-t border-border pt-4">
+          {onDone && (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" variant="primary" loading={pending}>
+            {submitLabel}
           </Button>
-        )}
-        <Button type="submit" variant="primary" loading={pending}>
-          {submitLabel}
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }

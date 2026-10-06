@@ -64,7 +64,7 @@ export function JobButton({ brandId, kind, initialJobId, variant = "primary" }: 
   const Icon = kind === "fetch" ? RefreshCw : Radar;
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button variant={variant} onClick={start} loading={starting || busy} disabled={busy}>
+      <Button variant={variant} onClick={start} loading={starting || busy} disabled={starting || busy}>
         {!starting && !busy && <Icon className="h-4 w-4" />}
         {busy ? (job?.status === "queued" ? "Queued…" : `${kind === "fetch" ? "Fetching" : "Detecting"} ${pct ? `${pct}%` : "…"}`) : kind === "fetch" ? "Fetch now" : "Run detection"}
       </Button>

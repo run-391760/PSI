@@ -111,7 +111,29 @@ export function UgcBoard({ brandId, items, filter }: { brandId: string; items: I
         })}
       </div>
       {open && (
-        <Dialog open onClose={() => setOpen(null)} title="Reuse rights" description={`${open.author}${open.author_handle ? ` (${open.author_handle})` : ""} · ${open.published_at ? dateTimeLabel(open.published_at) : ""}`}>
+        <Dialog
+          open
+          onClose={() => setOpen(null)}
+          title="Reuse rights"
+          description={`${open.author}${open.author_handle ? ` (${open.author_handle})` : ""}${open.published_at ? ` · ${dateTimeLabel(open.published_at)}` : ""}`}
+          error={err}
+          initialFocus="none"
+          footerStart={
+            open.consent && (
+              <>
+                {open.consent === "granted" && <Button variant="ghost" onClick={() => set("withdrawn")} disabled={!!busy} loading={busy === "withdrawn"}>Withdrawn</Button>}
+                <Button variant="ghost" onClick={clear} disabled={!!busy} loading={busy === "clear"}>Clear</Button>
+              </>
+            )
+          }
+          footer={
+            <>
+              <Button onClick={() => set("denied")} disabled={!!busy} loading={busy === "denied"}>Denied</Button>
+              <Button onClick={() => set("granted")} disabled={!!busy} loading={busy === "granted"}>Granted</Button>
+              <Button variant="primary" onClick={() => set("requested")} disabled={!!busy} loading={busy === "requested"}>Mark requested</Button>
+            </>
+          }
+        >
           <div className="grid gap-3">
             <div className="flex gap-2 overflow-x-auto">
               {open.media.map((m, k) =>
@@ -145,14 +167,6 @@ export function UgcBoard({ brandId, items, filter }: { brandId: string; items: I
                 {open.history.map((h, k) => <li key={k}>{dateTimeLabel(h.at)} · {h.by}: {h.status}{h.note ? ` (${h.note})` : ""}</li>)}
               </ol>
             ) : null}
-            {err && <p className="text-[12.5px] text-critical-ink">{err}</p>}
-            <div className="flex flex-wrap gap-2">
-              <Button variant="primary" onClick={() => set("requested")} loading={busy === "requested"}>Mark requested</Button>
-              <Button variant="secondary" onClick={() => set("granted")} loading={busy === "granted"}>Granted</Button>
-              <Button variant="secondary" onClick={() => set("denied")} loading={busy === "denied"}>Denied</Button>
-              {open.consent === "granted" && <Button variant="ghost" onClick={() => set("withdrawn")} loading={busy === "withdrawn"}>Withdrawn</Button>}
-              {open.consent && <Button variant="ghost" onClick={clear} loading={busy === "clear"}>Clear</Button>}
-            </div>
           </div>
         </Dialog>
       )}

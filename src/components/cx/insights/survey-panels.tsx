@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { deleteSurveyAction, ticketLinkAction, updateSurveyFlagsAction } from "@/app/(app)/cx/surveys/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Input } from "@/components/ui/input";
@@ -43,6 +44,7 @@ export function SurveySharePanel({ brand, survey, origin, invites }: { brand: st
   const [link, setLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const publicUrl = `${origin}/s/${survey.id}`;
   const flag = (patch: { status?: "active" | "paused"; auto_send?: boolean }) =>
     start(async () => {
@@ -65,8 +67,8 @@ export function SurveySharePanel({ brand, survey, origin, invites }: { brand: st
               variant="ghost"
               aria-label="Delete survey"
               disabled={pending}
-              onClick={() =>
-                confirm("Delete this survey and all its responses?") &&
+              onClick={async () =>
+                (await confirm({ title: "Delete this survey?", description: "All its responses are deleted too. This can't be undone." })) &&
                 start(async () => {
                   const r = await deleteSurveyAction(brand, survey.id);
                   if (r.ok) router.push(`/cx/surveys?brand=${brand}`);
@@ -98,7 +100,7 @@ export function SurveySharePanel({ brand, survey, origin, invites }: { brand: st
             <Input type="number" min={1} value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Ticket number" aria-label="Ticket number" className="w-36" />
             <Button
               loading={pending}
-              disabled={!ticket}
+              disabled={pending || !ticket}
               onClick={() =>
                 start(async () => {
                   setError(null);
@@ -148,6 +150,7 @@ export function SurveySharePanel({ brand, survey, origin, invites }: { brand: st
           </div>
         )}
       </CardBody>
+      {confirmDialog}
     </Card>
   );
 }

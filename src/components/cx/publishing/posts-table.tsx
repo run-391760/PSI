@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { bulkUploadAction, deletePostAction, duplicatePostAction, type BulkPreviewRow } from "@/app/(app)/cx/publishing/actions";
 import { Button, buttonClass } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -47,6 +48,7 @@ export function PostsTable({ brandId, rows, canAuthor, empty }: { brandId: strin
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const act = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>, go?: (data: unknown) => void) =>
     start(async () => {
       const r = await fn();
@@ -106,7 +108,7 @@ export function PostsTable({ brandId, rows, canAuthor, empty }: { brandId: strin
             <Button size="icon" variant="ghost" title="Duplicate" disabled={pending} onClick={() => act(() => duplicatePostAction(brandId, r.id), (id) => router.push(`/cx/publishing/${id}?brand=${brandId}`))}>
               <Copy className="h-3.5 w-3.5" />
             </Button>
-            <Button size="icon" variant="ghost" title="Delete" disabled={pending} onClick={() => confirm("Delete this post?") && act(() => deletePostAction(brandId, r.id))}>
+            <Button size="icon" variant="ghost" title="Delete" disabled={pending} onClick={async () => (await confirm({ title: "Delete this post?", description: r.title || r.excerpt || undefined })) && act(() => deletePostAction(brandId, r.id))}>
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </span>
@@ -127,6 +129,7 @@ export function PostsTable({ brandId, rows, canAuthor, empty }: { brandId: strin
         emptyText={empty}
         defaultSort={{ key: "when", dir: "desc" }}
       />
+      {confirmDialog}
     </>
   );
 }
@@ -180,27 +183,34 @@ export function BulkUpload({ brandId }: { brandId: string }) {
         onClose={() => setOpen(false)}
         size="xl"
         title="Bulk schedule from Excel or CSV"
-        description="One row per post. Times are in your browser's time zone. Media refers to asset library file names."
+        description="One row per post. Times are in your browser's time zone."
+        error={error}
         footer={
           <>
-            <a href="/api/cx/publishing/bulk-template" className={buttonClass("ghost")} download>
-              <Download className="h-4 w-4" /> Excel template
-            </a>
-            <Button variant="ghost" onClick={() => downloadCsv("bulk-schedule-template", parseCsv(BULK_TEMPLATE))}>
-              CSV template
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              {result ? "Close" : "Cancel"}
             </Button>
-            <Button disabled={pending || !hasInput} onClick={() => call(true)}>
-              {pending && !checked ? "Checking…" : "Check file"}
+            <Button disabled={pending || !hasInput} loading={pending && !checked} onClick={() => call(true)}>
+              Check file
             </Button>
-            <Button variant="primary" disabled={pending || !checked?.valid} onClick={() => call(false)}>
-              {pending && checked ? "Scheduling…" : `Schedule ${checked?.valid ?? ""} valid post${checked?.valid === 1 ? "" : "s"}`}
+            <Button variant="primary" disabled={pending || !checked?.valid} loading={pending && !!checked} onClick={() => call(false)}>
+              {`Schedule ${checked?.valid ?? ""} valid post${checked?.valid === 1 ? "" : "s"}`}
             </Button>
           </>
         }
       >
         <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[12.5px] text-text-2">Start from a template:</span>
+            <a href="/api/cx/publishing/bulk-template" className={buttonClass("secondary", "sm")} download>
+              <Download className="h-3.5 w-3.5" /> Excel template
+            </a>
+            <Button size="sm" onClick={() => downloadCsv("bulk-schedule-template", parseCsv(BULK_TEMPLATE))}>
+              <Download className="h-3.5 w-3.5" /> CSV template
+            </Button>
+          </div>
           <p className="text-[12.5px] text-text-2">
-            Columns: <code>date</code>, <code>time</code>, <code>channels</code> ({PUB_CHANNELS.map((c) => c.kind).join("|")}), <code>text</code> (use <code>{"{link}"}</code> for the tracked link), <code>link</code>, <code>campaign</code>, <code>first_comment</code>, <code>media</code>, <code>post_type</code> (text, story, reel, poll, document, event), <code>tags</code>, <code>poll_options</code> (for polls: 2–4 answers separated by <code>|</code>). The Excel template has a Guide sheet.
+            Columns: <code>date</code>, <code>time</code>, <code>channels</code> ({PUB_CHANNELS.map((c) => c.kind).join("|")}), <code>text</code> (use <code>{"{link}"}</code> for the tracked link), <code>link</code>, <code>campaign</code>, <code>first_comment</code>, <code>media</code>, <code>post_type</code> (text, story, reel, poll, document, event), <code>tags</code>, <code>poll_options</code> (for polls: 2–4 answers separated by <code>|</code>). Media refers to asset library file names. The Excel template has a Guide sheet.
           </p>
           <input
             type="file"
@@ -229,7 +239,6 @@ export function BulkUpload({ brandId }: { brandId: string }) {
           ) : (
             <Textarea rows={6} value={csv} onChange={(e) => { setCsv(e.target.value); reset(); }} placeholder={BULK_TEMPLATE} className="font-mono text-[12px]" aria-label="CSV text" />
           )}
-          {error && <Callout tone="critical">{error}</Callout>}
           {result && (
             <Callout tone={result.errors.length ? "warning" : "good"} title={`${result.created} post${result.created === 1 ? "" : "s"} ${result.pendingApproval ? "submitted for approval" : "scheduled"}${result.errors.length ? ` · ${result.errors.length} row${result.errors.length === 1 ? "" : "s"} skipped` : ""}`} />
           )}
@@ -237,9 +246,9 @@ export function BulkUpload({ brandId }: { brandId: string }) {
             <Callout tone={checked.errors.length ? "warning" : "good"} title={`${checked.valid} row${checked.valid === 1 ? "" : "s"} ready${checked.errors.length ? ` · ${checked.errors.length} with errors (skipped)` : ""}`} />
           )}
           {shown && shown.preview.length > 0 && (
-            <div className="scroll-thin max-h-72 overflow-auto rounded-md border border-border">
+            <div className="scroll-thin overflow-x-auto rounded-md border border-border">
               <table className="w-full text-[12.5px]">
-                <thead className="sticky top-0 bg-surface-2 text-left text-text-2">
+                <thead className="bg-surface-2 text-left text-text-2">
                   <tr>
                     <th className="px-2 py-1.5 font-medium">Row</th>
                     <th className="px-2 py-1.5 font-medium">When</th>

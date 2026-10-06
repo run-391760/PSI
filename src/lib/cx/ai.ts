@@ -1,10 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { analyzeSentiment, type Sentiment } from "@/lib/monitoring/sentiment";
+import { complete as llmComplete, llmConfigured } from "@/lib/providers/llm";
 
 /**
  * Text understanding for CX: sentiment (built-in lexicon, free), intent and language (rule-based,
  * free), and optional LLM features (suggested replies, summaries, AI classification) when an
- * Anthropic or OpenAI key is configured. Callers must handle `null` = AI not configured.
+ * Anthropic, OpenAI or Gemini key is configured (shared layer in providers/llm). Callers must handle
+ * `null` = AI not configured or unavailable.
  */
 export type Intent = "complaint" | "query" | "feedback" | "praise" | "purchase" | "cancellation" | "spam" | "other";
 export const INTENT_LABELS: Record<Intent, string> = {
@@ -55,29 +56,11 @@ export function analyzeText(text: string) {
 
 // ---------------------------------------------------------------- optional LLM
 
-export const aiConfigured = () => !!process.env.ANTHROPIC_API_KEY || !!process.env.OPENAI_API_KEY;
-let anthropic: Anthropic | null = null;
+export const aiConfigured = () => llmConfigured();
 
-/** One-shot LLM completion. Returns null when no AI key is configured. */
+/** One-shot LLM completion. Never throws: null when no AI key is configured or every provider failed. */
 export async function complete(system: string, prompt: string, maxTokens = 1200): Promise<string | null> {
-  if (process.env.ANTHROPIC_API_KEY) {
-    anthropic ??= new Anthropic({ timeout: 60_000, maxRetries: 2 });
-    const res = await anthropic.messages.create({ model: "claude-opus-5", max_tokens: maxTokens, system, messages: [{ role: "user", content: prompt }] });
-    if (res.stop_reason === "refusal") return null;
-    return res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("").trim() || null;
-  }
-  if (process.env.OPENAI_API_KEY) {
-    const r = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-6-astra", instructions: system, input: prompt, max_output_tokens: maxTokens }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    const d = (await r.json().catch(() => ({}))) as { output?: { type?: string; content?: { type?: string; text?: string }[] }[] };
-    if (!r.ok) return null;
-    return (d.output ?? []).flatMap((o) => (o.type === "message" ? (o.content ?? []).filter((c) => c.type === "output_text").map((c) => c.text ?? "") : [])).join("").trim() || null;
-  }
-  return null;
+  return llmComplete(system, prompt, { maxTokens });
 }
 
 /** Suggested agent reply for a conversation (null when AI is not configured). */

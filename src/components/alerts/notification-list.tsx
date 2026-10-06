@@ -10,6 +10,7 @@ import type { NotificationFilter, NotificationItem } from "@/lib/position-tracki
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Checkbox } from "@/components/ui/input";
 import { SeverityBadge, SeverityIcon } from "./severity";
@@ -19,6 +20,7 @@ export function NotificationList({ items, toolLabels, filter, filtered, emptyAll
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
       setError(null);
@@ -49,7 +51,7 @@ export function NotificationList({ items, toolLabels, filter, filtered, emptyAll
             <Button size="sm" variant="ghost" onClick={() => run(() => markReadAction(ids, false))}>
               <Mail className="h-3.5 w-3.5" /> Mark unread
             </Button>
-            <Button size="sm" variant="ghost" className="text-critical-ink" onClick={() => confirm(`Delete ${selected.size} notification${selected.size === 1 ? "" : "s"}?`) && run(() => deleteNotificationsAction(ids))}>
+            <Button size="sm" variant="ghost" className="text-critical-ink" onClick={async () => (await confirm({ title: `Delete ${selected.size} notification${selected.size === 1 ? "" : "s"}?` })) && run(() => deleteNotificationsAction(ids))}>
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </Button>
           </>
@@ -74,11 +76,12 @@ export function NotificationList({ items, toolLabels, filter, filtered, emptyAll
           <Button size="sm" onClick={() => run(() => markAllReadAction(filter))} disabled={!items.some((i) => !i.read)} title={filtered ? "Mark every notification matching the filters as read" : "Mark every notification as read"}>
             <CheckCheck className="h-3.5 w-3.5" /> Mark all read
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => confirm("Delete all read notifications" + (filtered ? " matching the filters?" : "?")) && run(() => deleteReadAction(filter))} disabled={!items.some((i) => i.read)}>
+          <Button size="sm" variant="ghost" onClick={async () => (await confirm({ title: "Delete all read notifications?", description: filtered ? "Only read notifications matching the current filters are deleted." : undefined })) && run(() => deleteReadAction(filter))} disabled={!items.some((i) => i.read)}>
             <Trash2 className="h-3.5 w-3.5" /> Clear read
           </Button>
         </div>
       </div>
+      {confirmDialog}
       {error && (
         <Callout tone="critical" className="m-4">
           {error}

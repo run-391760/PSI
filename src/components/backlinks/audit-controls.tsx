@@ -2,7 +2,7 @@
 
 import { Play, RefreshCw, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useState, useTransition } from "react";
 import { runAuditAction, saveAuditSetupAction } from "@/app/(app)/backlink-audit/actions";
 import { DATABASES } from "@/lib/domain";
 import { Button } from "@/components/ui/button";
@@ -12,13 +12,35 @@ import { Checkbox, Field, Input, Select } from "@/components/ui/input";
 
 export type AuditSetupValues = { brandTerms: string[]; country: string; weekly: boolean };
 
-/** Backlink Audit setup: brand terms, target country and the weekly re-audit schedule. */
-export function AuditSetupForm({ projectId, initial, submitLabel = "Start Backlink Audit", onDone }: { projectId: string; initial: AuditSetupValues; submitLabel?: string; onDone?: () => void }) {
+type FormState = { pending: boolean; error: string | null };
+
+/**
+ * Backlink Audit setup: brand terms, target country and the weekly re-audit schedule. With
+ * `onStateChange` the form leaves its submit button and error out, so a Dialog footer can render
+ * them (`form={formId}`).
+ */
+export function AuditSetupForm({
+  projectId,
+  initial,
+  submitLabel = "Start Backlink Audit",
+  onDone,
+  formId,
+  onStateChange,
+}: {
+  projectId: string;
+  initial: AuditSetupValues;
+  submitLabel?: string;
+  onDone?: () => void;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error }), [pending, error, onStateChange]);
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (pending) return;
     const f = new FormData(e.currentTarget);
     const brandTerms = String(f.get("brand") || "")
       .split(/[\n,]/)
@@ -34,8 +56,8 @@ export function AuditSetupForm({ projectId, initial, submitLabel = "Start Backli
     });
   };
   return (
-    <form onSubmit={submit} className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-4">
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Brand terms" htmlFor="bla-brand" hint="Comma separated. Links whose anchors use your brand are treated as natural.">
           <Input id="bla-brand" name="brand" defaultValue={initial.brandTerms.join(", ")} placeholder="Acme, Acme Corp" maxLength={1800} />
@@ -56,24 +78,50 @@ export function AuditSetupForm({ projectId, initial, submitLabel = "Start Backli
           <span className="font-medium text-text">Re-audit weekly</span> and alert me when new toxic domains start linking to the site.
         </span>
       </label>
-      <div className="flex justify-end">
-        <Button type="submit" variant="primary" loading={pending}>
-          <Play className="h-3.5 w-3.5" /> {submitLabel}
-        </Button>
-      </div>
+      {!onStateChange && (
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary" loading={pending}>
+            <Play className="h-3.5 w-3.5" /> {submitLabel}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
 
 export function AuditSettingsButton({ projectId, initial }: { projectId: string; initial: AuditSetupValues }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button onClick={() => setOpen(true)}>
         <Settings2 className="h-4 w-4" /> Settings
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Backlink Audit settings" description="Saving re-runs the audit with the new settings." size="lg">
-        <AuditSetupForm projectId={projectId} initial={initial} submitLabel="Save and re-run" onDone={() => setOpen(false)} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Backlink Audit settings"
+        description="Saving re-runs the audit with the new settings."
+        size="lg"
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              <Play className="h-3.5 w-3.5" /> Save and re-run
+            </Button>
+          </>
+        }
+      >
+        <AuditSetupForm projectId={projectId} initial={initial} formId={formId} onStateChange={setState} onDone={close} />
       </Dialog>
     </>
   );

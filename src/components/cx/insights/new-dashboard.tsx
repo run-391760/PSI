@@ -6,7 +6,6 @@ import { useState, useTransition } from "react";
 import { createDashboardAction } from "@/app/(app)/cx/dashboards/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
 import { TEMPLATES } from "@/lib/cx/insights/widget-defs";
 import { cn } from "@/lib/utils";
@@ -22,35 +21,35 @@ export function NewDashboardButton({ brand, variant = "primary" }: { brand: stri
   const [pending, start] = useTransition();
   return (
     <>
-      <Button variant={variant} onClick={() => setOpen(true)}>
+      <Button variant={variant} onClick={() => { setError(null); setOpen(true); }}>
         <Plus className="h-4 w-4" /> New dashboard
       </Button>
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         title="New dashboard"
+        size="lg"
+        error={error}
+        onSubmit={() =>
+          name.trim() &&
+          !pending &&
+          start(async () => {
+            setError(null);
+            const r = await createDashboardAction(brand, { name, description, shared, template });
+            if (!r.ok) return setError(r.error);
+            router.push(`/cx/dashboards/${r.data.id}?brand=${brand}`);
+          })
+        }
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              loading={pending}
-              disabled={!name.trim()}
-              onClick={() =>
-                start(async () => {
-                  const r = await createDashboardAction(brand, { name, description, shared, template });
-                  if (!r.ok) return setError(r.error);
-                  router.push(`/cx/dashboards/${r.data.id}?brand=${brand}`);
-                })
-              }
-            >
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !name.trim()}>
               Create
             </Button>
           </>
         }
       >
         <div className="space-y-3">
-          {error && <Callout tone="critical">{error}</Callout>}
           <Field label="Name" htmlFor="nd-name">
             <Input id="nd-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Weekly support review" autoFocus />
           </Field>
@@ -61,7 +60,7 @@ export function NewDashboardButton({ brand, variant = "primary" }: { brand: stri
             <div className="mb-1.5 text-[12.5px] font-medium text-text-2">Start from</div>
             <div className="grid gap-2 sm:grid-cols-3">
               {TEMPLATES.map((t) => (
-                <button key={t.id} type="button" onClick={() => setTemplate(t.id)} className={cn("rounded-md border px-3 py-2 text-left", template === t.id ? "border-brand bg-brand-soft" : "border-border hover:bg-surface-2")}>
+                <button key={t.id} type="button" aria-pressed={template === t.id} onClick={() => setTemplate(t.id)} className={cn("rounded-md border px-3 py-2 text-left", template === t.id ? "border-brand bg-brand-soft" : "border-border hover:bg-surface-2")}>
                   <div className="text-[13px] font-medium text-text">{t.name}</div>
                   <div className="text-[12px] text-text-3">{t.description}</div>
                 </button>

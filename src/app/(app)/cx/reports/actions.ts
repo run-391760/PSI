@@ -115,7 +115,7 @@ export async function drillExportAction(projectId: string, spec: DrillSpec, form
 export async function reportInsightAction(projectId: string, chart: { title: string; metric: string; range: string; rows: { key: string; value: number | null }[]; total: number | null; previous: number | null }): Promise<ActionResult<{ text: string }>> {
   try {
     await brand(projectId, false);
-    if (!aiConfigured()) return { ok: false, error: "Connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) to get insights." };
+    if (!aiConfigured()) return { ok: false, error: "Connect an AI key (Anthropic, OpenAI or Gemini) on the server to get insights." };
     const text = await chartInsight({ ...chart, rows: chart.rows.slice(0, 60) });
     return text ? { ok: true, data: { text } } : { ok: false, error: "The AI provider returned no answer." };
   } catch (e) {

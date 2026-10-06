@@ -29,9 +29,9 @@ domain or keyword from the top bar, or create a project to unlock the monitoring
 | Competitive research | Domain Overview, Traffic Analytics (single + compare up to 5), Organic Research (positions, position changes, competitors, pages, subdomains), Keyword Gap, Backlink Gap, Market Explorer |
 | Keyword research | Keyword Overview (single + bulk), Keyword Magic Tool (match types, questions, groups, filters), Keyword Strategy Builder (lists, SERP-overlap clustering, pillar pages), Position Tracking, Organic Traffic Insights (your Search Console + GA4 data by landing page and query) |
 | Link building | Backlink Analytics (overview, backlinks, anchors, referring domains/IPs, indexed pages, outbound, competitors, compare), Backlink Audit (toxicity, disavow file), Link Building Tool (prospects, outreach pipeline, live link monitor), Bulk Analysis (200 targets) |
-| On-page & tech SEO | Site Audit (real crawler, 60+ checks, thematic reports, Core Web Vitals), On Page SEO Checker, SEO Content Template, Log File Analyzer |
+| On-page & tech SEO | Site Audit (real crawler, 60+ checks, thematic reports, Core Web Vitals), On Page SEO Checker (with one-click import into the Pre-Publish Optimizer), Log File Analyzer |
 | Local SEO | Listing Management, Map Rank Tracker (geo-grid), Review Management |
-| Content | Topic Research, SEO Writing Assistant, Brand Monitoring |
+| Content | Topic Research, Pre-Publish Optimizer (58 scored checks with fixes and AI apply & re-score, content briefs from the live top 10, Search Console and DataForSEO keyword data for the draft), Brand Monitoring |
 | AI search | AI Visibility (prompt tracking across AI engines, AI-crawler readiness) |
 | Advertising | Advertising Research (paid positions, ad copies, ads history), PPC Keyword Tool (campaign/ad-group planner, Google Ads Editor CSV) |
 | Monitoring & reports | SERP Sensor, Alerts (notification center + rules), My Reports (branded, printable PDF), Activity (jobs + API spend) |
@@ -43,14 +43,14 @@ countries), light/dark themes, mobile layouts, ⌘K global search.
 
 | Source | Used for | Needs |
 |---|---|---|
-| **Live crawl** (built-in, SSRF-safe, robots.txt respected) | Site Audit, On Page SEO Checker page facts, Link Building monitor, Writing Assistant URL import, AI-crawler readiness | nothing |
+| **Live crawl** (built-in, SSRF-safe, robots.txt respected) | Site Audit, On Page SEO Checker page facts, Link Building monitor, Pre-Publish Optimizer URL import and competitor pages, AI-crawler readiness | nothing |
 | **Google Autocomplete** | Real keyword ideas in the Keyword Magic Tool | `ENABLE_AUTOCOMPLETE` (on by default) |
 | **PageSpeed Insights** | Core Web Vitals in Site Audit | `ENABLE_PAGESPEED` (on), optional `PAGESPEED_API_KEY` |
 | **Google News RSS** | Brand Monitoring mentions | `ENABLE_NEWS_MENTIONS` (on) |
 | **Your files** | Log File Analyzer (Apache/Nginx logs, .gz), CSV keyword imports | nothing |
-| **Google Search Console + GA4** (OAuth, read-only) | Organic Traffic Insights, project widget: real clicks, impressions, queries, positions, organic sessions, key events | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_SECRET` |
+| **Google Search Console + GA4** (OAuth, read-only) | Organic Traffic Insights, project widget, Pre-Publish Optimizer research (clicks, impressions, CTR, position and queries of the draft URL): real clicks, impressions, queries, positions, organic sessions, key events | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_SECRET` |
 | **AI engines with web search** | AI Visibility live answers: ChatGPT (OpenAI Responses API), Gemini (Interactions API + Google Search), Perplexity (Agent API), Claude (Anthropic SDK), Google AI Overviews (DataForSEO SERP) | `OPENAI_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `ANTHROPIC_API_KEY`, DataForSEO |
-| **DataForSEO** (paid) | Domain, keyword, SERP, backlink and rank data | `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` |
+| **DataForSEO** (paid) | Domain, keyword, SERP, backlink and rank data; Pre-Publish Optimizer live top 10, People Also Ask and keyword metrics | `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` |
 | **Demo engine** | Everything else when no paid provider is configured: traffic, rankings, backlinks, local listings/reviews, sensor, other AI engines | nothing — always labelled "Demo data" |
 
 The demo engine (`src/lib/seo/engine`) is deterministic and internally consistent: a keyword has the

@@ -18,12 +18,12 @@ export const isConnector = (k: string): k is ConnectorKind => CONNECTORS.some((c
 
 /** Channels that need a platform partnership / paid plan: shown as connect cards (B8–B12, B16, B21). */
 export const CONNECT_CARDS = [
-  { kind: "threads", name: "Threads", api: "Threads API (Meta)", cost: "free-approval", costNote: "Free; Meta app review", env: ["META_APP_ID", "META_APP_SECRET"] },
+  { kind: "threads", name: "Threads", api: "Threads API (Meta)", cost: "free-approval", costNote: "Free; Meta app review. Connect with a token in Publishing → Settings", env: [] },
   { kind: "tiktok", name: "TikTok", api: "TikTok Business / Content Posting API", cost: "free-approval", costNote: "Free; TikTok developer approval", env: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"] },
   { kind: "pinterest", name: "Pinterest", api: "Pinterest API v5", cost: "free-approval", costNote: "Free; app review for write access", env: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"] },
   { kind: "line", name: "LINE Messenger", api: "LINE Messaging API", cost: "paid", costNote: "Free tier, then paid messages", env: ["LINE_CHANNEL_SECRET", "LINE_CHANNEL_ACCESS_TOKEN"] },
   { kind: "viber", name: "Viber", api: "Viber Business Messages", cost: "paid", costNote: "Paid; via a Viber partner", env: ["VIBER_AUTH_TOKEN"] },
-  { kind: "gbp", name: "Google Business Profile", api: "Business Profile API (reviews, locations)", cost: "free-approval", costNote: "Free; Google access approval", env: ["GOOGLE_BUSINESS_CLIENT_ID", "GOOGLE_BUSINESS_CLIENT_SECRET"] },
+  { kind: "gbp", name: "Google Business Profile", api: "Business Profile API (reviews, locations)", cost: "free-approval", costNote: "Free; Google access approval. Connect with a token in Publishing → Settings", env: [] },
   { kind: "telephony", name: "Calls (Twilio, Exotel…)", api: "Telephony provider webhooks + recordings", cost: "paid", costNote: "Paid per minute", env: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] },
 ] as const;
 export const cardConfigured = (env: readonly string[]) => env.every((e) => !!process.env[e]);

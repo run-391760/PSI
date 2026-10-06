@@ -175,7 +175,7 @@ export function Composer(p: ComposerProps) {
               )}
             </Menu>
           ) : (
-            <span className="hidden items-center gap-1 px-1 text-[11.5px] text-text-3 xl:inline-flex" title="Set ANTHROPIC_API_KEY or OPENAI_API_KEY on the server"><Sparkles className="h-3.5 w-3.5" />Connect an AI key for AI helpers</span>
+            <span className="hidden items-center gap-1 px-1 text-[11.5px] text-text-3 xl:inline-flex" title="Set an AI key (Anthropic, OpenAI or Gemini) on the server"><Sparkles className="h-3.5 w-3.5" />Connect an AI key for AI helpers</span>
           )}
         </div>
       </div>
@@ -251,8 +251,8 @@ export function Composer(p: ComposerProps) {
             {SETTABLE_STATUSES.filter((s) => s.id !== "new").map((s) => <option key={s.id} value={s.id}>Set {s.label}</option>)}
           </Select>
         )}
-        <Button variant="primary" onClick={send} disabled={!!p.disabled || busy === "send" || (!text.trim() && !uploads.files.length) || uploads.busy || needStatus}>
-          {mode === "note" ? <><Lock className="h-3.5 w-3.5" />Add note</> : <><Send className="h-3.5 w-3.5" />{busy === "send" ? "Sending…" : "Send"}</>}
+        <Button variant="primary" onClick={send} loading={busy === "send"} disabled={!!p.disabled || busy === "send" || (!text.trim() && !uploads.files.length) || uploads.busy || needStatus}>
+          {mode === "note" ? <><Lock className="h-3.5 w-3.5" />Add note</> : <>{busy !== "send" && <Send className="h-3.5 w-3.5" />}Send</>}
         </Button>
       </div>
       {linkOpen && <LinkDialog selected={taRef.current ? text.slice(taRef.current.selectionStart, taRef.current.selectionEnd) : ""} onClose={() => setLinkOpen(false)} onInsert={(s) => { setLinkOpen(false); insert(s); }} />}
@@ -273,10 +273,11 @@ function LinkDialog({ selected, onClose, onInsert }: { selected: string; onClose
   const ok = /^https?:\/\/[^\s]+\.[^\s]+/.test(url);
   return (
     <Dialog open onClose={onClose} size="sm" title="Insert link" description="Shown as a clickable link in email; chat and social channels get the text and URL."
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ok} onClick={() => onInsert(label.trim() ? `[${label.trim().replace(/[[\]]/g, "")}](${url.trim()})` : url.trim())}>Insert</Button></>}>
+      onSubmit={() => ok && onInsert(label.trim() ? `[${label.trim().replace(/[[\]]/g, "")}](${url.trim()})` : url.trim())}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" disabled={!ok}>Insert</Button></>}>
       <div className="space-y-3">
-        <Field label="Text" htmlFor="ln-t"><Input id="ln-t" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Track your order" /></Field>
-        <Field label="URL" htmlFor="ln-u"><Input id="ln-u" value={url} onChange={(e) => setUrl(e.target.value)} type="url" /></Field>
+        <Field label="Text" htmlFor="ln-t"><Input id="ln-t" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Track your order" autoFocus={!selected} /></Field>
+        <Field label="URL" htmlFor="ln-u"><Input id="ln-u" value={url} onChange={(e) => setUrl(e.target.value)} type="url" autoFocus={!!selected} /></Field>
       </div>
     </Dialog>
   );

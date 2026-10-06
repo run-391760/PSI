@@ -6,7 +6,6 @@ import { useState, useTransition } from "react";
 import { saveSurveySettingsAction } from "@/app/(app)/cx/surveys/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
 import { downloadCsv } from "@/lib/csv";
 import { DEFAULT_TEMPLATE, fillSurveyTemplate, inlineRatingLinks, type SurveySettings } from "@/lib/cx/insights/survey-defs";
@@ -30,16 +29,17 @@ export function SurveySettingsButton({ brand, surveyId, kind, question, settings
   const togglePriority = (p: "low" | "normal" | "high" | "urgent") => setS({ ...s, conditions: { ...c, priorities: (c.priorities ?? []).includes(p) ? (c.priorities ?? []).filter((x) => x !== p) : [...(c.priorities ?? []), p] } });
   return (
     <>
-      <Button onClick={() => setOpen(true)}><Mail className="h-4 w-4" /> Delivery settings</Button>
+      <Button onClick={() => { setError(null); setOpen(true); }}><Mail className="h-4 w-4" /> Delivery settings</Button>
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         size="xl"
         title="Delivery settings"
         description="How and when this survey is sent after a ticket is resolved, and what respondents see."
+        error={error}
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               variant="primary"
               loading={pending}
@@ -59,7 +59,6 @@ export function SurveySettingsButton({ brand, surveyId, kind, question, settings
       >
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-3">
-            {error && <Callout tone="critical">{error}</Callout>}
             <Field label="Send when a ticket is" htmlFor="ss-trigger">
               <Select id="ss-trigger" value={s.trigger} onChange={(e) => setS({ ...s, trigger: e.target.value as SurveySettings["trigger"] })}>
                 <option value="solved">Resolved (solved)</option>

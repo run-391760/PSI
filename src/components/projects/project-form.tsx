@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useState, useTransition } from "react";
 import { createProjectAction } from "@/app/(app)/projects/actions";
 import { DATABASES } from "@/lib/domain";
 import { Button } from "@/components/ui/button";
@@ -10,16 +10,34 @@ import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 
+type FormState = { pending: boolean; error: string | null };
+
 /**
  * Create-project form. After creation navigates to `redirectTo` with {id} replaced
- * (e.g. "/site-audit?project={id}"), defaulting to the project dashboard.
+ * (e.g. "/site-audit?project={id}"), defaulting to the project dashboard. With `onStateChange` the
+ * form leaves its buttons and error out, so a Dialog can render them in its footer (`form={formId}`).
  */
-export function ProjectForm({ redirectTo = "/projects/{id}", onDone, defaultDomain }: { redirectTo?: string; onDone?: () => void; defaultDomain?: string }) {
+export function ProjectForm({
+  redirectTo = "/projects/{id}",
+  onDone,
+  defaultDomain,
+  formId,
+  onStateChange,
+}: {
+  redirectTo?: string;
+  onDone?: () => void;
+  defaultDomain?: string;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  useEffect(() => onStateChange?.({ pending, error }), [pending, error, onStateChange]);
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (pending) return;
+    setError(null);
     const f = new FormData(e.currentTarget);
     const domain = String(f.get("domain") || "");
     const lines = (name: string) =>
@@ -44,8 +62,8 @@ export function ProjectForm({ redirectTo = "/projects/{id}", onDone, defaultDoma
     });
   };
   return (
-    <form onSubmit={submit} className="space-y-3.5">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-3.5">
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <div className="grid gap-3.5 sm:grid-cols-2">
         <Field label="Domain" htmlFor="p-domain" hint="Root domain, e.g. example.com">
           <Input id="p-domain" name="domain" required defaultValue={defaultDomain} placeholder="example.com" autoFocus />
@@ -78,29 +96,54 @@ export function ProjectForm({ redirectTo = "/projects/{id}", onDone, defaultDoma
       <Field label="Brand terms (optional)" htmlFor="p-brand" hint="Names people use for your brand; comma or line separated.">
         <Input id="p-brand" name="brand_terms" placeholder="Acme, Acme Corp" />
       </Field>
-      <div className="flex justify-end gap-2 pt-1">
-        {onDone && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      {!onStateChange && (
+        <div className="flex justify-end gap-2 pt-1">
+          {onDone && (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" variant="primary" loading={pending}>
+            Create project
           </Button>
-        )}
-        <Button type="submit" variant="primary" loading={pending}>
-          Create project
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }
 
 export function NewProjectButton({ redirectTo, label = "Create project", variant = "primary", defaultDomain }: { redirectTo?: string; label?: string; variant?: "primary" | "secondary"; defaultDomain?: string }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, error: null });
+  };
   return (
     <>
       <Button variant={variant} onClick={() => setOpen(true)}>
         <Plus className="h-4 w-4" /> {label}
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Create a project" description="A project groups the tools that monitor one website." size="lg">
-        <ProjectForm redirectTo={redirectTo} onDone={() => setOpen(false)} defaultDomain={defaultDomain} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Create a project"
+        description="A project groups the tools that monitor one website."
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending}>
+              Create project
+            </Button>
+          </>
+        }
+      >
+        <ProjectForm redirectTo={redirectTo} onDone={close} defaultDomain={defaultDomain} formId={formId} onStateChange={setState} />
       </Dialog>
     </>
   );

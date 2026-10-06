@@ -1,5 +1,6 @@
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
+import { pickInboxToken } from "@/lib/cx/providers";
 import { decryptSecret } from "@/lib/secrets";
 import { channelSecret, setChannelResult } from "./channels";
 import type { InboundSocial } from "./webhooks";
@@ -40,12 +41,12 @@ async function li(path: string, token: string, init?: { method?: string; body?: 
 }
 
 type LiChannel = { id: string; project_id: string; config: Obj; secret_enc: string | null };
-/** The channel's own token, else the brand's Publishing LinkedIn connection for the same organization. */
+/** The channel's own token, else the brand's Publishing LinkedIn connection for the same organization, else LINKEDIN_ACCESS_TOKEN. */
 async function tokenFor(ch: LiChannel) {
   const own = channelSecret(ch);
-  if (own) return own;
-  const [acc] = await query<{ token_enc: string | null }>("SELECT token_enc FROM cx_pub_accounts WHERE project_id=$1 AND kind='linkedin' AND external_id=$2", [ch.project_id, ch.config.accountId]);
-  return acc?.token_enc ? decryptSecret(acc.token_enc) : process.env.LINKEDIN_ACCESS_TOKEN || null;
+  const orgUrn = String(ch.config.accountId ?? "");
+  const [acc] = !own && orgUrn ? await query<{ external_id: string; token_enc: string | null }>("SELECT external_id, token_enc FROM cx_pub_accounts WHERE project_id=$1 AND kind='linkedin' AND external_id=$2", [ch.project_id, orgUrn]) : [];
+  return pickInboxToken("linkedin", own, orgUrn, acc ? { externalId: acc.external_id, token: acc.token_enc ? decryptSecret(acc.token_enc) : null } : null, process.env);
 }
 
 const text = (c: Obj) => String(c.message?.text ?? c.commentary ?? "").trim() || "[no text]";

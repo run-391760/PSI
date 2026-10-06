@@ -4,7 +4,6 @@ import { FlipHorizontal, RotateCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/input";
 import { CROP_PRESETS, cropRect, outputSize } from "@/lib/cx/publishing/suggest";
 
@@ -139,10 +138,12 @@ export function ImageEditor({ brandId, asset, onClose, onSaved }: { brandId: str
       size="xl"
       title="Edit image"
       description="Crop to a network size, then save as a new asset. The original stays in the library."
+      error={img ? error : null}
+      initialFocus="none"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={busy || !img} onClick={save}>{busy ? "Saving…" : "Save as new asset"}</Button>
+          <Button variant="primary" disabled={busy || !img} loading={busy} onClick={save}>Save as new asset</Button>
         </>
       }
     >
@@ -181,7 +182,6 @@ export function ImageEditor({ brandId, asset, onClose, onSaved }: { brandId: str
               {out.upscaled && <span className="block text-warning-ink">The crop is small for this size; the image will look soft.</span>}
             </p>
           )}
-          {error && img && <Callout tone="critical">{error}</Callout>}
         </div>
       </div>
     </Dialog>

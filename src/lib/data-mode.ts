@@ -1,5 +1,7 @@
 import { query } from "@/lib/db";
 import { anthropicEnabled } from "@/lib/providers/anthropic";
+import { llmConfigured } from "@/lib/providers/llm";
+import { pagespeedEnabled } from "@/lib/providers/pagespeed";
 import { liveEnabled } from "@/lib/providers/source";
 import { googleConfigured } from "@/lib/google/oauth";
 import { getProjectGoogle, type ProjectGoogleLink } from "@/lib/google/data";
@@ -12,7 +14,8 @@ import type { Project } from "@/lib/projects";
  */
 export const demoAllowed = () => process.env.DEMO_DATA === "true";
 
-export type Provider = "dataforseo" | "google" | "pagespeed" | "ai" | "business-profile" | "clickstream";
+/** `ai` = any AI-visibility engine; `llm` = a model key for writing features (optimizer, CX AI). */
+export type Provider = "dataforseo" | "google" | "pagespeed" | "ai" | "llm" | "business-profile" | "clickstream";
 
 export const PROVIDER_INFO: Record<Provider, { name: string; env: string[]; description: string; href: string }> = {
   dataforseo: {
@@ -23,20 +26,34 @@ export const PROVIDER_INFO: Record<Provider, { name: string; env: string[]; desc
   },
   google: {
     name: "Google Search Console + GA4",
-    env: ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_GA4_SERVICE_ACCOUNT_JSON"],
+    // Any one is enough: a service account (JSON or file) or an OAuth web client (both vars).
+    env: [
+      "GOOGLE_SERVICE_ACCOUNT_JSON",
+      "GOOGLE_SERVICE_ACCOUNT_FILE",
+      "GOOGLE_GA4_SERVICE_ACCOUNT_JSON",
+      "GOOGLE_GA4_SERVICE_ACCOUNT_FILE",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+    ],
     description: "Real clicks, impressions, positions and queries (Search Console) and sessions, channels and conversions (GA4) for your own sites.",
     href: "/organic-traffic-insights",
   },
   pagespeed: {
-    name: "PageSpeed Insights API key",
-    env: ["PAGESPEED_API_KEY"],
-    description: "Core Web Vitals and Lighthouse performance data from Google.",
+    name: "PageSpeed Insights",
+    env: ["ENABLE_PAGESPEED", "PAGESPEED_API_KEY"],
+    description: "Core Web Vitals and Lighthouse performance data from Google (free; on unless ENABLE_PAGESPEED=false, an API key only raises the quota).",
     href: "/settings?tab=integrations",
   },
   ai: {
     name: "An AI engine API key",
     env: ["OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY"],
     description: "Real answers from ChatGPT, Gemini, Perplexity or Claude with web search.",
+    href: "/settings?tab=integrations",
+  },
+  llm: {
+    name: "An AI model API key",
+    env: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"],
+    description: "AI review, rewrites, briefs, suggested replies and insights from Claude, OpenAI or Gemini.",
     href: "/settings?tab=integrations",
   },
   "business-profile": {
@@ -57,8 +74,9 @@ export function providerStatus(): Record<Provider, boolean> {
   return {
     dataforseo: liveEnabled(),
     google: googleConfigured(),
-    pagespeed: !!process.env.PAGESPEED_API_KEY,
+    pagespeed: pagespeedEnabled(),
     ai: ["OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"].some((k) => !!process.env[k]) || anthropicEnabled(),
+    llm: llmConfigured(),
     "business-profile": false,
     clickstream: false,
   };

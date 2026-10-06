@@ -6,7 +6,7 @@
  *   acme AND (refund OR delay)  every AND part must match; a part matches when any OR alternative does
  * Excluded words drop a mention when any of them appears.
  */
-export const LISTEN_SOURCES = ["news", "hackernews", "mastodon", "appstore", "reddit", "youtube", "bluesky"] as const;
+export const LISTEN_SOURCES = ["news", "hackernews", "mastodon", "appstore", "reddit", "youtube", "bluesky", "google-reviews"] as const;
 export type ListenSource = (typeof LISTEN_SOURCES)[number];
 
 export const SOURCE_LABELS: Record<ListenSource, string> = {
@@ -17,6 +17,7 @@ export const SOURCE_LABELS: Record<ListenSource, string> = {
   reddit: "Reddit",
   youtube: "YouTube",
   bluesky: "Bluesky",
+  "google-reviews": "Google reviews",
 };
 export const sourceLabel = (s: string) => (SOURCE_LABELS as Record<string, string>)[s] ?? s;
 export const isListenSource = (s: string): s is ListenSource => (LISTEN_SOURCES as readonly string[]).includes(s);
@@ -123,6 +124,8 @@ export const STRICT_MATCH: Record<ListenSource, boolean> = {
   mastodon: true,
   reddit: true,
   bluesky: true,
+  // Reviews of the brand's own business rarely name it; only excluded words apply.
+  "google-reviews": false,
 };
 
 /** App Store ids: "123456789" or "gb/123456789" (country storefront). */

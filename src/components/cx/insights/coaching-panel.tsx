@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { assignCoachingAction, bulkAiScoreAction, coachingFlagAction } from "@/app/(app)/cx/quality/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -26,6 +27,7 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
   const [outcome, setOutcome] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) =>
     start(async () => {
       const r = await fn();
@@ -40,7 +42,7 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
   const completed = sessions.filter((s) => s.status === "completed");
   return (
     <div className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+      {error && !assign && <Callout tone="critical">{error}</Callout>}
       <Card>
         <CardHeader title="Agent-wise coaching view" description="Last 90 days of evaluations. Early warnings flag agents whose weekly score fell 3 weeks in a row (10+ points) or stayed under the pass score for 2 weeks." />
         <CardBody className="pt-1">
@@ -55,7 +57,7 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
               a.warnings.length ? <span key="w" className="flex flex-wrap gap-1">{a.warnings.map((w) => <Badge key={w} tone="critical">{WARN[w] ?? w}</Badge>)}</span> : <span key="w" className="text-text-3">None</span>,
               a.recommended?.name ?? <span key="r" className="text-text-3">No coaching form</span>,
               `${a.openSessions} open · ${a.completedSessions} done`,
-              a.id ? <Button key="b" size="sm" onClick={() => { setAssign({ agentId: a.id!, name: a.name, formId: a.recommended?.id ?? "" }); setNotes(a.warnings.length ? `Score trend: ${a.warnings.map((w) => WARN[w]).join(", ")}. ` : ""); }}><GraduationCap className="h-3.5 w-3.5" /> Assign</Button> : null,
+              a.id ? <Button key="b" size="sm" onClick={() => { setError(null); setAssign({ agentId: a.id!, name: a.name, formId: a.recommended?.id ?? "" }); setNotes(a.warnings.length ? `Score trend: ${a.warnings.map((w) => WARN[w]).join(", ")}. ` : ""); }}><GraduationCap className="h-3.5 w-3.5" /> Assign</Button> : null,
             ])}
           />
         </CardBody>
@@ -71,7 +73,7 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
                 {s.form && <Badge tone="info">{s.form}</Badge>}
                 {s.supervisor && <span className="text-text-3">Supervisor: {s.supervisor}</span>}
                 <span className="text-text-3">{s.due_at ? `due ${dateLabel(s.due_at)}` : `assigned ${dateLabel(s.created_at)}`}</span>
-                <Button size="icon" variant="ghost" className="ml-auto" aria-label="Delete session" onClick={() => confirm("Delete this coaching session?") && run(() => coachingFlagAction(brand, s.id, "delete"))}><Trash2 className="h-4 w-4" /></Button>
+                <Button size="icon" variant="ghost" className="ml-auto" aria-label="Delete session" onClick={async () => (await confirm({ title: "Delete this coaching session?", description: s.agent ? `The open session for ${s.agent} is removed.` : undefined })) && run(() => coachingFlagAction(brand, s.id, "delete"))}><Trash2 className="h-4 w-4" /></Button>
               </div>
               <p className="mt-1 text-[13px] whitespace-pre-line text-text-2">{s.notes}</p>
               <div className="mt-2 flex gap-2">
@@ -94,10 +96,12 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
         open={!!assign}
         onClose={() => setAssign(null)}
         title={`Assign coaching to ${assign?.name ?? ""}`}
+        error={error}
+        onSubmit={() => assign && !pending && run(() => assignCoachingAction(brand, { agentId: assign.agentId, scorecardId: assign.formId || null, supervisorId: sup || null, notes, dueDays: Number(due) || null }), () => setAssign(null))}
         footer={
           <>
-            <Button onClick={() => setAssign(null)}>Cancel</Button>
-            <Button variant="primary" loading={pending} onClick={() => assign && run(() => assignCoachingAction(brand, { agentId: assign.agentId, scorecardId: assign.formId || null, supervisorId: sup || null, notes, dueDays: Number(due) || null }), () => setAssign(null))}>Assign</Button>
+            <Button variant="ghost" onClick={() => setAssign(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={pending}>Assign</Button>
           </>
         }
       >
@@ -118,6 +122,7 @@ export function CoachingPanel({ brand, agents, sessions, forms, supervisors }: {
           </div>
         )}
       </Dialog>
+      {confirmDialog}
     </div>
   );
 }
@@ -130,7 +135,7 @@ export function BulkAiScoreButton({ brand, queued }: { brand: string; queued: nu
     <div className="flex flex-wrap items-center gap-2">
       <Button
         loading={pending}
-        disabled={!queued}
+        disabled={pending || !queued}
         onClick={() =>
           start(async () => {
             const r = await bulkAiScoreAction(brand);

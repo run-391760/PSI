@@ -10,7 +10,8 @@ import { accentColor, type ReportRecord, templateById } from "@/lib/reports/temp
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type Column, DataTable } from "@/components/ui/data-table";
-import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm";
+import { Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { deleteReportAction, duplicateReportAction } from "./actions";
 
@@ -19,6 +20,7 @@ export function ReportsList({ reports }: { reports: ReportRecord[] }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<ReportRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const duplicate = (r: ReportRecord) =>
@@ -31,8 +33,9 @@ export function ReportsList({ reports }: { reports: ReportRecord[] }) {
   const remove = () =>
     deleting &&
     start(async () => {
+      setDeleteError(null);
       const res = await deleteReportAction(deleting.id);
-      if (!res.ok) return setError(res.error);
+      if (!res.ok) return setDeleteError(res.error);
       setDeleting(null);
       router.refresh();
     });
@@ -151,25 +154,25 @@ export function ReportsList({ reports }: { reports: ReportRecord[] }) {
         </div>
       )}
       <DataTable rows={reports} columns={columns} rowKey={(r) => r.id} defaultSort={{ key: "updated_at", dir: "desc" }} searchable searchPlaceholder="Search reports" searchText={(r) => `${r.title} ${r.subject} ${r.project_name ?? ""} ${r.branding.preparedFor}`} exportName="reports" emptyText="No reports match your search." />
-      <Dialog
+      <ConfirmDialog
         open={!!deleting}
-        onClose={() => setDeleting(null)}
+        onCancel={() => {
+          setDeleting(null);
+          setDeleteError(null);
+        }}
+        onConfirm={remove}
         title="Delete report?"
-        description={deleting?.title}
-        size="sm"
-        footer={
+        description={
           <>
-            <Button variant="ghost" onClick={() => setDeleting(null)}>
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={remove} loading={pending}>
-              Delete report
-            </Button>
+            <span className="font-medium text-text">{deleting?.title}</span>
+            <br />
+            The saved report configuration will be removed. Exported PDFs you downloaded are not affected.
           </>
         }
-      >
-        <p className="text-[13px] text-text-2">The saved report configuration will be removed. Exported PDFs you downloaded are not affected.</p>
-      </Dialog>
+        confirmLabel="Delete report"
+        busy={pending}
+        error={deleteError}
+      />
     </>
   );
 }

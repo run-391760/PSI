@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { createTaskAction, updateTaskAction } from "@/app/(app)/cx/tasks/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { classificationPath } from "@/lib/cx/admin/pure/fields";
 import { REMIND_OPTIONS, TASK_PRIORITIES, TASK_STATUSES, type TaskPriority, type TaskStatus } from "@/lib/cx/ops/model";
@@ -44,6 +43,7 @@ export function TaskDialog({ brand, agents, tree, me, ticket, existing, onClose,
   const classes = useMemo(() => tree.filter((n) => !n.hidden).map((n) => ({ id: n.id, path: classificationPath(tree, n.id).join(" › ") })).sort((a, b) => a.path.localeCompare(b.path)), [tree]);
   const presets: [string, number][] = [["In 1 hour", 1], ["Tomorrow 10:00", -1], ["In 3 days", 72]];
   const save = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     const input = {
@@ -58,9 +58,9 @@ export function TaskDialog({ brand, agents, tree, me, ticket, existing, onClose,
     onClose();
   };
   return (
-    <Dialog open onClose={onClose} size="lg" title={existing ? `Edit task T-${existing.number}` : "New task"}
+    <Dialog open onClose={onClose} size="lg" title={existing ? `Edit task T-${existing.number}` : "New task"} error={error} onSubmit={save}
       description={ticket ? `Linked to ticket #${ticket.number}: ${ticket.subject}` : existing?.ticket_number ? `Linked to ticket #${existing.ticket_number}` : "A standalone CRM task. Link it to a ticket from the ticket's menu."}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : existing ? "Save task" : "Create task"}</Button></>}>
+      footer={<><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy} disabled={busy}>{existing ? "Save task" : "Create task"}</Button></>}>
       <div className="space-y-3">
         <Field label="Title" htmlFor="tk-title"><Input id="tk-title" value={f.title} onChange={(e) => set("title", e.target.value)} maxLength={200} autoFocus /></Field>
         <Field label="Description" htmlFor="tk-desc"><Textarea id="tk-desc" rows={4} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="What needs to happen, context, links…" /></Field>
@@ -107,7 +107,6 @@ export function TaskDialog({ brand, agents, tree, me, ticket, existing, onClose,
             </Select>
           </Field>
         </div>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

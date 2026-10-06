@@ -15,6 +15,7 @@ import {
 } from "@/app/(app)/cx/crisis/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
 import { dateTimeLabel } from "@/lib/format";
@@ -88,7 +89,7 @@ export function EventTools({ brandId, eventId, untickedNegative, aiReady }: { br
   };
   return (
     <div className="grid gap-2">
-      <Button variant="secondary" onClick={() => tickets(false)} loading={busy === "neg"} disabled={!untickedNegative}>
+      <Button variant="secondary" onClick={() => tickets(false)} loading={busy === "neg"} disabled={busy === "neg" || !untickedNegative}>
         <Ticket className="h-4 w-4" /> Ticket negative mentions ({untickedNegative})
       </Button>
       <Button variant="ghost" onClick={() => tickets(true)} loading={busy === "all"}>
@@ -102,7 +103,7 @@ export function EventTools({ brandId, eventId, untickedNegative, aiReady }: { br
           <Sparkles className="h-4 w-4" /> Draft holding statement
         </Button>
       ) : (
-        <p className="text-[12px] text-text-3">Connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) to draft holding statements and reply templates.</p>
+        <p className="text-[12px] text-text-3">Connect an AI key (Anthropic, OpenAI or Gemini) to draft holding statements and reply templates.</p>
       )}
       <Note msg={msg} />
       {draft != null && (
@@ -172,7 +173,7 @@ export function Checklists({ brandId, eventId, checklists, playbooks }: { brandI
             <option value="">Attach a playbook…</option>
             {available.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
-          <Button variant="secondary" onClick={attach} loading={busy === "attach"} disabled={!pick}>Attach</Button>
+          <Button variant="secondary" onClick={attach} loading={busy === "attach"} disabled={busy === "attach" || !pick}>Attach</Button>
         </div>
       ) : (
         !playbooks.length && <Link className="text-[12.5px] text-link" href={`/cx/crisis/playbooks?brand=${brandId}`}>Create a playbook</Link>
@@ -191,6 +192,7 @@ export function PlaybookManager({ brandId, playbooks }: { brandId: string; playb
   const [edit, setEdit] = useState<{ id?: string; name: string; description: string; autoAttach: "none" | "any" | "critical"; steps: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<Msg>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const open = (p?: PB) => setEdit(p ? { id: p.id, name: p.name, description: p.description, autoAttach: p.auto_attach, steps: p.steps.map((s) => s.text).join("\n") } : { ...TEMPLATE, steps: TEMPLATE.steps.join("\n") });
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,8 +205,9 @@ export function PlaybookManager({ brandId, playbooks }: { brandId: string; playb
     setMsg({ ok: true, text: "Saved." });
     router.refresh();
   };
-  const remove = async (id: string) => {
-    if (!confirm("Delete this playbook? Checklists attached to events are removed too.")) return;
+  const remove = async (p: PB) => {
+    if (!(await confirm({ title: `Delete the playbook “${p.name}”?`, description: "Checklists attached to events are removed too." }))) return;
+    const id = p.id;
     const r = await deletePlaybookAction(brandId, id);
     if (!r.ok) setMsg({ ok: false, text: r.error });
     router.refresh();
@@ -220,7 +223,7 @@ export function PlaybookManager({ brandId, playbooks }: { brandId: string; playb
               <Badge tone={p.auto_attach === "none" ? "neutral" : "warning"}>{p.auto_attach === "none" ? "Manual" : p.auto_attach === "any" ? "Auto: every event" : "Auto: critical events"}</Badge>
               <span className="ml-auto flex gap-1">
                 <Button size="sm" variant="ghost" onClick={() => open(p)}>Edit</Button>
-                <Button size="sm" variant="ghost" onClick={() => remove(p.id)} aria-label={`Delete ${p.name}`}><Trash2 className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => remove(p)} aria-label={`Delete ${p.name}`}><Trash2 className="h-4 w-4" /></Button>
               </span>
             </div>
             {p.description && <p className="mt-1 text-[12.5px] text-text-2">{p.description}</p>}
@@ -256,6 +259,7 @@ export function PlaybookManager({ brandId, playbooks }: { brandId: string; playb
           </div>
         </form>
       )}
+      {confirmDialog}
     </div>
   );
 }

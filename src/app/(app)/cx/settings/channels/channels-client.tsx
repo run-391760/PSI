@@ -138,17 +138,41 @@ export function EmailDialog({ brand, channel, onClose }: { brand: string; channe
   const [test, setTest] = useState<{ imap: string | null; smtp: string | null; messages: number | null } | null>(null);
   const set = <K extends keyof EmailInput>(k: K, v: EmailInput[K]) => setF((x) => ({ ...x, [k]: v }));
   const preset = (p: string) => setF((x) => ({ ...x, ...PRESETS[p] }));
+  const runTest = async () => {
+    setBusy("test"); setError(null); setTest(null);
+    try {
+      const r = await testEmailAction(brand, f, channel?.id);
+      if (r.ok) setTest(r.data); else setError(r.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const save = async () => {
+    if (busy) return;
+    setBusy("save"); setError(null);
+    try {
+      const r = await saveEmailAction(brand, f, channel?.id);
+      if (r.ok) { onClose(); router.refresh(); } else setError(r.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
-    <Dialog open onClose={onClose} size="lg" title={channel ? "Edit email channel" : "Connect a mailbox"} description="Use an app password (Gmail: Google Account → Security → App passwords). The password is stored encrypted."
+    <Dialog open onClose={onClose} size="lg" title={channel ? "Edit email channel" : "Connect a mailbox"} error={error} onSubmit={save}
+      footerStart={<Button variant="ghost" loading={busy === "test"} disabled={!!busy} onClick={runTest}>Test connection</Button>}
       footer={<>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button disabled={!!busy} onClick={async () => { setBusy("test"); setError(null); setTest(null); const r = await testEmailAction(brand, f, channel?.id); setBusy(null); if (r.ok) setTest(r.data); else setError(r.error); }}>{busy === "test" ? "Testing…" : "Test connection"}</Button>
-        <Button variant="primary" disabled={!!busy} onClick={async () => { setBusy("save"); setError(null); const r = await saveEmailAction(brand, f, channel?.id); setBusy(null); if (r.ok) { onClose(); router.refresh(); } else setError(r.error); }}>{busy === "save" ? "Saving…" : channel ? "Save" : "Connect"}</Button>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button type="submit" variant="primary" loading={busy === "save"} disabled={!!busy}>{channel ? "Save" : "Connect"}</Button>
       </>}>
       <div className="space-y-3">
+        <p className="text-[12.5px] text-text-2">Use an app password (Gmail: Google Account → Security → App passwords). The password is stored encrypted.</p>
         <div className="flex flex-wrap items-center gap-2 text-[12.5px]"><span className="text-text-3">Presets:</span>{Object.keys(PRESETS).map((p) => <Button key={p} size="sm" variant="ghost" onClick={() => preset(p)}>{p[0].toUpperCase() + p.slice(1)}</Button>)}</div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Mailbox user" htmlFor="em-user"><Input id="em-user" value={f.user} onChange={(e) => set("user", e.target.value)} placeholder="support@yourbrand.com" autoComplete="off" /></Field>
+          <Field label="Mailbox user" htmlFor="em-user"><Input id="em-user" autoFocus value={f.user} onChange={(e) => set("user", e.target.value)} placeholder="support@yourbrand.com" autoComplete="off" /></Field>
           <Field label={channel ? "App password (leave empty to keep)" : "App password"} htmlFor="em-pass"><Input id="em-pass" type="password" value={f.password} onChange={(e) => set("password", e.target.value)} autoComplete="new-password" /></Field>
           <Field label="IMAP host" htmlFor="em-ih"><Input id="em-ih" value={f.imapHost} onChange={(e) => set("imapHost", e.target.value)} placeholder="imap.example.com" /></Field>
           <div className="flex gap-2">
@@ -171,7 +195,6 @@ export function EmailDialog({ brand, channel, onClose }: { brand: string; channe
             <Callout tone={test.smtp ? "critical" : "good"} title={test.smtp ? "SMTP failed" : "SMTP ready"}>{test.smtp ?? "Replies can be sent."}</Callout>
           </div>
         )}
-        {error && <Callout tone="critical">{error}</Callout>}
         <p className="text-[12px] text-text-3">The first sync imports the last 3 days (up to 50 messages); after that new mail is checked every 5 minutes. Replies are threaded by Message-ID/References and a [#number] tag in the subject.</p>
       </div>
     </Dialog>
@@ -190,9 +213,21 @@ export function WidgetDialog({ brand, kind, channel, onClose }: { brand: string;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: unknown) => setCfg((x) => ({ ...x, [k]: v }));
+  const save = async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await saveChannelAction(brand, kind, name, cfg, channel?.id);
+      if (r.ok) { onClose(); router.refresh(); } else setError(r.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Dialog open onClose={onClose} title={`${channel ? "Edit" : "Add"} ${kind === "livechat" ? "live chat" : "web form"}`}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={async () => { setBusy(true); setError(null); const r = await saveChannelAction(brand, kind, name, cfg, channel?.id); setBusy(false); if (r.ok) { onClose(); router.refresh(); } else setError(r.error); }}>{busy ? "Saving…" : "Save"}</Button></>}>
+    <Dialog open onClose={onClose} title={`${channel ? "Edit" : "Add"} ${kind === "livechat" ? "live chat" : "web form"}`} error={error} onSubmit={save}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy}>Save</Button></>}>
       <div className="space-y-3">
         <Field label="Channel name" htmlFor="w-name"><Input id="w-name" value={name} onChange={(e) => setName(e.target.value)} /></Field>
         {kind === "livechat" ? (
@@ -215,7 +250,6 @@ export function WidgetDialog({ brand, kind, channel, onClose }: { brand: string;
         <Field label="Accent color" htmlFor="w-c">
           <div className="flex items-center gap-2"><input id="w-c" type="color" value={cfg.color} onChange={(e) => set("color", e.target.value)} className="h-8 w-10 cursor-pointer rounded border border-border bg-surface" /><Input value={cfg.color} onChange={(e) => set("color", e.target.value)} className="w-32 font-mono" aria-label="Hex color" /></div>
         </Field>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );
@@ -249,6 +283,7 @@ export function SocialDialog({ brand, kind, channel, onClose }: { brand: string;
   const [token, setToken] = useState("");
   const [humanAgent, setHumanAgent] = useState(!!cfg.humanAgent);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const label = kind === "whatsapp" ? "Phone number id" : kind === "facebook" ? "Facebook Page id" : kind === "instagram" ? "Instagram account id" : "Organization URN";
   const title = kind === "whatsapp" ? "WhatsApp" : kind === "facebook" ? "Facebook" : kind === "instagram" ? "Instagram" : "LinkedIn";
   const description =
@@ -256,17 +291,26 @@ export function SocialDialog({ brand, kind, channel, onClose }: { brand: string;
     : kind === "linkedin" ? "Comments on your company posts and @mentions of your page are checked every 5 minutes. LinkedIn has no API for page messages."
     : "Messages, comments, mentions and reviews arrive through the webhook; this maps them to this brand.";
   const save = async () => {
+    if (busy) return;
     const config: Record<string, unknown> = { accountId: accountId.trim() };
     if (kind === "facebook" || kind === "instagram") config.humanAgent = humanAgent;
-    const r = await saveChannelAction(brand, kind, name, config, channel?.id, token || undefined);
-    if (r.ok) { onClose(); router.refresh(); } else setError(r.error);
+    setBusy(true); setError(null);
+    try {
+      const r = await saveChannelAction(brand, kind, name, config, channel?.id, token || undefined);
+      if (r.ok) { onClose(); router.refresh(); } else setError(r.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
   };
   return (
-    <Dialog open onClose={onClose} title={`Connect ${title} inbox`} description={description} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save}>Save</Button></>}>
+    <Dialog open onClose={onClose} title={`Connect ${title} inbox`} description={description} error={error} onSubmit={save}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy}>Save</Button></>}>
       <div className="space-y-3">
         <Field label="Channel name" htmlFor="s-n"><Input id="s-n" value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label={label} htmlFor="s-a" hint={kind === "linkedin" ? "Like urn:li:organization:123456 (the number is in your page's admin URL)." : undefined}>
-          <Input id="s-a" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="font-mono" placeholder={kind === "linkedin" ? "urn:li:organization:123456" : undefined} />
+          <Input id="s-a" autoFocus value={accountId} onChange={(e) => setAccountId(e.target.value)} className="font-mono" placeholder={kind === "linkedin" ? "urn:li:organization:123456" : undefined} />
         </Field>
         {kind !== "whatsapp" && (
           <Field label={kind === "linkedin" ? "Access token (optional)" : "Page access token (to send replies)"} htmlFor="s-t" hint={TOKEN_HINT[kind]}>
@@ -279,7 +323,6 @@ export function SocialDialog({ brand, kind, channel, onClose }: { brand: string;
             <span>Human Agent permission approved by Meta: allow DM replies up to 7 days after the customer&apos;s last message (otherwise 24 hours).</span>
           </label>
         )}
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

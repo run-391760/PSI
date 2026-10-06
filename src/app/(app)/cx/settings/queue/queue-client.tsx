@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Badge, Dot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Input, Select } from "@/components/ui/input";
 import { MiniTable } from "@/components/ui/mini-table";
@@ -12,6 +13,7 @@ import type { QueueAgentRow, QueueSettings, UserStatus } from "@/lib/cx/admin/qu
 import { ASSIGNMENT_TYPES, type Segment } from "@/lib/cx/admin/pure/queue";
 import { SETTABLE_STATUSES } from "@/lib/cx/inbox/model";
 import { cn } from "@/lib/utils";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, ListInput, Live, When, useRun } from "../_admin/ui";
 import {
   deleteStatusAction, pauseAgentAction, resetAgentQueueAction, runQueueNowAction, saveQueueSettingsAction, saveStatusAction,
@@ -79,8 +81,13 @@ export function QueueSettingsPanel({ brand, settings, timer }: { brand: string; 
 const STATUS_TONE = { available: "good", break: "warning", offline: "neutral" } as const;
 
 export function QueueAgentsPanel({ brand, agents, statuses }: { brand: string; agents: QueueAgentRow[]; statuses: UserStatus[] }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<QueueAgentRow | null>(null);
+  const save = async () => {
+    if (!edit || busy === "save") return;
+    if (await runOk(run, "save", setAgentSettingsAction(brand, edit.id, { capacity: edit.capacity, officeStart: edit.officeStart, officeEnd: edit.officeEnd, timezone: edit.timezone }), () => `${edit.name}'s queue limits saved.`)) setEdit(null);
+  };
   return (
     <Card>
       <CardHeader title="Agents" description="Live status, load and limits. Pausing stops new assignments without changing the agent's status." />
@@ -107,17 +114,18 @@ export function QueueAgentsPanel({ brand, agents, statuses }: { brand: string; a
             <span key="h" className="text-[12px] text-text-2 whitespace-nowrap">{a.officeStart && a.officeEnd ? `${a.officeStart}–${a.officeEnd}` : "Any time"}{a.timezone ? ` ${a.timezone}` : ""}</span>,
             <div key="x" className="flex justify-end gap-0.5">
               <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={a.paused ? `Resume ${a.name}` : `Pause ${a.name}`} onClick={() => run("p", pauseAgentAction(brand, a.id, !a.paused))}>{a.paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}</Button>
-              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Reset ${a.name}'s queue`} onClick={() => confirm(`Return ${a.name}'s unworked queued tickets to the waiting queue?`) && run("r", resetAgentQueueAction(brand, a.id), (n) => `${n} tickets returned to the queue.`)}><RotateCcw className="h-3.5 w-3.5" /></Button>
-              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${a.name}`} onClick={() => setEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Reset ${a.name}'s queue`} onClick={async () => { if (await confirm({ title: `Reset ${a.name}'s queue?`, description: "Their queued tickets that nobody has worked on yet go back to the waiting queue for the next available agent.", confirmLabel: "Reset queue", tone: "primary" })) run("r", resetAgentQueueAction(brand, a.id), (n) => `${n} tickets returned to the queue.`); }}><RotateCcw className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${a.name}`} onClick={() => { setError(null); setEdit(a); }}><Pencil className="h-3.5 w-3.5" /></Button>
             </div>,
           ])}
         />
       </CardBody>
-      <Dialog size="sm" open={!!edit} onClose={() => setEdit(null)} title={edit ? `${edit.name}: queue limits` : ""}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", setAgentSettingsAction(brand, edit.id, { capacity: edit.capacity, officeStart: edit.officeStart, officeEnd: edit.officeEnd, timezone: edit.timezone })))) setEdit(null); }}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="sm" open={!!edit} onClose={() => setEdit(null)} title={edit ? `${edit.name}: queue limits` : "Queue limits"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Max queued tickets" className="col-span-2"><Input type="number" min={1} max={200} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: Number(e.target.value) })} /></Field>
+            <Field label="Max queued tickets" className="col-span-2"><Input type="number" autoFocus min={1} max={200} value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: Number(e.target.value) })} /></Field>
             <Field label="Office start"><Input type="time" value={edit.officeStart ?? ""} onChange={(e) => setEdit({ ...edit, officeStart: e.target.value || null })} /></Field>
             <Field label="Office end"><Input type="time" value={edit.officeEnd ?? ""} onChange={(e) => setEdit({ ...edit, officeEnd: e.target.value || null })} /></Field>
             <Field label="Time zone" className="col-span-2" hint="IANA name, e.g. Asia/Kolkata. Empty uses the team's."><Input value={edit.timezone ?? ""} onChange={(e) => setEdit({ ...edit, timezone: e.target.value || null })} /></Field>
@@ -129,13 +137,17 @@ export function QueueAgentsPanel({ brand, agents, statuses }: { brand: string; a
 }
 
 export function StatusesPanel({ brand, statuses, zones }: { brand: string; statuses: UserStatus[]; zones: { team_id: string; name: string; timezone: string | null; start_time: string | null; end_time: string | null }[] }) {
-  const { run, busy, messages } = useRun();
-  const [edit, setEdit] = useState<{ id?: string; name: string; available: boolean; limit_minutes: number | null } | null>(null);
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
+  type StatusEdit = { id?: string; name: string; available: boolean; limit_minutes: number | null };
+  const [edit, setEdit] = useState<StatusEdit | null>(null);
+  const open = (s: StatusEdit) => { setError(null); setEdit(s); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveStatusAction(brand, edit), () => `${edit.name || "Status"} saved.`))) setEdit(null); };
   const [zd, setZd] = useState<Record<string, { timezone: string; start: string; end: string }>>({});
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
-        <CardHeader title="Agent statuses" description="Breaks agents can pick. A time limit alerts supervisors when a break runs over." actions={<Button size="sm" variant="primary" onClick={() => setEdit({ name: "", available: false, limit_minutes: 15 })}><Plus className="h-3.5 w-3.5" />Add</Button>} />
+        <CardHeader title="Agent statuses" description="Breaks agents can pick. A time limit alerts supervisors when a break runs over." actions={<Button size="sm" variant="primary" onClick={() => open({ name: "", available: false, limit_minutes: 15 })}><Plus className="h-3.5 w-3.5" />Add</Button>} />
         <CardBody>
           {messages}
           <ul className="divide-y divide-border text-[13px]">
@@ -145,8 +157,8 @@ export function StatusesPanel({ brand, statuses, zones }: { brand: string; statu
                 <Dot tone={s.available ? "good" : "warning"} />
                 <span className="flex-1">{s.name}</span>
                 <span className="text-[12px] text-text-3">{s.available ? "Takes tickets" : s.limit_minutes ? `${s.limit_minutes} min limit` : "No limit"}</span>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${s.name}`} onClick={() => setEdit(s)}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${s.name}`} onClick={() => confirm(`Delete "${s.name}"?`) && run("d", deleteStatusAction(brand, s.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${s.name}`} onClick={() => open(s)}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${s.name}`} onClick={async () => { if (await confirm({ title: `Delete “${s.name}”?`, description: "Agents can no longer pick it." })) run("d", deleteStatusAction(brand, s.id), () => `${s.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
               </li>
             ))}
             <li className="flex items-center gap-2 py-2"><Dot /><span className="flex-1">Offline</span><span className="text-[12px] text-text-3">Built in</span></li>
@@ -177,8 +189,9 @@ export function StatusesPanel({ brand, statuses, zones }: { brand: string; statu
           ) : <p className="py-4 text-center text-[13px] text-text-3">No teams yet. Create teams under Team &amp; SLAs.</p>}
         </CardBody>
       </Card>
-      <Dialog size="sm" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit status" : "Add status"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveStatusAction(brand, edit)))) setEdit(null); }}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="sm" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit status" : "Add status"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="space-y-3">
             <Field label="Name"><Input autoFocus value={edit.name} maxLength={40} placeholder="Lunch" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>

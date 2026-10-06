@@ -9,6 +9,7 @@ import { compact, displayUrl, pct } from "@/lib/format";
 import { KeywordLink } from "@/components/seo/badges";
 import { Button, buttonClass } from "@/components/ui/button";
 import { CellLink, DataTable, type Column } from "@/components/ui/data-table";
+import { useConfirm } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Select } from "@/components/ui/input";
 
@@ -27,21 +28,25 @@ export function ConnectGoogleButton({ returnTo, label = "Connect Google account"
 export function DisconnectGoogleButton() {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      loading={pending}
-      onClick={() => {
-        if (!confirm("Disconnect your Google account? Linked projects keep their settings but show no data until you reconnect.")) return;
-        start(async () => {
-          await disconnectGoogleAction();
-          router.refresh();
-        });
-      }}
-    >
-      <LogOut className="h-3.5 w-3.5" /> Disconnect
-    </Button>
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        loading={pending}
+        onClick={async () => {
+          if (!(await confirm({ title: "Disconnect your Google account?", description: "Linked projects keep their settings but show no data until you reconnect.", confirmLabel: "Disconnect" }))) return;
+          start(async () => {
+            await disconnectGoogleAction();
+            router.refresh();
+          });
+        }}
+      >
+        <LogOut className="h-3.5 w-3.5" /> Disconnect
+      </Button>
+      {confirmDialog}
+    </>
   );
 }
 

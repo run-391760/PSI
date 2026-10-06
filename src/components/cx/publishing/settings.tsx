@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { addMemberAction, removeAccountAction, removeMemberAction, saveAccountAction, setRequireApprovalAction } from "@/app/(app)/cx/publishing/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select } from "@/components/ui/input";
@@ -41,6 +42,7 @@ function AccountForm({ brandId, c, canEdit }: { brandId: string; c: ConnectionIt
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   if (!canEdit) return null;
   return (
     <div className="mt-3 grid gap-2 border-t border-border pt-3">
@@ -61,11 +63,12 @@ function AccountForm({ brandId, c, canEdit }: { brandId: string; c: ConnectionIt
           Save account
         </Button>
         {c.account && (
-          <Button size="sm" variant="ghost" disabled={pending} onClick={() => confirm(`Unlink ${c.name}?`) && run(start, () => removeAccountAction(brandId, c.kind), setError, () => { setId(""); router.refresh(); })}>
+          <Button size="sm" variant="ghost" disabled={pending} onClick={async () => (await confirm({ title: `Unlink ${c.name}?`, description: "The stored account and token are removed from this brand.", confirmLabel: "Unlink" })) && run(start, () => removeAccountAction(brandId, c.kind), setError, () => { setId(""); router.refresh(); })}>
             Unlink
           </Button>
         )}
       </div>
+      {confirmDialog}
     </div>
   );
 }

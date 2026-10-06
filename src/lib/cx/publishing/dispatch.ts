@@ -1,7 +1,6 @@
 import { query } from "@/lib/db";
 import { cached } from "@/lib/providers/source";
 import { enqueue, notify } from "@/lib/jobs/queue";
-import { channelAvailable } from "@/lib/cx/providers";
 import { outcomeStatus, pubChannel, type ChannelResult, type PubChannel } from "./core";
 import { randomUUID } from "node:crypto";
 import { AppError } from "@/lib/domain";
@@ -82,7 +81,12 @@ export async function publishPost(p: PostRow) {
       results[kind] = { status: "not_connected", error: support === "manual" ? "This post type is published manually on this network: publish it, then mark it published." : "This network does not support this post type.", at: at() };
       continue;
     }
-    const creds = await credsFor(p.project_id, kind);
+    // A credential error (e.g. an undecryptable token) fails this channel only, never the whole dispatch batch.
+    const creds = await credsFor(p.project_id, kind).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+    if (creds instanceof Error) {
+      results[kind] = { status: "failed", error: creds.message.slice(0, 500), at: at() };
+      continue;
+    }
     if (!creds) {
       const conn = (await connections(p.project_id)).find((c) => c.kind === kind);
       results[kind] = { status: "not_connected", error: `Channel not connected: ${conn?.reason ?? "credentials missing"}`, at: at() };
@@ -167,8 +171,8 @@ export async function channelInsights(projectId: string): Promise<InsightResult[
   const conns = await connections(projectId);
   const out: InsightResult[] = [];
   for (const c of conns) {
-    const connected = c.kind === "youtube" ? channelAvailable("youtube") && !!c.account : c.connected;
-    if (!connected) {
+    // `insights` covers app-only keys too (X_BEARER_TOKEN, YOUTUBE_API_KEY) and YouTube's stored OAuth token.
+    if (!c.insights) {
       out.push({ kind: c.kind, stats: null, error: null, fetchedAt: null, connected: false, reason: c.reason });
       continue;
     }
@@ -176,7 +180,7 @@ export async function channelInsights(projectId: string): Promise<InsightResult[
       const creds = await credsFor(projectId, c.kind);
       if (!creds) throw new Error("Credentials unavailable.");
       const r = await cached(`cx-pub:insights:${c.kind}:${creds.externalId}`, "user", 6, async () => {
-        const s = c.kind === "youtube" ? await fetchYoutube(creds.token, creds.externalId) : await fetchInsights(c.kind, creds);
+        const s = c.kind === "youtube" ? await fetchYoutube(creds.token, creds.externalId, creds.appOnly ? "key" : "bearer") : await fetchInsights(c.kind, creds);
         if (!s) throw new Error(c.kind === "youtube" ? "YouTube returned no channel for that ID." : "No data returned.");
         return s;
       });

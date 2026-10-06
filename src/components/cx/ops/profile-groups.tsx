@@ -9,6 +9,7 @@ import { ChannelIcon, channelLabel } from "@/components/cx/inbox/ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/input";
@@ -22,6 +23,7 @@ export function ProfileGroupsClient({ brand, canEdit, groups, channels, sources 
   const router = useRouter();
   const [editing, setEditing] = useState<ProfileGroup | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const chName = (id: string) => channels.find((c) => c.id === id);
   return (
     <div className="space-y-4">
@@ -52,7 +54,7 @@ export function ProfileGroupsClient({ brand, canEdit, groups, channels, sources 
                   <div className="flex items-center gap-1">
                     <Link href={`/cx/inbox?brand=${brand}&group=${g.id}`} className="rounded px-2 py-1 text-[12.5px] text-link hover:bg-surface-3">Open in inbox</Link>
                     {canEdit && <button onClick={() => setEditing(g)} className="rounded p-1.5 text-text-3 hover:bg-surface-3 hover:text-text" aria-label={`Edit ${g.name}`}><Pencil className="h-3.5 w-3.5" /></button>}
-                    {canEdit && <button onClick={async () => { if (!confirm(`Delete the profile group “${g.name}”? Profiles and tickets are not affected.`)) return; const r = await deleteGroupAction(brand, g.id); if (!r.ok) setError(r.error); router.refresh(); }} className="rounded p-1.5 text-text-3 hover:bg-surface-3 hover:text-critical-ink" aria-label={`Delete ${g.name}`}><Trash2 className="h-3.5 w-3.5" /></button>}
+                    {canEdit && <button onClick={async () => { if (!(await confirm({ title: `Delete the profile group “${g.name}”?`, description: "Profiles and tickets are not affected." }))) return; setError(null); const r = await deleteGroupAction(brand, g.id); if (!r.ok) setError(r.error); router.refresh(); }} className="rounded p-1.5 text-text-3 hover:bg-surface-3 hover:text-critical-ink" aria-label={`Delete ${g.name}`}><Trash2 className="h-3.5 w-3.5" /></button>}
                   </div>
                 </li>
               ))}
@@ -61,6 +63,7 @@ export function ProfileGroupsClient({ brand, canEdit, groups, channels, sources 
         </CardBody>
       </Card>
       {editing && <GroupDialog brand={brand} group={editing === "new" ? null : editing} channels={channels} sources={sources} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); router.refresh(); }} />}
+      {confirmDialog}
     </div>
   );
 }
@@ -74,14 +77,16 @@ function GroupDialog({ brand, group, channels, sources, onClose, onSaved }: { br
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const toggle = (set: Set<string>, v: string, fn: (s: Set<string>) => void) => { const n = new Set(set); if (n.has(v)) n.delete(v); else n.add(v); fn(n); };
+  const save = async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    const r = await saveGroupAction(brand, { id: group?.id, name, description, isDefault, channelIds: [...chs], sources: [...srcs] });
+    setBusy(false);
+    if (r.ok) onSaved(); else setError(r.error);
+  };
   return (
-    <Dialog open onClose={onClose} size="lg" title={group ? `Edit “${group.name}”` : "New profile group"}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy} onClick={async () => {
-        setBusy(true); setError(null);
-        const r = await saveGroupAction(brand, { id: group?.id, name, description, isDefault, channelIds: [...chs], sources: [...srcs] });
-        setBusy(false);
-        if (r.ok) onSaved(); else setError(r.error);
-      }}>{busy ? "Saving…" : "Save group"}</Button></>}>
+    <Dialog open onClose={onClose} size="lg" title={group ? `Edit “${group.name}”` : "New profile group"} error={error} onSubmit={save}
+      footer={<><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy} disabled={busy}>Save group</Button></>}>
       <div className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
           <Field label="Name" htmlFor="pg-name"><Input id="pg-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Overall, Admissions, Campus A" maxLength={60} autoFocus /></Field>
@@ -123,7 +128,6 @@ function GroupDialog({ brand, group, channels, sources, onClose, onSaved }: { br
             ))}
           </ul>
         </div>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

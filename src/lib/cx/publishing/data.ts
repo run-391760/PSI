@@ -4,7 +4,7 @@ import path from "node:path";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { cxContext } from "@/lib/cx/context";
-import { channelAvailable } from "@/lib/cx/providers";
+import { channelAvailable, pickPubCreds, PUB_ENV, SHARED_TOKEN_KINDS, type StoredCred } from "@/lib/cx/providers";
 import { CHANNELS, type ChannelKind } from "@/lib/cx/channels";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { enqueue, notify, setSchedule } from "@/lib/jobs/queue";
@@ -138,19 +138,10 @@ export async function removeAccount(projectId: string, kind: string) {
   await query("DELETE FROM cx_pub_accounts WHERE project_id=$1 AND kind=$2", [projectId, kind]);
 }
 
-const ENV_FALLBACK: Record<string, [string, string]> = {
-  facebook: ["META_PAGE_ID", "META_PAGE_ACCESS_TOKEN"],
-  instagram: ["INSTAGRAM_USER_ID", "META_PAGE_ACCESS_TOKEN"],
-  linkedin: ["LINKEDIN_AUTHOR_URN", "LINKEDIN_ACCESS_TOKEN"],
-  x: ["X_USER_ID", "X_USER_ACCESS_TOKEN"],
-  threads: ["THREADS_USER_ID", "THREADS_ACCESS_TOKEN"],
-  gbp: ["GBP_LOCATION", "GBP_ACCESS_TOKEN"],
-};
-
 /** Publishing networks not (yet) in the shared channel catalogue. */
 const LOCAL_CATALOGUE: Record<string, { api: string; costNote: string; env: string[]; setup: string }> = {
-  threads: { api: "Threads API", costNote: "Free; needs a Meta app with threads_content_publish", env: ["THREADS_APP_ID", "THREADS_APP_SECRET"], setup: "Add the Threads use case to a Meta app and request threads_basic + threads_content_publish (+ threads_delete)." },
-  gbp: { api: "Business Profile API (local posts)", costNote: "Free; needs Google API access approval", env: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], setup: "Request Business Profile API access and authorize the business.manage scope for the location's owner." },
+  threads: { api: "Threads API", costNote: "Free; needs a Meta app with threads_content_publish", env: [], setup: "Add the Threads use case to a Meta app and request threads_basic + threads_content_publish (+ threads_delete)." },
+  gbp: { api: "Business Profile API (local posts)", costNote: "Free; needs Google API access approval", env: [], setup: "Request Business Profile API access and authorize the business.manage scope for the location's owner." },
 };
 function catalogue(kind: string) {
   const info = CHANNELS.find((x) => x.kind === kind);
@@ -159,39 +150,93 @@ function catalogue(kind: string) {
   return { api: l?.api ?? kind, costNote: l?.costNote ?? "", env: l?.env ?? [], setup: l?.setup ?? "", ready: !!l && l.env.every((e) => !!process.env[e]) };
 }
 
-export type Connection = { kind: PubChannel; name: string; api: string; costNote: string; env: string[]; setup: string; envReady: boolean; account: string | null; connected: boolean; reason: string | null; publishApi: boolean };
+/**
+ * `connected`: usable for publishing (and insights). `insights`: usable for insights, which is also true with
+ * only an app-only key (X_BEARER_TOKEN reads public metrics but cannot post).
+ */
+export type Connection = { kind: PubChannel; name: string; api: string; costNote: string; env: string[]; setup: string; envReady: boolean; account: string | null; connected: boolean; insights: boolean; reason: string | null; publishApi: boolean };
 
-/** Publishing/insights connection of each channel for a brand: env (server) + account credentials (brand). */
-export async function connections(projectId: string): Promise<Connection[]> {
-  const accounts = await listAccounts(projectId);
-  return PUB_CHANNELS.map((c) => {
-    const info = catalogue(c.kind);
-    const envReady = info.ready;
-    const acc = accounts.find((a) => a.kind === c.kind);
-    const [envId, envTok] = ENV_FALLBACK[c.kind] ?? [];
-    const account = acc?.external_id ?? (envId ? process.env[envId] || null : null);
-    const hasToken = c.kind === "youtube" ? true : !!acc?.has_token || !!(envTok && process.env[envTok]);
-    const connected = envReady && !!account && hasToken;
-    const reason = connected
-      ? null
-      : !envReady
-        ? `${info.api} is not configured on this server (${info.env.join(", ")}). ${info.costNote}.`
-        : !account
-          ? `No ${c.name} account linked to this brand yet.`
-          : "Access token missing for this account.";
-    return { kind: c.kind, name: c.name, api: info.api, costNote: info.costNote, env: info.env, setup: info.setup, envReady, account, connected, reason, publishApi: c.publishApi };
-  });
+type InboxRow = { kind: string; account_id: string | null; secret_enc: string };
+/** The brand's CX inbox channels whose token Publishing can reuse (SHARED_TOKEN_KINDS: Facebook/Instagram Page, LinkedIn organization). Not decrypted. */
+async function inboxRows(projectId: string, kind?: string): Promise<(InboxRow & { account_id: string })[]> {
+  const rows = await query<InboxRow>(
+    `SELECT kind, config->>'accountId' AS account_id, secret_enc FROM cx_channels
+      WHERE project_id=$1 AND kind IN ('facebook','instagram','linkedin') AND ($2::text IS NULL OR kind=$2) AND status<>'paused' AND secret_enc IS NOT NULL ORDER BY created_at`,
+    [projectId, kind ?? null],
+  );
+  return rows.filter((r): r is InboxRow & { account_id: string } => !!r.account_id);
 }
 
+/**
+ * Publishing/insights connection of each channel for a brand. A usable token (Publishing account, the
+ * brand's inbox channel for the same account, or a server env token) is enough: server app keys that no
+ * API call uses (META_APP_ID, LINKEDIN_CLIENT_ID…) never block a brand that has one.
+ */
+export async function connections(projectId: string): Promise<Connection[]> {
+  const [accounts, inbox] = await Promise.all([listAccounts(projectId), inboxRows(projectId)]);
+  return PUB_CHANNELS.map((c) => {
+    const info = catalogue(c.kind);
+    const acc = accounts.find((a) => a.kind === c.kind);
+    // Token presence only: connections never decrypt.
+    const shared = inbox.filter((i) => i.kind === c.kind).map((i) => ({ externalId: i.account_id, token: "stored" }));
+    const picked = pickPubCreds(c.kind, acc ? { externalId: acc.external_id, token: acc.has_token ? "stored" : null } : null, shared, process.env);
+    const envReady = info.ready || !!picked;
+    const [envId] = PUB_ENV[c.kind] ?? [];
+    const account = picked?.externalId ?? acc?.external_id ?? (envId ? process.env[envId] || null : null);
+    // An app-only key (X_BEARER_TOKEN) reads insights but cannot post; YouTube publishes through its own upload token.
+    const insightsOnly = picked?.via === "app" && c.publishApi && c.kind !== "youtube";
+    const connected = !!picked && !insightsOnly;
+    const reason = connected
+      ? null
+      : insightsOnly
+        ? `${c.name} publishing needs a user access token; ${APP_KEY_NAME[c.kind] ?? "the server app key"} only reads insights.`
+        : c.kind === "youtube" && account && !info.ready
+          ? `${info.api} is not configured on this server (${info.env.join(", ")}) and this channel has no OAuth token.`
+          : !envReady && !account
+            ? `${info.api} is not configured on this server (${info.env.join(", ")}). ${info.costNote}.`
+            : !account
+              ? `No ${c.name} account linked to this brand yet.`
+              : "Access token missing for this account.";
+    return { kind: c.kind, name: c.name, api: info.api, costNote: info.costNote, env: info.env, setup: info.setup, envReady, account, connected, insights: !!picked, reason, publishApi: c.publishApi };
+  });
+}
+const APP_KEY_NAME: Record<string, string> = { x: "X_BEARER_TOKEN" };
+
+/** First decryptable inbox token of `kind` for `externalId` (any account when null). Undecryptable rows are skipped. */
+async function inboxCred(projectId: string, kind: string, externalId: string | null): Promise<StoredCred[]> {
+  for (const r of await inboxRows(projectId, kind)) {
+    if (externalId && r.account_id !== externalId) continue;
+    try {
+      return [{ externalId: r.account_id, token: decryptSecret(r.secret_enc) }];
+    } catch {
+      // stale secret (e.g. after an APP_SECRET rotation): try the next channel
+    }
+  }
+  return [];
+}
+
+/**
+ * Credentials for publishing and insights (see pickPubCreds): the Publishing account's token, else the
+ * brand's CX inbox channel token for the same Page / IG account / organization, else the server env token.
+ * X without a user token falls back to the app-only X_BEARER_TOKEN (insights only, `appOnly`); YouTube
+ * insights use YOUTUBE_API_KEY (`appOnly`), else the brand's stored OAuth token. Inbox tokens are only
+ * decrypted when the account has none; an undecryptable account token falls back too, and is reported
+ * (AppError) only when nothing else works.
+ */
 export async function credsFor(projectId: string, kind: PubChannel): Promise<Creds | null> {
-  if (!catalogue(kind).ready) return null;
   const [acc] = await query<{ external_id: string; token_enc: string | null }>("SELECT external_id, token_enc FROM cx_pub_accounts WHERE project_id=$1 AND kind=$2", [projectId, kind]);
-  const [envId, envTok] = ENV_FALLBACK[kind] ?? [];
-  const externalId = acc?.external_id ?? (envId ? process.env[envId] : undefined);
-  let token = acc?.token_enc ? decryptSecret(acc.token_enc) : envTok ? process.env[envTok] : undefined;
-  if (kind === "youtube") token = process.env.YOUTUBE_API_KEY;
-  if (kind === "x" && !token) return null;
-  return externalId && token ? { externalId, token } : null;
+  let token: string | null = null;
+  let tokenError: unknown = null;
+  if (acc?.token_enc)
+    try {
+      token = decryptSecret(acc.token_enc);
+    } catch (e) {
+      tokenError = e;
+    }
+  const shared = !token && (SHARED_TOKEN_KINDS as readonly string[]).includes(kind) ? await inboxCred(projectId, kind, acc?.external_id || null) : [];
+  const picked = pickPubCreds(kind, acc ? { externalId: acc.external_id, token } : null, shared, process.env);
+  if (!picked && tokenError) throw tokenError;
+  return picked ? { externalId: picked.externalId, token: picked.token, ...(picked.via === "app" ? { appOnly: true } : {}) } : null;
 }
 
 /** OAuth token for YouTube video uploads: the brand's stored token, else YOUTUBE_UPLOAD_ACCESS_TOKEN. */

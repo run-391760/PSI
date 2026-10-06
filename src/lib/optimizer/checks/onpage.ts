@@ -1,7 +1,8 @@
 import { countKeyword, hasKeyword, normalizeText, STOPWORDS, wordList } from "@/lib/content/text";
 import { covered, STOP, type Ctx } from "../context";
 import { contentTokens, slugify, stem } from "../parse";
-import type { Finding, FixOption, Intent } from "../types";
+import { gscCannibalEvidence, gscFor, gscQueryEvidence } from "../signals";
+import type { EvidenceItem, Finding, FixOption, Intent } from "../types";
 import { cap, clamp01, finding, na, pct, plural, YEAR_NOW } from "./util";
 
 /** On-Page SEO module: keyword mapping, relevance, placement, overuse, semantic terms, title, meta, headings, slug. */
@@ -33,14 +34,18 @@ export function keywordUrl(ctx: Ctx): Finding {
   const slugWords = slug.replace(/[-_]+/g, " ");
   const match = slug ? tokenMatch(slugWords, ctx) : 0;
   const clashes = ctx.others.filter((o) => normalizeText(o.keyword) === ctx.kw || (slug && o.slug && o.slug === slug));
-  const items = [
+  const items: EvidenceItem[] = [
     { label: ctx.draft.url ? `Target URL: ${ctx.draft.url}` : "No target URL set", detail: ctx.draft.url ? undefined : "Set the URL this article will be published at (Technical SEO tab).", tone: ctx.draft.url ? ("good" as const) : ("warning" as const) },
     { label: slug ? `Slug “${slug}” contains ${pct(match)} of the keyword` : "No slug set", tone: match >= 0.6 ? ("good" as const) : ("warning" as const) },
     ...clashes.map((o) => ({ label: `Cannibalization risk: “${o.title}” also targets ${normalizeText(o.keyword) === ctx.kw ? `“${o.keyword}”` : `the slug “${o.slug}”`}`, detail: "Two pages for one keyword compete with each other. Merge them or retarget one.", tone: "critical" as const, href: `/optimizer?doc=${o.id}` })),
   ];
+  // Search Console: other live pages of the site that already rank for the keyword (evidence only).
+  // keywordPages were fetched for the research keyword, so they are ignored once the primary keyword changes.
+  const gsc = ctx.research && normalizeText(ctx.research.keyword) === ctx.kw ? gscFor(ctx.draft, ctx.research) : null;
+  if (gsc) items.push(...gscCannibalEvidence(gsc, ctx.kw));
   const score = clamp01((ctx.draft.url ? 0.3 : 0.1) + 0.4 * match + (clashes.length ? 0 : 0.3));
   const fixes: FixOption[] = match < 0.6 ? [{ id: "slug-from-keyword", label: `Use slug “${suggestedSlug(ctx.kw)}”`, description: "Sets the URL slug from the primary keyword.", fix: { kind: "set", field: "slug", value: suggestedSlug(ctx.kw) }, safe: !slug }] : [];
-  return finding("keyword-url", score, `“${ctx.kw}” → ${ctx.draft.url || (slug ? `/${slug}` : "no URL yet")}${clashes.length ? `; ${plural(clashes.length, "other draft")} target the same keyword` : "; no other draft targets this keyword"}.`, ["content"], { items, fixes, how: score < 0.8 ? "Give every keyword one target URL whose slug contains it, and keep other pages off that keyword." : undefined });
+  return finding("keyword-url", score, `“${ctx.kw}” → ${ctx.draft.url || (slug ? `/${slug}` : "no URL yet")}${clashes.length ? `; ${plural(clashes.length, "other draft")} target the same keyword` : "; no other draft targets this keyword"}.`, gsc ? ["content", "search-console"] : ["content"], { items, fixes, how: score < 0.8 ? "Give every keyword one target URL whose slug contains it, and keep other pages off that keyword." : undefined });
 }
 
 export function keywordRelevance(ctx: Ctx): Finding {
@@ -56,11 +61,22 @@ export function keywordRelevance(ctx: Ctx): Finding {
   const titleMatch = Math.max(tokenMatch(ctx.draft.title, ctx), tokenMatch(d.h1s[0]?.text ?? "", ctx));
   const mentions = countKeyword(d.plain, ctx.kw);
   const score = 0.35 * inTop + 0.25 * titleMatch + 0.2 * clamp01(mentions / 3) + 0.2 * clamp01(related / 0.4);
-  return finding("keyword-relevance", score, `“${ctx.kw}” ${inTop >= 0.99 ? "is among" : inTop > 0 ? "is partly among" : "is not among"} the article's most-used terms; ${plural(mentions, "exact mention")}.`, ["content"], {
+  // Search Console: the queries the published URL already ranks for (evidence only, not scored).
+  const gsc = gscFor(ctx.draft, ctx.research);
+  const kd = ctx.research?.keywordData && normalizeText(ctx.research.keywordData.keyword) === ctx.kw ? ctx.research.keywordData : null;
+  return finding("keyword-relevance", score, `“${ctx.kw}” ${inTop >= 0.99 ? "is among" : inTop > 0 ? "is partly among" : "is not among"} the article's most-used terms; ${plural(mentions, "exact mention")}.`, ["content", ...(gsc ? (["search-console"] as const) : []), ...(kd ? (["keyword-data"] as const) : [])], {
     items: [
       { label: "Most-used terms", detail: top.slice(0, 10).join(", "), tone: inTop >= 0.99 ? ("good" as const) : ("warning" as const) },
       { label: "Title / H1 describe the keyword", detail: pct(titleMatch), tone: titleMatch >= 0.99 ? ("good" as const) : ("warning" as const) },
+      ...(gsc ? gscQueryEvidence(gsc, ctx.kw) : []),
     ],
+    metrics: kd
+      ? [
+          { label: "Search volume", value: kd.volume == null ? "n/a" : kd.volume.toLocaleString("en-US") },
+          { label: "Keyword difficulty", value: kd.kd == null ? "n/a" : String(Math.round(kd.kd)) },
+          { label: "CPC", value: kd.cpc == null ? "n/a" : `$${kd.cpc.toFixed(2)}` },
+        ]
+      : undefined,
     how: score < 0.8 ? "Either make the article about the keyword (title, H1, main sections) or pick the keyword that describes what the article is really about." : undefined,
   });
 }

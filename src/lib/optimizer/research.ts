@@ -1,22 +1,25 @@
 import { XMLParser } from "fast-xml-parser";
 import robotsParser from "robots-parser";
-import { liveSerpTop } from "@/lib/content/real";
+import { gscPageData, liveSerpTop } from "@/lib/content/real";
 import { extractPage } from "@/lib/content/extract";
 import { crawlPage, decodeBody, describeFetchError, fetchFollow, fetchHop, fetchPublic } from "@/lib/crawler";
+import { googleProjectForDomain } from "@/lib/data-mode";
 import { AppError, database, rootDomain, safeUrl } from "@/lib/domain";
+import { keywordRows } from "@/lib/keywords/metrics";
 import { autocompleteSuggestions } from "@/lib/providers/autocomplete";
 import { pageSpeed, pagespeedEnabled } from "@/lib/providers/pagespeed";
 import { liveEnabled } from "@/lib/providers/source";
 import { siteDomainOf } from "./context";
 import { competitorFormat } from "./intent";
 import { parseDraft } from "./parse";
-import type { CompetitorPage, Draft, LinkCheck, LiveCheck, Research } from "./types";
+import type { CompetitorPage, Draft, GscPerformance, KeywordData, LinkCheck, LiveCheck, Research } from "./types";
 
 /**
- * Real research for a draft (server-only): the live Google SERP from DataForSEO when configured,
- * competitor pages crawled with the polite crawler (robots.txt respected), Google Autocomplete,
- * outbound-link checks, the published URL's live status and PageSpeed, and sitemap loading for
- * internal-link suggestions. Nothing here is synthetic.
+ * Real research for a draft (server-only): the live Google SERP and keyword metrics from DataForSEO
+ * when configured, Search Console data for the draft URL when its domain is one of the user's linked
+ * projects, competitor pages crawled with the polite crawler (robots.txt respected), Google
+ * Autocomplete, outbound-link checks, the published URL's live status and PageSpeed, and sitemap
+ * loading for internal-link suggestions. Nothing here is synthetic.
  */
 
 const TEXT_CAP = 20_000;
@@ -90,9 +93,52 @@ async function pool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Prom
   return out;
 }
 
-export type ResearchInput = { keyword: string; db?: string; competitors?: string[]; ownDomain?: string | null };
+export type ResearchInput = { keyword: string; db?: string; competitors?: string[]; ownDomain?: string | null; /** The draft's URL: looked up in Search Console when its domain is a linked project. */ url?: string };
 
-export const researchInputOf = (draft: Draft): ResearchInput => ({ keyword: draft.keyword, db: draft.meta.db, competitors: draft.meta.competitors, ownDomain: siteDomainOf(draft) });
+export const researchInputOf = (draft: Draft): ResearchInput => ({ keyword: draft.keyword, db: draft.meta.db, competitors: draft.meta.competitors, ownDomain: siteDomainOf(draft), url: draft.url || draft.meta.canonical || undefined });
+
+/** DataForSEO Labs metrics of the keyword (same source and 7-day cache as Keyword Overview). Null when not configured. */
+async function keywordDataFor(ownerId: string, keyword: string, db: string): Promise<KeywordData | null> {
+  if (!liveEnabled()) return null;
+  const r = await keywordRows(ownerId, [keyword], db);
+  const row = r.data[0];
+  if (r.source !== "dataforseo" || !row) return null;
+  return { source: "dataforseo", keyword: row.keyword, db, volume: row.volume, kd: row.kd, cpc: row.cpc, competition: row.competition, intents: row.intents, fetchedAt: r.fetchedAt };
+}
+
+/** Search Console (last 28 days) for the draft URL when its domain is one of the user's projects linked to Search Console. */
+async function searchConsoleFor(ownerId: string, rawUrl: string | undefined, keyword: string): Promise<GscPerformance | null> {
+  const url = rawUrl ? normalizeUrl(rawUrl) : null;
+  if (!url) return null;
+  let domain: string;
+  try {
+    domain = rootDomain(url);
+  } catch {
+    return null;
+  }
+  const found = await googleProjectForDomain(ownerId, domain);
+  const site = found?.link.gscSite;
+  if (!found || !site) return null;
+  let data = await gscPageData(ownerId, site, url, keyword);
+  // Search Console stores the canonical form: retry with/without the trailing slash before giving up.
+  if (!data.page && !data.queries.length) {
+    const alt = url.endsWith("/") ? url.replace(/\/+$/, "") : `${url}/`;
+    const other = await gscPageData(ownerId, site, alt, keyword);
+    if (other.page || other.queries.length) data = other;
+  }
+  return {
+    source: "search-console",
+    site,
+    project: { id: found.project.id, name: found.project.name },
+    url,
+    start: data.start,
+    end: data.end,
+    page: data.page,
+    queries: data.queries.slice(0, 25),
+    keywordPages: data.keywordPages.slice(0, 10),
+    fetchedAt: new Date().toISOString(),
+  };
+}
 
 export async function runResearch(ownerId: string, input: ResearchInput): Promise<Research> {
   if (!input.keyword) throw new AppError("Set a primary keyword first.");
@@ -123,14 +169,20 @@ export async function runResearch(ownerId: string, input: ResearchInput): Promis
   for (const u of manual) if (!targets.some((t) => t.url.replace(/\/$/, "") === u.replace(/\/$/, ""))) targets.push({ url: u, position: null });
   if (serpSource === "none" && manual.length) serpSource = "urls";
 
-  const [competitors, ac] = await Promise.all([pool(targets.slice(0, 10), 3, (t) => crawlCompetitor(t.url, t.position)), autocompleteSuggestions(keyword, db)]);
+  const [competitors, ac, keywordData, gsc] = await Promise.all([
+    pool(targets.slice(0, 10), 3, (t) => crawlCompetitor(t.url, t.position)),
+    autocompleteSuggestions(keyword, db),
+    keywordDataFor(ownerId, keyword, db).catch((e) => (notes.push(`DataForSEO keyword metrics unavailable: ${e instanceof Error ? e.message : "error"}`), null)),
+    searchConsoleFor(ownerId, input.url, keyword).catch((e) => (notes.push(`Search Console data unavailable: ${e instanceof Error ? e.message : "error"}`), null)),
+  ]);
   const autocomplete = ac.status === "ok" ? ac.data.suggestions.map((s) => s.keyword).slice(0, 60) : [];
   if (ac.status === "failed") notes.push(`Google Autocomplete failed: ${ac.error}`);
   if (ac.status === "disabled") notes.push("Google Autocomplete is disabled (ENABLE_AUTOCOMPLETE=false).");
   const failed = competitors.filter((c) => c.error);
   if (failed.length) notes.push(`${failed.length} competitor page(s) could not be crawled (${[...new Set(failed.map((f) => f.error))].slice(0, 2).join("; ")}).`);
   if (!targets.length) notes.push("No competitor pages: add 2–5 URLs of pages that rank for this keyword to compare against.");
-  return { keyword, db, serpSource, features, paa, related, autocomplete, competitors, fetchedAt: new Date().toISOString(), notes };
+  if (gsc && !gsc.page && !gsc.queries.length) notes.push(`Search Console (${gsc.site}) has no data for this URL in the last 28 days: it may not be published or indexed yet.`);
+  return { keyword, db, serpSource, features, paa, related, autocomplete, competitors, fetchedAt: new Date().toISOString(), notes, gsc, keywordData };
 }
 
 /** Status of every outbound link (max 40), 4 at a time. */

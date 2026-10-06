@@ -6,7 +6,9 @@ import { query } from "@/lib/db";
 import { dateLabel, money } from "@/lib/format";
 import { monthlySpend } from "@/lib/providers/dataforseo";
 import { globalBudgetUsd, integrations, maxMonthlyUsd, systemInfo } from "@/lib/reports/platform";
+import { credentialStatus } from "@/lib/integrations/registry";
 import { AccountSummary } from "@/components/settings/account-summary";
+import { ApiKeyMap } from "@/components/settings/api-key-map";
 import { BudgetForm, DeleteAccount, PasswordForm, ProfileForm, SignOutOthers, ThemeSelector } from "@/components/settings/account-forms";
 import { CopyButton } from "@/components/settings/copy-button";
 import { Page, PageHeader } from "@/components/shell/page";
@@ -153,101 +155,109 @@ function Integrations() {
     ...list.flatMap((i) => [`# ${i.name}`, ...i.envVars.map((v) => `${v.name}=${v.example.includes("…") || v.example.includes("@") || v.example.startsWith("your") ? "" : v.example}`)]),
   ].join("\n");
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-      <div className="space-y-3">
-        {list.map((i) => {
-          const good = i.status === "connected" || i.status === "enabled";
-          return (
-            <Card key={i.id}>
-              <div className="flex flex-wrap items-start gap-3 px-4 py-3.5">
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${good ? "bg-good-soft text-good-ink" : "bg-surface-3 text-text-3"}`}>
-                  <Plug className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-[14px] font-semibold text-text">{i.name}</h2>
-                    <Badge tone={good ? "good" : i.status === "disabled" ? "neutral" : "warning"}>
-                      {good ? <CircleCheck className="h-3 w-3" /> : <CircleDashed className="h-3 w-3" />}
-                      {i.statusLabel}
-                    </Badge>
+    <div className="space-y-4">
+      <Card id="api-keys">
+        <CardHeader title="API keys & where they're used" description="Every key the SEO and CX workspaces read, whether it is set, and each feature it powers." />
+        <CardBody>
+          <ApiKeyMap status={credentialStatus()} workspace="SEO" />
+        </CardBody>
+      </Card>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="space-y-3">
+          {list.map((i) => {
+            const good = i.status === "connected" || i.status === "enabled";
+            return (
+              <Card key={i.id}>
+                <div className="flex flex-wrap items-start gap-3 px-4 py-3.5">
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${good ? "bg-good-soft text-good-ink" : "bg-surface-3 text-text-3"}`}>
+                    <Plug className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-[14px] font-semibold text-text">{i.name}</h2>
+                      <Badge tone={good ? "good" : i.status === "disabled" ? "neutral" : "warning"}>
+                        {good ? <CircleCheck className="h-3 w-3" /> : <CircleDashed className="h-3 w-3" />}
+                        {i.statusLabel}
+                      </Badge>
+                    </div>
+                    <p className="mt-0.5 text-[12.5px] text-text-2">{i.description}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {i.powers.map((p) => (
+                        <span key={p} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11.5px] text-text-2">
+                          {p}
+                        </span>
+                      ))}
+                    </div>
+                    <ul className="mt-3 space-y-1">
+                      {i.envVars.map((v) => (
+                        <li key={v.name} className="flex flex-wrap items-center gap-2 text-[12.5px]">
+                          <code className="rounded border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px] text-text">{v.name}</code>
+                          {v.set ? <span className="text-good-ink">set</span> : <span className="text-text-3">{v.name.startsWith("ENABLE_") ? "not set · defaults to true" : "not set"}</span>}
+                          <span className="text-text-3">· {v.required ? "required" : "optional"}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {i.note && <p className="mt-2 text-[12px] text-text-3">{i.note}</p>}
                   </div>
-                  <p className="mt-0.5 text-[12.5px] text-text-2">{i.description}</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {i.powers.map((p) => (
-                      <span key={p} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11.5px] text-text-2">
-                        {p}
-                      </span>
-                    ))}
+                  {i.docs && (
+                    <a href={i.docs} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-link hover:underline">
+                      Docs <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader title="How to connect" description="Secrets never pass through the browser" />
+            <CardBody className="space-y-3 text-[12.5px] text-text-2">
+              <ol className="list-decimal space-y-1.5 pl-4">
+                <li>
+                  Add the variables to <code className="rounded bg-surface-3 px-1 font-mono text-[11.5px]">.env.local</code> in the project root.
+                </li>
+                <li>Restart the SynapseSEO server so it reads the new values.</li>
+                <li>Come back here — the status updates automatically.</li>
+              </ol>
+              {missing.length > 0 && (
+                <Callout tone="info" className="text-[12px]">
+                  Not set yet: {missing.map((m) => m.name).join(", ")}
+                </Callout>
+              )}
+              <div className="overflow-hidden rounded-md border border-border">
+                <div className="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-1">
+                  <span className="font-mono text-[11px] text-text-3">.env.local</span>
+                  <CopyButton text={snippet} />
+                </div>
+                <pre className="scroll-thin max-h-72 overflow-auto bg-surface-2 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-text-2">{snippet}</pre>
+              </div>
+              <p className="flex items-start gap-1.5 text-[12px] text-text-3">
+                <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Values are read on the server only and are never displayed here.
+              </p>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="System" />
+            <CardBody>
+              <dl className="space-y-2 text-[12.5px]">
+                {[
+                  ["Database", sys.database],
+                  ["Background worker", sys.worker],
+                  ["Sign-ups", sys.signups],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3">
+                    <dt className="text-text-3">{k}</dt>
+                    <dd className="text-right text-text">{v}</dd>
                   </div>
-                  <ul className="mt-3 space-y-1">
-                    {i.envVars.map((v) => (
-                      <li key={v.name} className="flex flex-wrap items-center gap-2 text-[12.5px]">
-                        <code className="rounded border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px] text-text">{v.name}</code>
-                        {v.set ? <span className="text-good-ink">set</span> : <span className="text-text-3">{v.name.startsWith("ENABLE_") ? "not set · defaults to true" : "not set"}</span>}
-                        <span className="text-text-3">· {v.required ? "required" : "optional"}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {i.note && <p className="mt-2 text-[12px] text-text-3">{i.note}</p>}
-                </div>
-                {i.docs && (
-                  <a href={i.docs} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-link hover:underline">
-                    Docs <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-      <div className="space-y-4">
-        <Card>
-          <CardHeader title="How to connect" description="Secrets never pass through the browser" />
-          <CardBody className="space-y-3 text-[12.5px] text-text-2">
-            <ol className="list-decimal space-y-1.5 pl-4">
-              <li>
-                Add the variables to <code className="rounded bg-surface-3 px-1 font-mono text-[11.5px]">.env.local</code> in the project root.
-              </li>
-              <li>Restart the SynapseSEO server so it reads the new values.</li>
-              <li>Come back here — the status updates automatically.</li>
-            </ol>
-            {missing.length > 0 && (
-              <Callout tone="info" className="text-[12px]">
-                Not set yet: {missing.map((m) => m.name).join(", ")}
-              </Callout>
-            )}
-            <div className="overflow-hidden rounded-md border border-border">
-              <div className="flex items-center justify-between border-b border-border bg-surface-2 px-2.5 py-1">
-                <span className="font-mono text-[11px] text-text-3">.env.local</span>
-                <CopyButton text={snippet} />
-              </div>
-              <pre className="scroll-thin max-h-72 overflow-auto bg-surface-2 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-text-2">{snippet}</pre>
-            </div>
-            <p className="flex items-start gap-1.5 text-[12px] text-text-3">
-              <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Values are read on the server only and are never displayed here.
-            </p>
-          </CardBody>
-        </Card>
-        <Card>
-          <CardHeader title="System" />
-          <CardBody>
-            <dl className="space-y-2 text-[12.5px]">
-              {[
-                ["Database", sys.database],
-                ["Background worker", sys.worker],
-                ["Sign-ups", sys.signups],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-3">
-                  <dt className="text-text-3">{k}</dt>
-                  <dd className="text-right text-text">{v}</dd>
-                </div>
-              ))}
-            </dl>
-            <p className="mt-3 flex items-start gap-1.5 text-[12px] text-text-3">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Free sources are on by default; set their ENABLE_* variable to false to stay fully offline.
-            </p>
-          </CardBody>
-        </Card>
+                ))}
+              </dl>
+              <p className="mt-3 flex items-start gap-1.5 text-[12px] text-text-3">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Free sources are on by default; set their ENABLE_* variable to false to stay fully offline.
+              </p>
+            </CardBody>
+          </Card>
+        </div>
       </div>
     </div>
   );

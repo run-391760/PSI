@@ -60,14 +60,14 @@ export function EventControls({ brandId, id, status, severity, owner }: { brandI
         <Field label="Escalation owner" htmlFor="e-owner" className="flex-1">
           <Input id="e-owner" value={ownerVal} onChange={(e) => setOwner(e.target.value)} maxLength={120} placeholder="Name or email" />
         </Field>
-        <Button type="submit" loading={busy === "owner"} disabled={ownerVal.trim() === owner}>Assign</Button>
+        <Button type="submit" loading={busy === "owner"} disabled={busy === "owner" || (ownerVal.trim() === owner)}>Assign</Button>
       </form>
       <form onSubmit={addNote} className="grid gap-2">
         <Field label="Add a note" htmlFor="e-note">
           <Textarea id="e-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} maxLength={4000} placeholder="Actions taken, statements issued, next steps…" />
         </Field>
         <div>
-          <Button type="submit" variant="primary" loading={busy === "note"} disabled={!note.trim()}>Add note</Button>
+          <Button type="submit" variant="primary" loading={busy === "note"} disabled={busy === "note" || !note.trim()}>Add note</Button>
         </div>
       </form>
     </div>

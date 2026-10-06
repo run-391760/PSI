@@ -8,6 +8,7 @@ import { deleteRuleAction, toggleRuleAction } from "@/app/(app)/alerts/actions";
 import { timeAgo } from "@/lib/format";
 import { alertKind, type AlertRule } from "@/lib/position-tracking/types";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { DataTable } from "@/components/ui/data-table";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { RuleDialog, type RuleProject } from "./rule-dialog";
@@ -34,6 +35,7 @@ export function RulesTable({ rules, projects, showProject = true, emptyAction }:
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
       setError(null);
@@ -112,7 +114,7 @@ export function RulesTable({ rules, projects, showProject = true, emptyAction }:
                 <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${r.name}`} title="Edit" onClick={() => setEditing(r)}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7 text-critical-ink" aria-label={`Delete ${r.name}`} title="Delete" onClick={() => confirm(`Delete the rule “${r.name}”?`) && run(() => deleteRuleAction(r.id))}>
+                <Button size="icon" variant="ghost" className="h-7 w-7 text-critical-ink" aria-label={`Delete ${r.name}`} title="Delete" onClick={async () => (await confirm({ title: "Delete this alert rule?", description: r.name, confirmLabel: "Delete rule" })) && run(() => deleteRuleAction(r.id))}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </span>
@@ -121,6 +123,7 @@ export function RulesTable({ rules, projects, showProject = true, emptyAction }:
         ]}
       />
       <RuleDialog open={Boolean(editing)} onClose={() => setEditing(null)} projects={projects} rule={editing} />
+      {confirmDialog}
     </>
   );
 }

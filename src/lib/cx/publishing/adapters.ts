@@ -3,10 +3,12 @@
  * X API v2) and read-only insights (YouTube Data API, Meta, LinkedIn, X). Request builders and
  * response mappers are pure and fixture-tested; `send*` / `fetch*` do the HTTP. No DB imports here.
  */
+import { metaGraphUrl } from "@/lib/cx/channels";
 import type { PubChannel } from "./core";
 import type { OptionValue } from "./options";
 
-export type Creds = { externalId: string; token: string };
+/** `appOnly`: an app-level server key (X_BEARER_TOKEN, YOUTUBE_API_KEY) that reads public insights but cannot publish. */
+export type Creds = { externalId: string; token: string; appOnly?: boolean };
 export type Media = { kind: "image" | "video" | "document"; mime: string; filename: string; publicUrl: string | null; read: () => Promise<Buffer> };
 /** `options` = this channel's options, `common` = shared options (poll), `cover` = resolved cover asset. */
 export type PublishInput = { text: string; firstComment: string; link: string | null; media: Media[]; postType?: string; options?: Record<string, OptionValue>; common?: Record<string, OptionValue>; cover?: Media | null };
@@ -15,7 +17,7 @@ const str = (v: OptionValue | undefined) => (typeof v === "string" ? v : "");
 export type PublishOutput = { externalId: string; url: string | null; warnings: string[] };
 export type HttpRequest = { method: "GET" | "POST" | "DELETE"; url: string; headers?: Record<string, string>; body?: Record<string, unknown> };
 
-const GRAPH = () => `https://graph.facebook.com/${process.env.META_GRAPH_VERSION || "v23.0"}`;
+const GRAPH = metaGraphUrl;
 const LI_VERSION = () => process.env.LINKEDIN_API_VERSION || "202509";
 const X_API = "https://api.x.com/2";
 
@@ -271,7 +273,10 @@ export function xTweetRequest(c: Creds, text: string, opts: { mediaIds?: string[
   return { method: "POST", url: `${X_API}/tweets`, headers: { authorization: `Bearer ${c.token}` }, body };
 }
 
+const X_USER_TOKEN_NEEDED = "X publishing needs the account's user access token (OAuth 2.0 with tweet.write) or X_USER_ACCESS_TOKEN; X_BEARER_TOKEN is app-only and only reads insights.";
+
 async function sendX(c: Creds, input: PublishInput): Promise<PublishOutput> {
+  if (c.appOnly) throw new ApiError(X_USER_TOKEN_NEEDED);
   const warnings: string[] = [];
   const mediaIds: string[] = [];
   const poll = input.postType === "poll" ? { options: list(input.common?.poll_options), hours: Number(str(input.common?.poll_hours)) || 24 } : undefined;
@@ -412,6 +417,7 @@ export function deleteRequest(kind: PubChannel, c: Creds, externalId: string): H
 }
 export const canDelete = (kind: string) => ["facebook", "linkedin", "x", "threads", "gbp", "youtube"].includes(kind);
 export async function deletePublished(kind: PubChannel, c: Creds, externalId: string) {
+  if (kind === "x" && c.appOnly) throw new ApiError(X_USER_TOKEN_NEEDED);
   const req = deleteRequest(kind, c, externalId);
   if (!req) throw new ApiError("This network's API cannot delete published posts; delete it in the app.");
   await http(req, "TEXT");
@@ -474,17 +480,22 @@ export function mapYoutube(channelRes: any, videosRes: any): ChannelStats | null
   };
 }
 
-export async function fetchYoutube(key: string, channelId: string): Promise<ChannelStats | null> {
+/** Google API keys look like "AIza…"; anything else is treated as an OAuth access token. */
+export const isGoogleApiKey = (v: string) => /^AIza[\w-]{30,}$/.test(v);
+
+/** YouTube channel stats with an API key (YOUTUBE_API_KEY) or the brand's OAuth token (youtube.readonly). */
+export async function fetchYoutube(key: string, channelId: string, auth: "key" | "bearer" = isGoogleApiKey(key) ? "key" : "bearer"): Promise<ChannelStats | null> {
   const base = "https://www.googleapis.com/youtube/v3";
   const isHandle = channelId.startsWith("@");
-  const ch = (await http<any>({ method: "GET", url: `${base}/channels?part=snippet,statistics,contentDetails&${isHandle ? "forHandle" : "id"}=${encodeURIComponent(channelId)}&key=${encodeURIComponent(key)}` })).json;
+  const get = (path: string) => http<any>(auth === "key" ? { method: "GET", url: `${base}/${path}&key=${encodeURIComponent(key)}` } : { method: "GET", url: `${base}/${path}`, headers: { authorization: `Bearer ${key}` } });
+  const ch = (await get(`channels?part=snippet,statistics,contentDetails&${isHandle ? "forHandle" : "id"}=${encodeURIComponent(channelId)}`)).json;
   const uploads = ch?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
   if (!ch?.items?.length) return null;
   let videos: any = { items: [] };
   if (uploads) {
-    const pl = (await http<any>({ method: "GET", url: `${base}/playlistItems?part=contentDetails&maxResults=12&playlistId=${uploads}&key=${encodeURIComponent(key)}` })).json;
+    const pl = (await get(`playlistItems?part=contentDetails&maxResults=12&playlistId=${uploads}`)).json;
     const ids = (pl.items ?? []).map((i: any) => i.contentDetails?.videoId).filter(Boolean);
-    if (ids.length) videos = (await http<any>({ method: "GET", url: `${base}/videos?part=snippet,statistics&id=${ids.join(",")}&key=${encodeURIComponent(key)}` })).json;
+    if (ids.length) videos = (await get(`videos?part=snippet,statistics&id=${ids.join(",")}`)).json;
   }
   return mapYoutube(ch, videos);
 }

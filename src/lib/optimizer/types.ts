@@ -38,7 +38,7 @@ export type PageType = "blog" | "guide" | "how-to" | "listicle" | "comparison" |
 export type Funnel = "awareness" | "consideration" | "decision";
 
 /** Where a finding's evidence came from (shown on every card). */
-export type EvidenceSource = "content" | "serp" | "competitors" | "autocomplete" | "ai" | "live-url";
+export type EvidenceSource = "content" | "serp" | "competitors" | "autocomplete" | "ai" | "live-url" | "search-console" | "keyword-data";
 
 export type Person = { name?: string; bio?: string; credentials?: string; url?: string };
 
@@ -109,6 +109,36 @@ export type CompetitorPage = {
   error: string | null;
 };
 
+/** Search Console performance of the draft's URL (last 28 days) when its domain is a project linked to Search Console. */
+export type GscPerformance = {
+  source: "search-console";
+  site: string;
+  project: { id: string; name: string };
+  url: string;
+  start: string;
+  end: string;
+  /** Totals for the page; null when Search Console has no data for it. */
+  page: { clicks: number; impressions: number; ctr: number; position: number } | null;
+  /** Queries the page already gets impressions for, most impressions first. */
+  queries: { query: string; clicks: number; impressions: number; ctr: number; position: number }[];
+  /** Pages of the site that get impressions for the primary keyword (cannibalization evidence). */
+  keywordPages?: { url: string; clicks: number; impressions: number; position: number }[];
+  fetchedAt: string;
+};
+
+/** DataForSEO Labs metrics of the primary keyword (null fields were not measured). */
+export type KeywordData = {
+  source: "dataforseo";
+  keyword: string;
+  db: string;
+  volume: number | null;
+  kd: number | null;
+  cpc: number | null;
+  competition: number | null;
+  intents: Exclude<Intent, "local">[];
+  fetchedAt: string;
+};
+
 export type Research = {
   keyword: string;
   db: string;
@@ -121,6 +151,10 @@ export type Research = {
   competitors: CompetitorPage[];
   fetchedAt: string;
   notes: string[];
+  /** Search Console data for the draft URL (optional; only for the user's linked projects). */
+  gsc?: GscPerformance | null;
+  /** Keyword metrics from DataForSEO (optional; only when DataForSEO is configured). */
+  keywordData?: KeywordData | null;
 };
 
 /** Optional Claude review of the subjective checks (scores 0..1). */
@@ -175,7 +209,13 @@ export type Brief = {
   sources: string[];
   generatedBy: "ai" | "research";
   createdAt: string;
+  /** Pages analysed for the brief (older briefs have none). */
+  competitors?: BriefCompetitor[];
+  /** SERP features of the live results (DataForSEO), when available. */
+  serpFeatures?: string[];
 };
+
+export type BriefCompetitor = { title: string; domain: string; url: string; position: number | null; words: number; format: ContentFormat | null };
 
 // -------------------------------------------------------------------------------- fixes
 
@@ -250,6 +290,8 @@ export type IntentProfile = {
   keywordSignals: string[];
   serp: Intent | null;
   serpFormats: Partial<Record<ContentFormat, number>>;
+  /** DataForSEO's intent classification of the keyword (when keyword data was fetched). */
+  dataforseo?: Intent | null;
   ai: Intent | null;
   dominant: Intent;
   format: ContentFormat;

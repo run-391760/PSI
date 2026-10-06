@@ -1,16 +1,39 @@
 import { query } from "@/lib/db";
+import { metaGraphUrl } from "@/lib/cx/channels";
+import { pickInboxToken } from "@/lib/cx/providers";
+import { decryptSecret } from "@/lib/secrets";
 import { addInbound, createTicket, logEvent } from "./store";
 import { channelSecret, setChannelResult } from "./channels";
 import type { InboundSocial, PendingMention } from "./webhooks";
 
-const GRAPH = "https://graph.facebook.com/v21.0";
 type Obj = Record<string, any>;
+
+/**
+ * Page access token for a Facebook / Instagram inbox channel: its own token, else the brand's Publishing
+ * token for the same Page / IG account, else META_PAGE_ACCESS_TOKEN (see pickInboxToken). `envMatchOnly`
+ * (background polling) uses the env token only when META_PAGE_ID / INSTAGRAM_USER_ID names this account,
+ * so another brand's tokenless channel is never polled with it.
+ */
+export async function metaToken(ch: { project_id: string; config: Obj | null; secret_enc: string | null }, kind: "facebook" | "instagram", opts: { envMatchOnly?: boolean } = {}) {
+  const accountId = String(ch.config?.accountId ?? "");
+  const own = channelSecret(ch);
+  const [acc] = !own && accountId ? await query<{ external_id: string; token_enc: string | null }>("SELECT external_id, token_enc FROM cx_pub_accounts WHERE project_id=$1 AND kind=$2 AND external_id=$3", [ch.project_id, kind, accountId]) : [];
+  let accToken: string | null = null;
+  try {
+    accToken = acc?.token_enc ? decryptSecret(acc.token_enc) : null;
+  } catch {
+    // undecryptable Publishing token (e.g. after an APP_SECRET rotation): fall through to the env token
+  }
+  const envId = process.env[kind === "instagram" ? "INSTAGRAM_USER_ID" : "META_PAGE_ID"];
+  const env = opts.envMatchOnly && envId !== accountId ? { ...process.env, META_PAGE_ACCESS_TOKEN: undefined } : process.env;
+  return pickInboxToken(kind, own, accountId, acc ? { externalId: acc.external_id, token: accToken } : null, env);
+}
 
 /** GET/POST the Graph API with a Page access token (sent in the body or header, never logged). */
 export async function graph(path: string, token: string, post?: Record<string, string> | "DELETE"): Promise<Obj> {
   const del = post === "DELETE";
   if (del) post = undefined;
-  const r = await fetch(`${GRAPH}/${path}`, {
+  const r = await fetch(`${metaGraphUrl()}/${path}`, {
     method: del ? "DELETE" : post ? "POST" : "GET",
     headers: { authorization: `Bearer ${token}`, ...(post ? { "content-type": "application/x-www-form-urlencoded" } : {}) },
     body: post && typeof post === "object" ? new URLSearchParams(post).toString() : undefined,
@@ -77,12 +100,12 @@ async function metaChannel(kind: "facebook" | "instagram", accountId: string) {
   return ch ?? null;
 }
 
-/** Fetch the text of IG @mentions (captions or comments) and store them; needs the channel's access token. */
+/** Fetch the text of IG @mentions (captions or comments) and store them; needs a Page access token (see metaToken). */
 export async function storeMentions(pending: PendingMention[]) {
   let stored = 0;
   for (const p of pending) {
     const ch = await metaChannel("instagram", p.accountId);
-    const token = ch ? channelSecret(ch) : null;
+    const token = ch ? await metaToken(ch, "instagram") : null;
     if (!ch || !token) continue;
     try {
       const item = p.commentId
@@ -110,14 +133,14 @@ export async function storeMentions(pending: PendingMention[]) {
  */
 export async function pollInstagramTags(projectId: string) {
   const chans = await query<{ id: string; project_id: string; config: Obj; secret_enc: string | null }>(
-    "SELECT id,project_id,config,secret_enc FROM cx_channels WHERE project_id=$1 AND kind='instagram' AND status<>'paused' AND secret_enc IS NOT NULL", [projectId]);
+    "SELECT id,project_id,config,secret_enc FROM cx_channels WHERE project_id=$1 AND kind='instagram' AND status<>'paused'", [projectId]);
   let stored = 0;
   for (const ch of chans) {
     const last = ch.config.tagsCheckedAt ? Date.parse(ch.config.tagsCheckedAt) : 0;
     if (Date.now() - last < 15 * 60_000) continue;
-    const token = channelSecret(ch);
     const accountId = String(ch.config.accountId ?? "");
-    if (!token || !accountId) continue;
+    const token = accountId ? await metaToken(ch, "instagram", { envMatchOnly: true }) : null;
+    if (!token) continue;
     try {
       const d = await graph(`${accountId}/tags?fields=id,caption,username,timestamp,permalink,media_type,media_url&limit=25`, token);
       const since = last || Date.now() - 3 * 86_400_000;
@@ -156,9 +179,9 @@ export async function moderateComment(projectId: string, ticketId: string, messa
   const thread = parseMetaThread(m.external_thread_id);
   // Only comments on the brand's own posts: Page comments (fbc) and IG comments (igc), not @mentions elsewhere.
   if (!thread || (thread.kind !== "fbc" && thread.kind !== "igc") || m.direction !== "in" || !m.external_id) throw new AppError("Only comments on your own Facebook and Instagram posts can be hidden or deleted.");
-  const [ch] = m.channel_id ? await query<{ secret_enc: string | null }>("SELECT secret_enc FROM cx_channels WHERE id=$1 AND project_id=$2", [m.channel_id, projectId]) : [];
-  const token = ch ? channelSecret(ch) : null;
-  if (!token) throw new AppError("Add a Page access token to the channel to moderate comments.");
+  const [ch] = m.channel_id ? await query<{ project_id: string; config: Obj; secret_enc: string | null }>("SELECT project_id,config,secret_enc FROM cx_channels WHERE id=$1 AND project_id=$2", [m.channel_id, projectId]) : [];
+  const token = ch ? await metaToken(ch, m.channel_kind === "instagram" ? "instagram" : "facebook") : null;
+  if (!token) throw new AppError("Add a Page access token to the channel (or connect the Page in Publishing) to moderate comments.");
   if (action === "delete") await graph(m.external_id, token, "DELETE");
   else if (m.channel_kind === "instagram") await graph(m.external_id, token, { hide: action === "hide" ? "true" : "false" });
   else await graph(m.external_id, token, { is_hidden: action === "hide" ? "true" : "false" });

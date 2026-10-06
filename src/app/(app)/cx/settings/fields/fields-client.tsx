@@ -5,12 +5,14 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
-import { EmptyState } from "@/components/ui/feedback";
+import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import type { ClassificationNode, FieldDef, FieldInput } from "@/lib/cx/admin/fields";
 import { classificationsToCsv, FIELD_TYPES, fieldsToCsv, OPTION_SEP } from "@/lib/cx/admin/pure/fields";
 import { cn } from "@/lib/utils";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, FileButton, downloadText, useRun } from "../_admin/ui";
 import {
   deleteClassificationAction, deleteFieldAction, importClassificationsAction, importFieldsAction, importOptionsAction,
@@ -23,9 +25,13 @@ type Sentiment = ClassificationNode["sentiment"];
 /* ---------------- Classification ---------------- */
 
 export function ClassificationPanel({ brand, nodes, usage }: { brand: string; nodes: ClassificationNode[]; usage: Record<string, number> }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [edit, setEdit] = useState<{ id?: string; parentId: string | null; label: string; sentiment: Sentiment; hidden: boolean } | null>(null);
+  type NodeEdit = { id?: string; parentId: string | null; label: string; sentiment: Sentiment; hidden: boolean };
+  const [edit, setEditState] = useState<NodeEdit | null>(null);
+  const setEdit = (e: NodeEdit | null) => { if (e && !edit) setError(null); setEditState(e); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveClassificationAction(brand, edit), () => `${edit.label || "Classification"} saved.`))) setEdit(null); };
   const kids = (p: string | null) => nodes.filter((n) => n.parentId === p);
   const pathOf = (id: string | null): string[] => { const n = nodes.find((x) => x.id === id); return n ? [...pathOf(n.parentId), n.label] : []; };
 
@@ -45,7 +51,7 @@ export function ClassificationPanel({ brand, nodes, usage }: { brand: string; no
           <div className="flex gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
             {n.level < 3 && <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Add child" onClick={() => setEdit({ parentId: n.id, label: "", sentiment: null, hidden: false })}><Plus className="h-3.5 w-3.5" /></Button>}
             <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Edit" onClick={() => setEdit({ id: n.id, parentId: n.parentId, label: n.label, sentiment: n.sentiment, hidden: n.hidden })}><Pencil className="h-3.5 w-3.5" /></Button>
-            <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Delete" onClick={() => confirm(`Delete "${n.label}" and everything under it?`) && run("del", deleteClassificationAction(brand, n.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+            <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Delete" onClick={async () => { if (await confirm({ title: `Delete “${n.label}”?`, description: "Everything under it is deleted too. To keep it on old tickets but stop agents picking it, hide it instead." })) run("del", deleteClassificationAction(brand, n.id), () => `${n.label} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
           </div>
         </div>
         {expanded && children.length > 0 && <ul>{children.map(row)}</ul>}
@@ -70,8 +76,10 @@ export function ClassificationPanel({ brand, nodes, usage }: { brand: string; no
           <EmptyState title="No classifications yet" description="Add top-level categories, or import a sheet with columns Level 1, Level 2, Level 3, Sentiment, Hidden." />
         )}
       </CardBody>
+      {confirmDialog}
       <Dialog open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Edit classification" : "Add classification"} description={edit?.parentId ? `Under ${pathOf(edit.parentId).join(OPTION_SEP)}` : "Top level"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveClassificationAction(brand, edit)))) setEdit(null); }}>Save</Button></>}>
+        error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="space-y-3">
             <Field label="Label"><Input autoFocus value={edit.label} maxLength={100} onChange={(e) => setEdit({ ...edit, label: e.target.value })} /></Field>
@@ -93,7 +101,8 @@ export function ClassificationPanel({ brand, nodes, usage }: { brand: string; no
 const blankField = (): FieldInput => ({ label: "", scope: "ticket", group: "additional_info", type: "text", options: [], required: false, validation: null, encrypted: false, hidden: false });
 
 export function FieldsPanel({ brand, defs }: { brand: string; defs: FieldDef[] }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<FieldInput | null>(null);
   const [optionsText, setOptionsText] = useState("");
   const [master, setMaster] = useState<FieldDef | null>(null);
@@ -101,11 +110,11 @@ export function FieldsPanel({ brand, defs }: { brand: string; defs: FieldDef[] }
     { key: "additional_info" as const, title: "Additional Info", description: "Structured fields agents fill on a ticket or contact: text, numbers, dates, picklists, with validation and optional encryption." },
     { key: "custom_info" as const, title: "Custom Info", description: "Hierarchical master lists (for example Region > City > Branch), imported from a sheet and picked level by level." },
   ];
-  const openEdit = (f: FieldInput) => { setEdit(f); setOptionsText(f.options.join("\n")); };
+  const openEdit = (f: FieldInput) => { setError(null); setEdit(f); setOptionsText(f.options.join("\n")); };
   const save = async () => {
-    if (!edit) return;
+    if (!edit || busy === "save") return;
     const options = optionsText.split("\n").map((x) => x.trim()).filter(Boolean);
-    if (await run("save", saveFieldAction(brand, { ...edit, options }))) setEdit(null);
+    if (await runOk(run, "save", saveFieldAction(brand, { ...edit, options }), () => `${edit.label || "Field"} saved.`)) setEdit(null);
   };
   const isList = edit && (edit.type === "select" || edit.type === "multiselect");
 
@@ -141,7 +150,7 @@ export function FieldsPanel({ brand, defs }: { brand: string; defs: FieldDef[] }
                       </div>
                       {(d.type === "select" || d.type === "multiselect") && <Button size="sm" variant="ghost" onClick={() => setMaster(d)}>Options</Button>}
                       <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${d.label}`} onClick={() => openEdit({ ...d })}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${d.label}`} onClick={() => confirm(`Delete the field "${d.label}"? Values stored on tickets are kept but no longer shown.`) && run("del", deleteFieldAction(brand, d.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${d.label}`} onClick={async () => { if (await confirm({ title: `Delete the field “${d.label}”?`, description: "Values already stored on tickets and contacts are kept but no longer shown." })) run("del", deleteFieldAction(brand, d.id), () => `${d.label} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </li>
                   ))}
                 </ul>
@@ -151,8 +160,9 @@ export function FieldsPanel({ brand, defs }: { brand: string; defs: FieldDef[] }
         );
       })}
 
-      <Dialog size="lg" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.label}` : "Add field"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={save}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="lg" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.label}` : "Add field"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Label" className="sm:col-span-2"><Input autoFocus value={edit.label} maxLength={80} onChange={(e) => setEdit({ ...edit, label: e.target.value })} /></Field>
@@ -192,19 +202,23 @@ export function FieldsPanel({ brand, defs }: { brand: string; defs: FieldDef[] }
 }
 
 function OptionsDialog({ brand, field, onClose }: { brand: string; field: FieldDef | null; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, notice, setNotice } = useRun();
   const [text, setText] = useState<string | null>(null);
   const value = text ?? field?.options.join("\n") ?? "";
-  const close = () => { setText(null); onClose(); };
+  // Saving keeps the dialog open (with a notice) so the list can be checked; Close leaves it.
+  const close = () => { setText(null); setError(null); setNotice(null); onClose(); };
   return (
-    <Dialog size="lg" open={!!field} onClose={close} title={field ? `${field.label} options` : ""} description="Edit the list, or import a sheet: each row's cells become one path (Region, City, Branch → Region > City > Branch)."
+    <Dialog size="lg" open={!!field} onClose={close} title={field ? `${field.label} options` : "Options"} error={error}
+      footerStart={field && <FileButton label={<><Upload className="h-3.5 w-3.5" />Append from sheet</>} onText={(t) => run("imp", importOptionsAction(brand, field.id, t, "append"), (n) => { setText(null); return `${n} options now.`; })} />}
       footer={field && <>
-        <FileButton className="mr-auto" label={<><Upload className="h-3.5 w-3.5" />Append from sheet</>} onText={(t) => run("imp", importOptionsAction(brand, field.id, t, "append"), (n) => { setText(null); return `${n} options now.`; })} />
-        <Button onClick={close}>Close</Button>
+        <Button variant="ghost" onClick={close}>Close</Button>
         <Button variant="primary" loading={busy === "save"} onClick={() => run("save", setOptionsAction(brand, field.id, value.split("\n")), (n) => { setText(null); return `Saved ${n} options.`; })}>Save list</Button>
       </>}>
-      {messages}
-      <Textarea value={value} onChange={(e) => setText(e.target.value)} className="min-h-64 font-mono text-[12px]" />
+      <div className="space-y-2">
+        <p className="text-[12.5px] text-text-2">One option per line. To import a sheet, each row&apos;s cells become one path: Region, City, Branch becomes Region &gt; City &gt; Branch.</p>
+        {notice && <Callout tone="good">{notice}</Callout>}
+        <Textarea aria-label={field ? `${field.label} options` : "Options"} value={value} onChange={(e) => setText(e.target.value)} className="min-h-64 font-mono text-[12px]" />
+      </div>
     </Dialog>
   );
 }

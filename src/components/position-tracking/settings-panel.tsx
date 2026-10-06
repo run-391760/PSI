@@ -10,6 +10,7 @@ import { MAX_COMPETITORS, SOURCE_INFO, type CampaignSource, type DeviceMode } fr
 import { DomainAvatar } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { ConfirmDialog, useConfirm } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
@@ -26,6 +27,7 @@ export function CampaignSettings({ projectId, domain, campaign }: { projectId: s
   const [addError, setAddError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "good" | "critical"; text: string } | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const targetingChanged = db !== campaign.db || location.trim() !== campaign.location;
   const dirty = targetingChanged || device !== campaign.device || competitors.join("|") !== campaign.competitors.join("|");
 
@@ -43,8 +45,8 @@ export function CampaignSettings({ projectId, domain, campaign }: { projectId: s
     setAddError(null);
   };
 
-  const save = () => {
-    if (targetingChanged && !confirm("Changing the regional database or location starts a new ranking history. Existing history for this campaign will be deleted. Continue?")) return;
+  const save = async () => {
+    if (targetingChanged && !(await confirm({ title: "Start a new ranking history?", description: "Changing the regional database or location starts a new ranking history. Existing history for this campaign will be deleted.", confirmLabel: "Save and reset history" }))) return;
     start(async () => {
       setMsg(null);
       const res = await updateCampaignAction(projectId, { db, location, device, competitors });
@@ -127,6 +129,7 @@ export function CampaignSettings({ projectId, domain, campaign }: { projectId: s
             Save changes
           </Button>
         </div>
+        {confirmDialog}
       </CardBody>
     </Card>
   );
@@ -176,9 +179,15 @@ export function DataSourceSettings({ projectId, source, available }: { projectId
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const others = available.filter((s) => s !== source && s !== "demo");
-  const switchTo = (target: CampaignSource) =>
-    confirm(`Switch this campaign to ${SOURCE_INFO[target].label}? The stored history will be replaced${target === "search-console" ? " with the last 90 days from Search Console" : ""}${target === "dataforseo" ? "; each check uses paid API requests" : ""}.`) &&
+  const switchTo = async (target: CampaignSource) =>
+    (await confirm({
+      title: `Switch to ${SOURCE_INFO[target].label}?`,
+      description: `The stored history will be replaced${target === "search-console" ? " with the last 90 days from Search Console" : ""}${target === "dataforseo" ? "; each check uses paid API requests" : ""}.`,
+      confirmLabel: "Switch source",
+      tone: "primary",
+    })) &&
     start(async () => {
       setError(null);
       const res = await switchSourceAction(projectId, target);
@@ -201,6 +210,7 @@ export function DataSourceSettings({ projectId, source, available }: { projectId
           </p>
         )}
         {error && <p className="text-[12px] text-critical-ink">{error}</p>}
+        {confirmDialog}
       </CardBody>
     </Card>
   );
@@ -210,26 +220,34 @@ export function DangerZone({ projectId, domain }: { projectId: string; domain: s
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   return (
     <Card className="border-critical/30">
       <CardHeader title="Delete campaign" description="Removes all keywords, tags, ranking history and alert rules of this campaign. The project stays." />
       <CardBody>
-        <Button
-          variant="danger"
-          loading={pending}
-          onClick={() =>
-            prompt(`Type ${domain} to delete the Position Tracking campaign.`) === domain &&
+        <Button variant="danger" loading={pending} onClick={() => setOpen(true)}>
+          Delete campaign
+        </Button>
+        <ConfirmDialog
+          open={open}
+          onCancel={() => (setOpen(false), setError(null))}
+          onConfirm={() =>
             start(async () => {
+              setError(null);
               const res = await deleteCampaignAction(projectId);
               if (!res.ok) return setError(res.error);
+              setOpen(false);
               router.replace(`/position-tracking?project=${projectId}`);
               router.refresh();
             })
           }
-        >
-          Delete campaign
-        </Button>
-        {error && <p className="mt-2 text-[12px] text-critical-ink">{error}</p>}
+          title="Delete the Position Tracking campaign?"
+          description="All keywords, tags, ranking history and alert rules of this campaign are deleted. The project stays."
+          confirmLabel="Delete campaign"
+          requireText={domain}
+          busy={pending}
+          error={error}
+        />
       </CardBody>
     </Card>
   );

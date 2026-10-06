@@ -4,7 +4,9 @@ import { getProject, type Project } from "@/lib/projects";
 import type { ToolSummary } from "@/lib/projects/summary-types";
 import { demoAllowed, providerStatus } from "@/lib/data-mode";
 import { oauthConfigured, serviceAccount } from "@/lib/google/oauth";
+import { powersOf } from "@/lib/integrations/registry";
 import { LIVE_ENGINES } from "@/lib/providers/ai-engines";
+import { pagespeedEnabled } from "@/lib/providers/pagespeed";
 import { flagEnabled, liveEnabled } from "@/lib/providers/source";
 import type { Cadence } from "@/lib/jobs/types";
 import type { JobListRow } from "./kinds";
@@ -166,13 +168,16 @@ const isSet = (name: string) => Boolean(process.env[name] && process.env[name]!.
 export function integrations(): Integration[] {
   const dfs = liveEnabled();
   const autocomplete = flagEnabled("ENABLE_AUTOCOMPLETE");
-  const pagespeed = flagEnabled("ENABLE_PAGESPEED");
+  const pagespeed = pagespeedEnabled();
   const news = flagEnabled("ENABLE_NEWS_MENTIONS");
   const gscSa = serviceAccount("gsc");
   const ga4Sa = serviceAccount("ga4");
   const oauth = oauthConfigured();
   const google = oauth || !!gscSa || !!ga4Sa;
   const engine = (id: string) => LIVE_ENGINES.find((e) => e.id === id);
+  // CX settings encrypt every saved token with APP_SECRET (as does Google OAuth), so production always needs it.
+  const prod = process.env.NODE_ENV === "production";
+  const registryId: Record<string, string> = { chatgpt: "openai", gemini: "gemini", perplexity: "perplexity", claude: "anthropic" };
   const saLabel = [gscSa ? `Search Console: ${gscSa.client_email}` : null, ga4Sa ? `GA4: ${ga4Sa.client_email}` : null].filter(Boolean).join(" · ");
   const aiEngine = (id: "chatgpt" | "gemini" | "perplexity" | "claude", meta: { name: string; description: string; docs: string; vars: { name: string; example: string; required: boolean }[] }): Integration => {
     const e = engine(id);
@@ -183,7 +188,7 @@ export function integrations(): Integration[] {
       description: meta.description,
       status: on ? "connected" : "not-configured",
       statusLabel: on ? `Connected · ${e?.model()}` : "Not configured",
-      powers: ["AI Visibility live answers, overview and cited sources"],
+      powers: powersOf(registryId[id]),
       envVars: meta.vars.map((v) => ({ ...v, set: isSet(v.name) })),
       docs: meta.docs,
     };
@@ -195,13 +200,13 @@ export function integrations(): Integration[] {
       description: "Your own sites' real clicks, impressions, queries, positions, organic sessions and key events (read-only).",
       status: google ? "connected" : "not-configured",
       statusLabel: gscSa || ga4Sa ? `Service account${gscSa && ga4Sa && gscSa.client_email !== ga4Sa.client_email ? "s" : ""} configured` : oauth ? "OAuth configured · each user connects their Google account" : "Not configured",
-      powers: ["Organic Traffic Insights", "Project dashboard snapshot", "Project SEO reports", "Queries → Position Tracking"],
+      powers: powersOf("google"),
       envVars: [
         { name: "GOOGLE_SERVICE_ACCOUNT_JSON", set: isSet("GOOGLE_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_SERVICE_ACCOUNT_FILE"), example: "base64 of the key JSON (or GOOGLE_SERVICE_ACCOUNT_FILE=path)", required: false },
         { name: "GOOGLE_GA4_SERVICE_ACCOUNT_JSON", set: isSet("GOOGLE_GA4_SERVICE_ACCOUNT_JSON") || isSet("GOOGLE_GA4_SERVICE_ACCOUNT_FILE"), example: "separate GA4 key (optional; or GOOGLE_GA4_SERVICE_ACCOUNT_FILE=path)", required: false },
         { name: "GOOGLE_CLIENT_ID", set: isSet("GOOGLE_CLIENT_ID"), example: "…apps.googleusercontent.com", required: false },
         { name: "GOOGLE_CLIENT_SECRET", set: isSet("GOOGLE_CLIENT_SECRET"), example: "GOCSPX-…", required: false },
-        { name: "APP_SECRET", set: isSet("APP_SECRET"), example: "long random string", required: process.env.NODE_ENV === "production" && oauth },
+        { name: "APP_SECRET", set: isSet("APP_SECRET"), example: "long random string", required: prod },
       ],
       docs: "https://console.cloud.google.com/apis/credentials",
       note: `${saLabel ? `${saLabel}. Grant these emails read access in Search Console and GA4. ` : ""}Use a service account (server-wide) or an OAuth web client (each user connects on Organic Traffic Insights; redirect URI <APP_ORIGIN>/api/integrations/google/callback). Enable the Search Console API, Analytics Data API and Analytics Admin API. Then link each project's properties on Organic Traffic Insights.`,
@@ -212,7 +217,7 @@ export function integrations(): Integration[] {
       description: "Paid, pay-as-you-go index data: keyword metrics, live SERPs and Maps results, domain analytics, business data and backlinks.",
       status: dfs ? "connected" : "not-configured",
       statusLabel: dfs ? "Connected" : "Not configured",
-      powers: ["Keyword research", "Domain & competitor analytics", "Position Tracking", "Backlink Analytics", "SERP Sensor market score", "Map Rank Tracker", "Google listing & reviews", "Domain/backlink/comparison reports", "Google AI Overviews in AI Visibility"],
+      powers: powersOf("dataforseo"),
       envVars: [
         { name: "DATAFORSEO_LOGIN", set: isSet("DATAFORSEO_LOGIN"), example: "you@example.com", required: true },
         { name: "DATAFORSEO_PASSWORD", set: isSet("DATAFORSEO_PASSWORD"), example: "your-api-password", required: true },
@@ -226,7 +231,7 @@ export function integrations(): Integration[] {
       description: "Free Core Web Vitals and Lighthouse lab data from Google.",
       status: pagespeed ? "enabled" : "disabled",
       statusLabel: pagespeed ? (isSet("PAGESPEED_API_KEY") ? "Enabled · API key set" : "Enabled · shared quota") : "Disabled",
-      powers: ["Site Audit performance checks", "On Page SEO Checker"],
+      powers: powersOf("pagespeed"),
       envVars: [
         { name: "ENABLE_PAGESPEED", set: isSet("ENABLE_PAGESPEED"), example: "true", required: false },
         { name: "PAGESPEED_API_KEY", set: isSet("PAGESPEED_API_KEY"), example: "AIza…", required: false },
@@ -240,7 +245,7 @@ export function integrations(): Integration[] {
       description: "Free real query suggestions for keyword ideas and questions.",
       status: autocomplete ? "enabled" : "disabled",
       statusLabel: autocomplete ? "Enabled" : "Disabled",
-      powers: ["Keyword Magic Tool suggestions", "Topic Research questions"],
+      powers: powersOf("autocomplete"),
       envVars: [{ name: "ENABLE_AUTOCOMPLETE", set: isSet("ENABLE_AUTOCOMPLETE"), example: "true", required: false }],
     },
     {
@@ -249,7 +254,7 @@ export function integrations(): Integration[] {
       description: "Free public news RSS used to find brand mentions.",
       status: news ? "enabled" : "disabled",
       statusLabel: news ? "Enabled" : "Disabled",
-      powers: ["Brand Monitoring mentions"],
+      powers: powersOf("news"),
       envVars: [{ name: "ENABLE_NEWS_MENTIONS", set: isSet("ENABLE_NEWS_MENTIONS"), example: "true", required: false }],
     },
     aiEngine("chatgpt", {
@@ -325,7 +330,7 @@ export function dataSources(linkedProjects?: number): DataSourceRow[] {
     },
     { id: "dataforseo", name: "DataForSEO", connected: st.dataforseo, detail: st.dataforseo ? "Live index data" : "Not configured", href: "/settings?tab=integrations" },
     { id: "ai", name: "AI engines", connected: st.ai, detail: engines.length ? engines.join(", ") : "No API key", href: "/settings?tab=integrations" },
-    { id: "pagespeed", name: "PageSpeed Insights", connected: flagEnabled("ENABLE_PAGESPEED"), detail: st.pagespeed ? "API key set" : flagEnabled("ENABLE_PAGESPEED") ? "Shared quota" : "Disabled", href: "/settings?tab=integrations" },
+    { id: "pagespeed", name: "PageSpeed Insights", connected: st.pagespeed, detail: !st.pagespeed ? "Disabled" : isSet("PAGESPEED_API_KEY") ? "API key set" : "Shared quota", href: "/settings?tab=integrations" },
     { id: "crawler", name: "Crawler & Google News", connected: true, detail: flagEnabled("ENABLE_NEWS_MENTIONS") ? "Free sources on" : "News off", href: "/settings?tab=integrations" },
     ...(demoAllowed() ? [{ id: "demo", name: "Demo engine", connected: true, detail: "DEMO_DATA=true (development)", href: "/settings?tab=integrations" }] : []),
   ];

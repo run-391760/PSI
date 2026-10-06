@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/feedback";
 import { Input, Select } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { MiniTable } from "@/components/ui/mini-table";
 import { Segmented } from "@/components/ui/tabs";
 import type { AlertRow, Integrations } from "@/lib/cx/admin/alerts";
 import { TELEGRAM_MIN_INTERVAL_MIN } from "@/lib/cx/admin/pure/alerts";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, ListInput, When, useRun } from "../_admin/ui";
 import { deleteAlertAction, disconnectTelegramAction, saveAlertAction, saveSlackAction, saveTelegramAction, telegramChatsAction, testAlertAction, toggleAlertAction, type AlertInput } from "./actions";
 
@@ -19,14 +21,17 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const blank = (): AlertInput => ({ name: "", source: "tickets", filters: { keywords: [], exclude: [], channels: [], sentiments: [], priorities: [], minItems: 1 }, delivery: { inapp: true, emails: [], bcc: [], slack: false, telegram: false }, format: "text", delay_minutes: 0, active_hours: null, active: true });
 
 export function AlertsPanel({ brand, alerts, integrations, channels }: { brand: string; alerts: AlertRow[]; integrations: Integrations; channels: { value: string; label: string }[] }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<AlertInput | null>(null);
+  const open = (a: AlertInput) => { setError(null); setEdit(a); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveAlertAction(brand, edit), () => "Alert saved."))) setEdit(null); };
   const toggleIn = (xs: string[], v: string, on: boolean) => (on ? [...new Set([...xs, v])] : xs.filter((x) => x !== v));
   const via = (a: AlertRow) => [a.delivery.inapp && "in-app", (a.delivery.emails.length || a.delivery.bcc.length) && `${a.delivery.emails.length + a.delivery.bcc.length} emails`, a.delivery.slack && "Slack", a.delivery.telegram && "Telegram"].filter(Boolean).join(", ");
   return (
     <Card>
       <CardHeader title="Alerts" description="Checked every minute. An alert fires when at least the minimum number of new matching items arrived, after the optional delay, within its active hours."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit(blank())}><Plus className="h-3.5 w-3.5" />New alert</Button>} />
+        actions={<Button size="sm" variant="primary" onClick={() => open(blank())}><Plus className="h-3.5 w-3.5" />New alert</Button>} />
       <CardBody>
         {messages}
         {alerts.length ? (
@@ -47,8 +52,8 @@ export function AlertsPanel({ brand, alerts, integrations, channels }: { brand: 
                 <div className="flex items-center gap-0.5">
                   <CheckRow checked={a.active} onChange={(v) => run("t", toggleAlertAction(brand, a.id, v))} label={<span className="sr-only">Active</span>} />
                   <Button size="sm" variant="ghost" loading={busy === `test-${a.id}`} onClick={() => run(`test-${a.id}`, testAlertAction(brand, a.id), (r) => `Test: ${r.map((x) => `${x.channel} ${x.error ? `failed (${x.error})` : "sent"}`).join(" · ")}`)}><Send className="h-3.5 w-3.5" />Test</Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${a.name}`} onClick={() => setEdit({ ...a })}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${a.name}`} onClick={() => confirm(`Delete "${a.name}"?`) && run("d", deleteAlertAction(brand, a.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${a.name}`} onClick={() => open({ ...a })}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${a.name}`} onClick={async () => { if (await confirm({ title: `Delete “${a.name}”?`, description: "It stops firing straight away. Its delivery log stays." })) run("d", deleteAlertAction(brand, a.id), () => `${a.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               </li>
             ))}
@@ -56,8 +61,9 @@ export function AlertsPanel({ brand, alerts, integrations, channels }: { brand: 
         ) : <EmptyState icon={<BellRing className="h-5 w-5" />} title="No alerts yet" description="Get told by email, in the app, on Slack or on Telegram when tickets or mentions match keywords, channels or negative sentiment." />}
       </CardBody>
 
-      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New alert"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveAlertAction(brand, edit)))) setEdit(null); }}>Save alert</Button></>}>
+      {confirmDialog}
+      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New alert"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save alert</Button></>}>
         {edit && (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">

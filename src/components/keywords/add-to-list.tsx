@@ -1,7 +1,6 @@
 "use client";
 
 import { ListPlus } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState, useTransition } from "react";
 import { addKeywordsAction, createListAction, listKeywordListsAction } from "@/app/(app)/keyword-strategy/actions";
@@ -9,7 +8,7 @@ import { database } from "@/lib/domain";
 import { compact } from "@/lib/format";
 import type { KeywordList } from "@/lib/keywords/types";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, Spinner } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
@@ -67,6 +66,7 @@ export function AddToListDialog({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (pending) return;
     setError(null);
     start(async () => {
       if (target === "new") {
@@ -94,22 +94,24 @@ export function AddToListDialog({
       onClose={onClose}
       title="Add to keyword list"
       description={`${keywords.length.toLocaleString()} keyword${keywords.length === 1 ? "" : "s"} · ${database(db).flag} ${database(db).name}`}
+      dismissible={!pending}
+      error={done ? null : error}
       footer={
         done ? (
           <>
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
-            <Link href={`/keyword-strategy?list=${done.id}`} className="inline-flex h-8.5 items-center rounded-md bg-brand px-3.5 text-[13px] font-medium text-white hover:bg-brand-hover" onClick={onClose}>
+            <ButtonLink href={`/keyword-strategy?list=${done.id}`} variant="primary" onClick={onClose}>
               Open list
-            </Link>
+            </ButtonLink>
           </>
         ) : (
           <>
-            <Button variant="ghost" onClick={onClose} type="button">
+            <Button variant="ghost" onClick={onClose} type="button" disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form="add-to-list-form" loading={pending} disabled={!keywords.length || (target === "new" && !name.trim())}>
+            <Button variant="primary" type="submit" form="add-to-list-form" loading={pending} disabled={pending || !keywords.length || (target === "new" && !name.trim())}>
               Add {keywords.length > 1 ? `${keywords.length.toLocaleString()} keywords` : "keyword"}
             </Button>
           </>
@@ -122,7 +124,6 @@ export function AddToListDialog({
         </Callout>
       ) : (
         <form id="add-to-list-form" onSubmit={submit} className="space-y-3">
-          {error && <Callout tone="critical">{error}</Callout>}
           <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-text-2">
             <span className="line-clamp-2">{keywords.slice(0, 12).join(", ")}{keywords.length > 12 ? ` and ${keywords.length - 12} more` : ""}</span>
           </div>
@@ -131,10 +132,10 @@ export function AddToListDialog({
               <Spinner /> Loading your lists…
             </div>
           ) : (
-            <div className="scroll-thin max-h-64 space-y-1 overflow-y-auto" role="radiogroup" aria-label="Keyword list">
+            <div className="space-y-1" role="radiogroup" aria-label="Keyword list">
               {lists.map((l) => (
                 <label key={l.id} className={cn("flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-[13px]", target === l.id ? "border-brand bg-brand-soft/50" : "border-border hover:bg-surface-2")}>
-                  <input type="radio" name="list" value={l.id} checked={target === l.id} onChange={() => setTarget(l.id)} className="accent-[var(--brand)]" />
+                  <input type="radio" name="list" value={l.id} checked={target === l.id} onChange={() => setTarget(l.id)} className="accent-[var(--brand)]" autoFocus={target === l.id} />
                   <span className="min-w-0 flex-1 truncate font-medium text-text">{l.name}</span>
                   <span className="shrink-0 text-[12px] text-text-3">
                     {database(l.db).flag} {l.keywords.toLocaleString()} kw · {compact(l.volume)} vol
@@ -142,7 +143,7 @@ export function AddToListDialog({
                 </label>
               ))}
               <label className={cn("flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-[13px]", target === "new" ? "border-brand bg-brand-soft/50" : "border-border hover:bg-surface-2")}>
-                <input type="radio" name="list" value="new" checked={target === "new"} onChange={() => setTarget("new")} className="accent-[var(--brand)]" />
+                <input type="radio" name="list" value="new" checked={target === "new"} onChange={() => setTarget("new")} className="accent-[var(--brand)]" autoFocus={target === "new"} />
                 <span className="shrink-0 font-medium text-text">New list</span>
                 <Input
                   value={name}

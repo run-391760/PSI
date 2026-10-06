@@ -84,12 +84,16 @@ export async function ingestBrand(project: Project, progress: (done: number, tot
       bump(source, { skipped: "not configured" });
       continue;
     }
+    if (source === "google-reviews" && topic.kind !== "brand") {
+      bump(source, { skipped: "brand topics only" });
+      continue;
+    }
     if (source === "appstore" && !topic.app_ids.length) {
       bump(source, { skipped: "no App Store ids" });
       continue;
     }
     try {
-      const raw = await fetchSource(source, { keywords: topic.keywords, excluded: topic.excluded, appIds: topic.app_ids, country: project.country || "US", language: project.language || "en", spec: topicSpec(topic) });
+      const raw = await fetchSource(source, { keywords: topic.keywords, excluded: topic.excluded, appIds: topic.app_ids, country: project.country || "US", language: project.language || "en", spec: topicSpec(topic), brand: { projectId: project.id, ownerId: project.owner_id, country: project.country || "US" }, topicKind: topic.kind, cancelled });
       const rows = prepareMentions(raw, topic, source);
       const { inserted } = await storeMentions(project.id, topic.id, source, rows);
       bump(source, { fetched: rows.length, inserted });

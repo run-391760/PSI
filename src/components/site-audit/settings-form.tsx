@@ -2,7 +2,7 @@
 
 import { Play, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { type FormEvent, useEffect, useId, useState, useTransition } from "react";
 import { saveAuditSettings, startAudit } from "@/app/(app)/site-audit/actions";
 import type { AuditConfig } from "@/lib/site-audit/types";
 import { cn } from "@/lib/utils";
@@ -25,14 +25,37 @@ const DELAYS = [
   { value: 10000, label: "10 s — minimal load" },
 ];
 
-/** Site Audit settings (page limit, source, user agent, masks, delay, schedule). */
-export function AuditSettingsForm({ projectId, domain, initial, mode, onDone }: { projectId: string; domain: string; initial: AuditConfig; mode: "setup" | "dialog"; onDone?: () => void }) {
+type FormState = { pending: boolean; action: "save" | "start" | null; error: string | null };
+
+/**
+ * Site Audit settings (page limit, source, user agent, masks, delay, schedule). With `onStateChange`
+ * the form leaves its buttons and error out for a Dialog footer: submit buttons with `form={formId}`,
+ * value="save" saves only, any other submit saves and re-crawls.
+ */
+export function AuditSettingsForm({
+  projectId,
+  domain,
+  initial,
+  mode,
+  onDone,
+  formId,
+  onStateChange,
+}: {
+  projectId: string;
+  domain: string;
+  initial: AuditConfig;
+  mode: "setup" | "dialog";
+  onDone?: () => void;
+  formId?: string;
+  onStateChange?: (s: FormState) => void;
+}) {
   const router = useRouter();
   const [cfg, setCfg] = useState<AuditConfig>(initial);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
   const [action, setAction] = useState<"save" | "start" | null>(null);
+  useEffect(() => onStateChange?.({ pending, action, error }), [pending, action, error, onStateChange]);
   const set = <K extends keyof AuditConfig>(k: K, v: AuditConfig[K]) => {
     setSaved(false);
     setCfg((c) => ({ ...c, [k]: v }));
@@ -43,8 +66,10 @@ export function AuditSettingsForm({ projectId, domain, initial, mode, onDone }: 
       .map((x) => x.trim())
       .filter(Boolean);
 
-  const submit = (kind: "save" | "start") => (e?: FormEvent) => {
-    e?.preventDefault();
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (pending) return;
+    const kind = (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "save" ? "save" : "start";
     setError(null);
     setAction(kind);
     start(async () => {
@@ -58,8 +83,10 @@ export function AuditSettingsForm({ projectId, domain, initial, mode, onDone }: 
   };
 
   return (
-    <form onSubmit={submit("start")} className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+    <form id={formId} onSubmit={submit} className="space-y-4">
+      {/* Default button first in tree order, so Enter saves and crawls rather than hitting "Save settings". */}
+      <button type="submit" tabIndex={-1} aria-hidden className="sr-only" />
+      {error && !onStateChange && <Callout tone="critical">{error}</Callout>}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Start URL" htmlFor="sa-start" hint={`Must be on ${domain}. Redirects are followed.`}>
           <Input id="sa-start" value={cfg.startUrl} onChange={(e) => set("startUrl", e.target.value)} placeholder={`https://${domain}/`} />
@@ -152,33 +179,62 @@ export function AuditSettingsForm({ projectId, domain, initial, mode, onDone }: 
         </label>
       </div>
 
-      <div className={cn("flex flex-wrap items-center gap-2 pt-1", mode === "dialog" ? "justify-end border-t border-border pt-4" : "")}>
-        {saved && <span className="mr-auto text-[12.5px] text-good-ink">Settings saved.</span>}
-        {mode === "dialog" && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      {!onStateChange && (
+        <div className={cn("flex flex-wrap items-center gap-2 pt-1", mode === "dialog" ? "justify-end border-t border-border pt-4" : "")}>
+          {saved && <span className="mr-auto text-[12.5px] text-good-ink">Settings saved.</span>}
+          {mode === "dialog" && (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" value="save" loading={pending && action === "save"} disabled={pending}>
+            Save settings
           </Button>
-        )}
-        <Button type="button" onClick={submit("save")} loading={pending && action === "save"} disabled={pending}>
-          Save settings
-        </Button>
-        <Button type="submit" variant="primary" loading={pending && action === "start"} disabled={pending}>
-          <Play className="h-3.5 w-3.5" /> {mode === "setup" ? "Start Site Audit" : "Save & re-crawl"}
-        </Button>
-      </div>
+          <Button type="submit" variant="primary" loading={pending && action === "start"} disabled={pending}>
+            <Play className="h-3.5 w-3.5" /> {mode === "setup" ? "Start Site Audit" : "Save & re-crawl"}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
 
 export function AuditSettingsButton(props: { projectId: string; domain: string; initial: AuditConfig; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [state, setState] = useState<FormState>({ pending: false, action: null, error: null });
+  const formId = useId();
+  const close = () => {
+    setOpen(false);
+    setState({ pending: false, action: null, error: null });
+  };
   return (
     <>
       <Button onClick={() => setOpen(true)} disabled={props.disabled}>
         <Settings2 className="h-4 w-4" /> Settings
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Site Audit settings" description={`Crawl configuration for ${props.domain}`} size="xl">
-        <AuditSettingsForm {...props} mode="dialog" onDone={() => setOpen(false)} />
+      <Dialog
+        open={open}
+        onClose={close}
+        title="Site Audit settings"
+        description={`Crawl configuration for ${props.domain}`}
+        size="xl"
+        dismissible={!state.pending}
+        error={state.error}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={close} disabled={state.pending}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} value="save" loading={state.pending && state.action === "save"} disabled={state.pending}>
+              Save settings
+            </Button>
+            <Button type="submit" form={formId} variant="primary" loading={state.pending && state.action === "start"} disabled={state.pending}>
+              <Play className="h-3.5 w-3.5" /> Save &amp; re-crawl
+            </Button>
+          </>
+        }
+      >
+        <AuditSettingsForm {...props} mode="dialog" onDone={close} formId={formId} onStateChange={setState} />
       </Dialog>
     </>
   );

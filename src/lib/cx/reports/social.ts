@@ -30,7 +30,7 @@ async function ownedProfile(ctx: ReportCtx, n: NetworkId) {
   ]);
   const conn = conns.find((c) => c.kind === kind) ?? null;
   // Only call the API when this network is connected (channelInsights fetches every connected channel, 6 h cache).
-  const insight = conn?.connected ? ((await channelInsights(ctx.brandId)).find((i) => i.kind === kind) ?? null) : null;
+  const insight = conn?.insights ? ((await channelInsights(ctx.brandId)).find((i) => i.kind === kind) ?? null) : null;
   const history = insight?.stats ? (await statHistory(ctx.brandId)).filter((h) => h.kind === kind && h.followers != null).map((h) => ({ key: h.day, followers: h.followers as number })) : [];
   const state = profileState(conn, insight);
   return {

@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { deleteTopicEditorAction, duplicateTopicEditorAction, setTopicActiveAction } from "@/app/(app)/cx/listening/topics/actions";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Dialog, MenuItem } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm";
+import { MenuItem } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/feedback";
-import { GearMenu, KDate, KSection } from "../_admin/k-ui";
+import { GearMenu, KDate, KSection, runOk } from "../_admin/k-ui";
 import { useRun } from "../_admin/ui";
 
 export type TopicRow = { id: string; name: string; active: boolean; contains: string[]; andContains: string[]; excluded: string[]; creator: string | null; createdAt: string; mentions: number };
@@ -17,7 +17,7 @@ export type TopicRow = { id: string; name: string; active: boolean; contains: st
 /** Settings → Topics: Konnect's topics table with ADD NEW TOPIC and a gear menu per row. */
 export function TopicsTable({ brand, topics, canEdit }: { brand: string; topics: TopicRow[]; canEdit: boolean }) {
   const router = useRouter();
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
   const [del, setDel] = useState<TopicRow | null>(null);
   const editor = (id: string) => `/cx/listening/topics?brand=${brand}&topic=${id}`;
   const menu = (t: TopicRow) => (
@@ -27,7 +27,7 @@ export function TopicsTable({ brand, topics, canEdit }: { brand: string; topics:
           <MenuItem icon={<Pencil className="h-3.5 w-3.5" />} href={editor(t.id)}>{canEdit ? "Edit" : "View"}</MenuItem>
           {canEdit && <MenuItem icon={<Copy className="h-3.5 w-3.5" />} onClick={async () => { close(); const id = await run(`d-${t.id}`, duplicateTopicEditorAction(brand, t.id), () => `Duplicated ${t.name} (paused until you activate it).`); if (id) router.refresh(); }}>Duplicate</MenuItem>}
           {canEdit && <MenuItem icon={t.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />} onClick={() => { close(); run(`a-${t.id}`, setTopicActiveAction(brand, t.id, !t.active), () => `${t.name} ${t.active ? "paused" : "activated"}.`); }}>{t.active ? "Pause" : "Activate"}</MenuItem>}
-          {canEdit && <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setDel(t); }}>Delete</MenuItem>}
+          {canEdit && <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setError(null); setDel(t); }}>Delete</MenuItem>}
         </>
       )}
     </GearMenu>
@@ -88,10 +88,9 @@ export function TopicsTable({ brand, topics, canEdit }: { brand: string; topics:
           </ul>
         </>
       )}
-      <Dialog open={!!del} onClose={() => setDel(null)} size="sm" title="Delete topic?" description="Its mentions stay but lose their topic; clusters drop it."
-        footer={<><Button onClick={() => setDel(null)}>Cancel</Button><Button variant="danger" loading={busy === "del"} onClick={async () => { if (del) await run("del", deleteTopicEditorAction(brand, del.id), () => `${del.name} deleted.`); setDel(null); }}>Delete</Button></>}>
-        <p className="text-[13px] text-text-2">{del?.name}</p>
-      </Dialog>
+      <ConfirmDialog open={!!del} onCancel={() => setDel(null)} title={del ? `Delete “${del.name}”?` : "Delete topic?"} busy={busy === "del"} error={del ? error : null}
+        description="Listening stops collecting for it. Its mentions stay but lose their topic, and clusters drop it."
+        onConfirm={async () => { if (del && (await runOk(run, "del", deleteTopicEditorAction(brand, del.id), () => `${del.name} deleted.`))) setDel(null); }} />
     </KSection>
   );
 }

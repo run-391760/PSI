@@ -8,7 +8,7 @@ import { REMOVE_STATUS_LABELS, type AuditDomainRow, type RemoveStatus } from "@/
 import { dateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DomainLink } from "@/components/seo/badges";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { type Column, DataTable } from "@/components/ui/data-table";
 import { Callout } from "@/components/ui/feedback";
@@ -125,19 +125,21 @@ function EmailDialog({ row, site, onClose }: { row: AuditDomainRow; site: { doma
       title={`Removal request for ${row.domain}`}
       description="Copy the message into your email client. SynapseSEO never sends emails on your behalf."
       size="lg"
+      footerStart={
+        <Button
+          onClick={async () => {
+            if (await copyText(`To: ${to}\nSubject: ${email.subject}\n\n${email.body}`)) setCopied("all");
+          }}
+        >
+          {copied === "all" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied === "all" ? "Copied" : "Copy email"}
+        </Button>
+      }
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
-          <Button
-            onClick={async () => {
-              if (await copyText(`To: ${to}\nSubject: ${email.subject}\n\n${email.body}`)) setCopied("all");
-            }}
-          >
-            {copied === "all" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy email
-          </Button>
-          <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`} className="inline-flex h-8.5 items-center gap-1.5 rounded-md bg-brand px-3.5 text-[13px] font-medium text-white hover:bg-brand-hover">
+          <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`} className={buttonClass("primary")}>
             <Mail className="h-4 w-4" /> Open in mail app
           </a>
         </>

@@ -2,15 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { analyze, severityOf } from "../src/lib/optimizer/analyze";
 import { researchBrief, briefToMarkdown } from "../src/lib/optimizer/brief";
+import { briefCompetitors, briefDocumentMarkdown } from "../src/lib/optimizer/brief-export";
 import { cap } from "../src/lib/optimizer/checks/util";
 import { CATEGORIES, CHECKS, FEATURES, MODULES } from "../src/lib/optimizer/features";
 import { applyFix } from "../src/lib/optimizer/fixes";
 import { aiFresh, bodyHash } from "../src/lib/optimizer/hash";
-import { detectFormat, keywordIntent } from "../src/lib/optimizer/intent";
+import { dataforseoIntent, detectFormat, keywordIntent } from "../src/lib/optimizer/intent";
+import { draftInputFromDoc, migratedDraftIdOf } from "../src/lib/optimizer/migrate-doc";
 import { parseDraft } from "../src/lib/optimizer/parse";
 import { moduleScores, workflowState } from "../src/lib/optimizer/progress";
 import { generateSchema, validateSchema } from "../src/lib/optimizer/schema";
-import type { AiReview, CompetitorPage, DraftInput, Research } from "../src/lib/optimizer/types";
+import { gscFor, gscQueryEvidence, toneEvidence, toneOf } from "../src/lib/optimizer/signals";
+import type { AiReview, CompetitorPage, DraftInput, GscPerformance, Research } from "../src/lib/optimizer/types";
 
 const NOW = new Date("2026-10-05T10:00:00Z");
 
@@ -241,4 +244,107 @@ test("module scores and workflow progress", () => {
 test("title casing keeps acronyms and small words", () => {
   assert.equal(cap("bba vs bcom which is better"), "BBA vs BCom Which Is Better");
   assert.equal(cap("mba admission process in gujarat"), "MBA Admission Process in Gujarat");
+});
+
+const baseResearch = (over: Partial<Research> = {}): Research => ({ keyword: "mba admission process", db: "IN", serpSource: "none", features: [], paa: [], related: [], autocomplete: [], competitors: [], fetchedAt: NOW.toISOString(), notes: [], ...over });
+
+const GSC: GscPerformance = {
+  source: "search-console",
+  site: "sc-domain:example.edu",
+  project: { id: "p1", name: "Example University" },
+  url: "https://example.edu/blog/mba-admission-process/",
+  start: "2026-09-07",
+  end: "2026-10-04",
+  page: { clicks: 120, impressions: 4800, ctr: 0.025, position: 8.4 },
+  queries: [
+    { query: "mba admission process", clicks: 60, impressions: 2000, ctr: 0.03, position: 6.2 },
+    { query: "mba eligibility", clicks: 20, impressions: 900, ctr: 0.022, position: 9.1 },
+  ],
+  keywordPages: [
+    { url: "https://example.edu/blog/mba-admission-process", clicks: 60, impressions: 2000, position: 6.2 },
+    { url: "https://example.edu/mba", clicks: 5, impressions: 700, position: 14 },
+  ],
+  fetchedAt: NOW.toISOString(),
+};
+
+test("DataForSEO keyword data is an intent signal and is shown as evidence (only for the current keyword)", () => {
+  const keywordData = { source: "dataforseo" as const, keyword: "mba admission process", db: "IN", volume: 9900, kd: 41, cpc: 1.2, competition: 0.4, intents: ["transactional" as const, "informational" as const], fetchedAt: NOW.toISOString() };
+  const research = baseResearch({ keywordData });
+  assert.equal(dataforseoIntent("mba admission process", research), "transactional");
+  assert.equal(dataforseoIntent("mba fees", research), null, "stale keyword data is ignored");
+  const r = analyze(draft(), { research, now: NOW });
+  assert.equal(r.intent.dataforseo, "transactional");
+  assert.equal(r.intent.dominant, "transactional", "without ranking pages, DataForSEO's intent outranks the query wording");
+  const analyzer = r.findings.find((f) => f.feature === "intent-analyzer")!;
+  assert.ok(analyzer.items!.some((i) => /DataForSEO keyword intent: Transactional/.test(i.label)));
+  assert.ok(analyzer.sources.includes("keyword-data"));
+  const relevance = r.findings.find((f) => f.feature === "keyword-relevance")!;
+  assert.deepEqual(relevance.metrics?.map((m) => m.value), ["9,900", "41", "$1.20"]);
+  // Ranking pages still win over the classifier.
+  const serp = analyze(draft(), { research: { ...research, serpSource: "urls", competitors: [comp("https://a.com/x", ["Eligibility", "Exams", "Steps"], "Guide text."), comp("https://b.com/y", ["Eligibility", "Steps"], "Guide text.")] }, now: NOW });
+  assert.equal(serp.intent.dominant, serp.intent.serp);
+  assert.equal(CHECKS.length, 58, "no new checks");
+});
+
+test("Search Console data for the draft URL becomes evidence for keyword relevance and URL mapping", () => {
+  const d = draft();
+  assert.ok(gscFor(d, baseResearch({ gsc: GSC })), "trailing slash and www do not matter");
+  assert.equal(gscFor({ ...d, url: "https://example.edu/other", meta: {} }, baseResearch({ gsc: GSC })), null, "data for another URL is not used");
+  const ev = gscQueryEvidence(GSC, "mba admission process");
+  assert.match(ev[0].label, /ranks for 2 queries/);
+  assert.match(ev[1].label, /already ranks at #6\.2/);
+  assert.equal(gscQueryEvidence(GSC, "bba fees")[1].tone, "warning");
+  const r = analyze(d, { research: baseResearch({ gsc: GSC }), now: NOW });
+  const relevance = r.findings.find((f) => f.feature === "keyword-relevance")!;
+  assert.ok(relevance.sources.includes("search-console"));
+  assert.ok(relevance.items!.some((i) => /Search Console: the page ranks for/.test(i.label)));
+  const mapping = r.findings.find((f) => f.feature === "keyword-url")!;
+  assert.ok(mapping.items!.some((i) => /example\.edu\/mba also ranks/.test(i.label)), "other ranking URL flagged");
+  assert.ok(!mapping.items!.some((i) => /mba-admission-process also ranks/.test(i.label)), "the draft's own URL is not a clash");
+  const plain = analyze(d, { now: NOW });
+  assert.equal(plain.findings.find((f) => f.feature === "keyword-relevance")!.score, relevance.score, "evidence only: the score is unchanged");
+});
+
+test("readability carries the tone of voice as evidence", () => {
+  const casual = toneOf(["Honestly, you'll love this stuff because it's super easy and fun!", "Don't worry, we've got you covered with tons of cool tips!"]);
+  const formal = toneOf(["Accordingly, the institution shall furnish comprehensive documentation regarding the aforementioned eligibility requirements.", "Applicants are required to demonstrate proficiency through standardized examinations administered nationally."]);
+  assert.ok(casual.score < 0 && /casual/i.test(casual.label));
+  assert.ok(formal.score > 0 && /formal/i.test(formal.label));
+  assert.equal(toneEvidence(toneOf([])), null);
+  const r = analyze(draft(), { now: NOW });
+  const readability = r.findings.find((f) => f.feature === "readability")!;
+  const tone = readability.items!.find((i) => i.label.startsWith("Tone of voice:"));
+  assert.ok(tone, "tone item present");
+  assert.match(tone!.detail!, /−1 \(casual\) to \+1 \(formal\)/);
+});
+
+test("Writing Assistant documents map to optimizer drafts once", () => {
+  const input = draftInputFromDoc({ id: "d1", title: "MBA guide", body: "# MBA guide\n\nText", keywords: ["MBA Admission", "mba fees", "mba admission"], settings: { db: "in", tone: "neutral" } });
+  assert.equal(input.keyword, "mba admission");
+  assert.deepEqual(input.keywords, ["mba fees"]);
+  assert.equal(input.title, "MBA guide");
+  assert.equal(input.body, "# MBA guide\n\nText");
+  assert.equal(input.meta?.db, "IN");
+  assert.equal(draftInputFromDoc({ id: "d2", title: "Untitled document", body: "", keywords: null, settings: null }).title, "");
+  assert.equal(migratedDraftIdOf({ migratedDraftId: "abc" }), "abc");
+  assert.equal(migratedDraftIdOf({ migratedDraftId: "pending" }), null, "a claim in progress is not a migration");
+  assert.equal(migratedDraftIdOf({ tone: "neutral" }), null);
+  assert.equal(migratedDraftIdOf(null), null);
+});
+
+test("briefs keep the pages analysed and SERP features, and export as Markdown", () => {
+  const research = baseResearch({
+    serpSource: "serp",
+    features: ["featured_snippet", "people_also_ask"],
+    competitors: [comp("https://a.com/x", ["Eligibility", "Exams"], "Text"), { ...comp("https://b.com/y", [], ""), error: "HTTP 403", words: 0 }],
+  });
+  assert.equal(briefCompetitors(research).length, 1, "pages that failed to crawl are left out");
+  const b = researchBrief("mba admission process", "IN", research);
+  assert.deepEqual(b.serpFeatures, ["featured_snippet", "people_also_ask"]);
+  assert.equal(b.competitors![0].domain, "a.com");
+  const md = briefDocumentMarkdown(b);
+  assert.ok(md.startsWith("# Content brief: mba admission process"));
+  assert.match(md, /## Pages analysed/);
+  assert.match(md, /\[MBA admission process guide\]\(https:\/\/a\.com\/x\)/);
+  assert.match(md, /featured snippet, people also ask/);
 });

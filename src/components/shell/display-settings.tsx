@@ -9,13 +9,14 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/tabs";
 import { CX_NAV } from "./cx-nav";
 import { CustomizeMenuButton } from "./customize-menu";
+import { NAV, type NavItem } from "./nav";
 import { useUiPrefs } from "./ui-prefs";
 
-/** Display preferences + pages hidden from the menu (Settings hub). */
-export function DisplaySettings({ brand }: { brand?: string }) {
+/** Display preferences + pages hidden from the menu (Settings hub). `workspace` picks whose menu (CX by default). */
+export function DisplaySettings({ brand, workspace = "cx" }: { brand?: string; workspace?: "cx" | "seo" }) {
   const { prefs, update } = useUiPrefs();
   const router = useRouter();
-  const hidden = hiddenNavItems(CX_NAV, prefs.nav);
+  const hidden = hiddenNavItems<NavItem>(workspace === "seo" ? NAV : CX_NAV, prefs.nav);
   const hiddenPanels = Object.values(prefs.panels).filter((p) => p.state === "hidden");
   const withBrand = (h: string) => (brand ? `${h}?brand=${encodeURIComponent(brand)}` : h);
   return (
@@ -42,9 +43,9 @@ export function DisplaySettings({ brand }: { brand?: string }) {
           <div className="flex flex-wrap items-center justify-between gap-2 py-2.5">
             <div className="min-w-0 flex-1 basis-60">
               <div className="text-[13px] font-medium text-text">Sidebar menu</div>
-              <div className="text-[12px] text-text-3">Pin, hide and reorder CX menu items.</div>
+              <div className="text-[12px] text-text-3">Pin, hide and reorder {workspace === "seo" ? "SEO" : "CX"} menu items.</div>
             </div>
-            <CustomizeMenuButton />
+            <CustomizeMenuButton workspace={workspace} />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 py-2.5">
             <div className="min-w-0 flex-1 basis-60">

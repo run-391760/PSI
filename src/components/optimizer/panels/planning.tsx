@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus2, Sparkles, Wand2 } from "lucide-react";
+import { Download, FilePlus2, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -10,11 +10,63 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
 import { DATABASES } from "@/lib/domain";
-import { timeAgo } from "@/lib/format";
+import { displayUrl, timeAgo } from "@/lib/format";
+import { briefDocumentMarkdown, featureName } from "@/lib/optimizer/brief-export";
 import { FORMAT_LABEL, INTENT_LABEL } from "@/lib/optimizer/intent";
 import type { BriefRow } from "@/lib/optimizer/store";
 import type { Brief } from "@/lib/optimizer/types";
 import { flashScore } from "../score-flash";
+
+/** Client-side download of the whole brief as Markdown. */
+function downloadBrief(brief: Brief) {
+  const blob = new Blob([briefDocumentMarkdown(brief)], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `content-brief-${brief.keyword.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60).toLowerCase() || "brief"}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** The pages the brief was built from (title, domain, words, format). */
+function PagesAnalysed({ brief }: { brief: Brief }) {
+  const pages = brief.competitors ?? [];
+  if (!pages.length) return null;
+  return (
+    <div>
+      <h3 className="mb-1 text-[12px] font-semibold tracking-wide text-text-3 uppercase">Pages analysed ({pages.length})</h3>
+      <div className="scroll-thin overflow-x-auto">
+        <table className="w-full min-w-[520px] text-[12.5px]">
+          <thead className="text-left text-text-3">
+            <tr className="border-b border-border">
+              <th className="py-1.5 pr-2 font-medium">#</th>
+              <th className="py-1.5 pr-2 font-medium">Page</th>
+              <th className="py-1.5 pr-2 text-right font-medium">Words</th>
+              <th className="py-1.5 font-medium">Format</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pages.map((c) => (
+              <tr key={c.url} className="border-b border-border last:border-0">
+                <td className="py-1.5 pr-2 text-text-3">{c.position ?? "—"}</td>
+                <td className="max-w-[360px] py-1.5 pr-2">
+                  <a href={c.url} target="_blank" rel="noreferrer noopener" className="block truncate text-link hover:underline">
+                    {c.title || displayUrl(c.url)}
+                  </a>
+                  <span className="block truncate text-text-3">{c.domain}</span>
+                </td>
+                <td className="py-1.5 pr-2 text-right tabular-nums">{c.words.toLocaleString("en-US")}</td>
+                <td className="py-1.5">{c.format ? FORMAT_LABEL[c.format] : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function BriefView({ id, brief, draftId }: { id: string; brief: Brief; draftId: string | null }) {
   const router = useRouter();
@@ -30,7 +82,7 @@ function BriefView({ id, brief, draftId }: { id: string; brief: Brief; draftId: 
             {brief.wordRange[0].toLocaleString()}–{brief.wordRange[1].toLocaleString()} words
           </Badge>
         )}
-        <Badge tone={brief.generatedBy === "ai" ? "info" : "neutral"}>{brief.generatedBy === "ai" ? "Written by Claude" : "From research"}</Badge>
+        <Badge tone={brief.generatedBy === "ai" ? "info" : "neutral"}>{brief.generatedBy === "ai" ? "Written by AI" : "From research"}</Badge>
       </div>
       <p className="text-[13px] text-text-2">{brief.audience}</p>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -92,9 +144,24 @@ function BriefView({ id, brief, draftId }: { id: string; brief: Brief; draftId: 
               </div>
             </div>
           )}
+          {brief.serpFeatures && brief.serpFeatures.length > 0 && (
+            <div>
+              <h3 className="mb-1 text-[12px] font-semibold tracking-wide text-text-3 uppercase">SERP features</h3>
+              <div className="flex flex-wrap gap-1">
+                {brief.serpFeatures.map((f) => (
+                  <Badge key={f}>{featureName(f)}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
           <p className="text-[12px] text-text-3">Sources: {brief.sources.join(", ")}</p>
         </div>
       </div>
+      <PagesAnalysed brief={brief} />
+      <div className="flex flex-wrap items-center gap-2">
+      <Button onClick={() => downloadBrief(brief)}>
+        <Download className="h-4 w-4" /> Download Markdown
+      </Button>
       {draftId ? (
         <Link href={`/optimizer?doc=${draftId}`} className="text-[13px] text-link hover:underline">
           Open the draft created from this brief →
@@ -114,17 +181,39 @@ function BriefView({ id, brief, draftId }: { id: string; brief: Brief; draftId: 
           {!busy && <FilePlus2 className="h-4 w-4" />} Create a draft from this brief
         </Button>
       )}
+      </div>
     </div>
   );
 }
 
 /** AI Content Brief Generator: keyword → intent, format, outline, entities, questions, coverage. */
-export function BriefGenerator({ briefs, aiOn, serpOn, defaultKeyword }: { briefs: BriefRow[]; aiOn: boolean; serpOn: boolean; defaultKeyword?: string }) {
+export function BriefGenerator({
+  briefs,
+  aiOn,
+  serpOn,
+  defaultKeyword,
+  defaultDb,
+  query,
+}: {
+  briefs: BriefRow[];
+  aiOn: boolean;
+  serpOn: boolean;
+  defaultKeyword?: string;
+  /** Market to preselect (the open draft's market), else India. */
+  defaultDb?: string;
+  /** ?q= and ?db= from the URL (links from Keyword Overview and the former SEO Content Template). */
+  query?: { q?: string; db?: string };
+}) {
   const router = useRouter();
-  const [f, setF] = useState({ keyword: defaultKeyword ?? "", db: "IN", competitors: "", audience: "", useAi: aiOn });
+  const known = (code?: string) => (code && DATABASES.some((d) => d.code === code.toUpperCase()) ? code.toUpperCase() : undefined);
+  const initialDb = known(query?.db) ?? known(defaultDb) ?? "IN";
+  const initialKeyword = query?.q?.trim() || defaultKeyword || "";
+  const [f, setF] = useState({ keyword: initialKeyword, db: initialDb, competitors: "", audience: "", useAi: aiOn });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<string | null>(briefs[0]?.id ?? null);
+  // Arriving with ?q=: open the latest brief for that keyword and market, or none so the form is the focus.
+  const asked = query?.q?.trim().toLowerCase();
+  const [open, setOpen] = useState<string | null>(asked ? (briefs.find((b) => b.keyword.toLowerCase() === asked && b.db === initialDb)?.id ?? null) : (briefs[0]?.id ?? null));
   const current = briefs.find((b) => b.id === open);
   return (
     <div className="space-y-4">
@@ -153,9 +242,9 @@ export function BriefGenerator({ briefs, aiOn, serpOn, defaultKeyword }: { brief
               <Input value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value })} placeholder="Class 12 students and parents in Gujarat" />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-[13px] text-text" title={aiOn ? "" : "Add ANTHROPIC_API_KEY on the server"}>
+          <label className="flex items-center gap-2 text-[13px] text-text" title={aiOn ? "" : "Add an AI key (Anthropic, OpenAI or Gemini) on the server"}>
             <Checkbox checked={f.useAi} disabled={!aiOn} onChange={(e) => setF({ ...f, useAi: e.target.checked })} />
-            Write the brief with Claude {aiOn ? "" : "(not configured — the brief is built from research)"}
+            Write the brief with AI {aiOn ? "" : "(not configured — the brief is built from research)"}
           </label>
           <Button
             variant="primary"

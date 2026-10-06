@@ -28,6 +28,11 @@
   --nav-text: #c3c9d6;
   --nav-muted: #6f7890;
   --nav-active: rgba(139, 124, 255, 0.18);
+  --nav-active-icon: #b3a8ff;
+  --nav-accent: #a99dff;
+  --nav-badge: rgba(139, 124, 255, 0.25);
+  --nav-badge-ink: #c9c1ff;
+  --nav-tooltip: #1d2233;
   /* Status (reserved: never reused as a series color; always paired with icon/label) */
   --good: #0ca30c;
   --good-ink: #067306;
@@ -190,6 +195,11 @@
   --color-nav-text: var(--nav-text);
   --color-nav-muted: var(--nav-muted);
   --color-nav-active: var(--nav-active);
+  --color-nav-active-icon: var(--nav-active-icon);
+  --color-nav-accent: var(--nav-accent);
+  --color-nav-badge: var(--nav-badge);
+  --color-nav-badge-ink: var(--nav-badge-ink);
+  --color-nav-tooltip: var(--nav-tooltip);
   --color-good: var(--good);
   --color-good-ink: var(--good-ink);
   --color-good-soft: var(--good-soft);
@@ -301,4 +311,51 @@
 }
 .opt-tabs::-webkit-scrollbar {
   display: none;
+}
+
+/* Dialog */
+@keyframes dialog-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes dialog-sheet {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+}
+.dialog-panel::backdrop {
+  background: rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(1px);
+}
+:root[data-theme="dark"] .dialog-panel::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .dialog-panel::backdrop {
+    background: rgb(0 0 0 / 0.6);
+  }
+}
+.dialog-panel[open] {
+  animation: dialog-rise 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dialog-panel[open]::backdrop {
+  animation: dialog-fade 0.16s ease-out;
+}
+@media (width < 40rem) {
+  .dialog-panel[open] {
+    animation: dialog-sheet 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialog-panel[open],
+  .dialog-panel[open]::backdrop {
+    animation: none;
+  }
 }

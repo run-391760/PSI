@@ -6,6 +6,7 @@ import { useState } from "react";
 import { deleteTopicAction, saveTopicAction, toggleTopicAction } from "@/app/(app)/cx/listening/actions";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
@@ -36,6 +37,7 @@ export function TopicsManager({ brandId, topics, available, defaults }: { brandI
   const [editing, setEditing] = useState<TopicView | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
 
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>) => {
     setBusy(key);
@@ -84,7 +86,7 @@ export function TopicsManager({ brandId, topics, available, defaults }: { brandI
                   variant="ghost"
                   aria-label={`Delete ${t.name}`}
                   loading={busy === `d:${t.id}`}
-                  onClick={() => confirm(`Delete topic "${t.name}"? Its mentions stay but lose their topic.`) && run(`d:${t.id}`, () => deleteTopicAction(brandId, t.id))}
+                  onClick={async () => (await confirm({ title: `Delete the topic “${t.name}”?`, description: "Its mentions stay but lose their topic." })) && run(`d:${t.id}`, () => deleteTopicAction(brandId, t.id))}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -136,6 +138,7 @@ export function TopicsManager({ brandId, topics, available, defaults }: { brandI
           }}
         />
       )}
+      {confirmDialog}
     </div>
   );
 }
@@ -173,6 +176,7 @@ function TopicDialog({ brandId, topic, available, defaults, onClose, onSaved }: 
       size="lg"
       title={topic ? `Edit topic: ${topic.name}` : "Add topic"}
       description="Mentions are fetched hourly from the selected sources and matched against these keywords."
+      error={error}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -181,10 +185,9 @@ function TopicDialog({ brandId, topic, available, defaults, onClose, onSaved }: 
       }
     >
       <div className="grid gap-3.5">
-        {error && <Callout tone="critical">{error}</Callout>}
         <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
           <Field label="Name" htmlFor="t-name">
-            <Input id="t-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme" maxLength={80} />
+            <Input id="t-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme" maxLength={80} />
           </Field>
           <Field label="Type" htmlFor="t-kind">
             <Select id="t-kind" value={kind} onChange={(e) => setKind(e.target.value as TopicKind)}>

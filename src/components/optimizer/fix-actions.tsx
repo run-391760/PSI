@@ -6,7 +6,6 @@ import { useState } from "react";
 import { aiProposeAction, applyFixAction } from "@/app/(app)/optimizer/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/feedback";
 import type { Fix, FixOption } from "@/lib/optimizer/types";
 import { cn } from "@/lib/utils";
 import { flashScore } from "./score-flash";
@@ -33,11 +32,18 @@ export function describeFix(fix: Fix): { kind: string; text: string }[] {
   }
 }
 
-export async function runFix(draftId: string, fix: Fix, label: string) {
+/** Applies a fix and flashes the score change; returns the error instead of flashing it, so a dialog can show it inline. */
+export async function tryFix(draftId: string, fix: Fix, label: string): Promise<string | null> {
   const r = await applyFixAction(draftId, fix, label);
-  if (r.ok) flashScore({ title: `Applied: ${label}`, before: r.data.before, after: r.data.after, status: r.data.status, detail: r.data.notes.join("\n") || undefined });
-  else flashScore({ title: "Could not apply the fix", detail: r.error, error: true });
-  return r.ok;
+  if (!r.ok) return r.error;
+  flashScore({ title: `Applied: ${label}`, before: r.data.before, after: r.data.after, status: r.data.status, detail: r.data.notes.join("\n") || undefined });
+  return null;
+}
+
+export async function runFix(draftId: string, fix: Fix, label: string) {
+  const error = await tryFix(draftId, fix, label);
+  if (error) flashScore({ title: "Could not apply the fix", detail: error, error: true });
+  return !error;
 }
 
 function Preview({ fix }: { fix: Fix }) {
@@ -47,7 +53,7 @@ function Preview({ fix }: { fix: Fix }) {
       {parts.slice(0, 20).map((p, i) => (
         <div key={i}>
           <div className="mb-1 text-[11.5px] font-semibold tracking-wide text-text-3 uppercase">{p.kind}</div>
-          <pre className="scroll-thin max-h-72 overflow-auto rounded-md border border-border bg-surface-2 p-2.5 text-[12.5px] whitespace-pre-wrap text-text">{p.text}</pre>
+          <pre className="overflow-x-auto rounded-md border border-border bg-surface-2 p-2.5 text-[12.5px] break-words whitespace-pre-wrap text-text">{p.text}</pre>
         </div>
       ))}
       {parts.length > 20 && <div className="text-[12.5px] text-text-3">…and {parts.length - 20} more changes</div>}
@@ -61,16 +67,21 @@ export function FixActions({ draftId, feature, fixes, aiOn, className }: { draft
   const [open, setOpen] = useState<{ title: string; note?: string; options: FixOption[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
+  const close = () => {
+    setOpen(null);
+    setApplyError(null);
+  };
   const apply = async (o: FixOption) => {
-    if (!o.fix) return;
+    if (!o.fix || busy) return;
     setBusy(o.id);
-    const ok = await runFix(draftId, o.fix, o.label);
+    setApplyError(null);
+    const err = await tryFix(draftId, o.fix, o.label);
     setBusy(null);
-    if (ok) {
-      setOpen(null);
-      router.refresh();
-    }
+    if (err) return setApplyError(err);
+    close();
+    router.refresh();
   };
   const propose = async (o: FixOption) => {
     setBusy(o.id);
@@ -85,8 +96,8 @@ export function FixActions({ draftId, feature, fixes, aiOn, className }: { draft
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       {fixes.map((o) =>
         o.ai ? (
-          <Button key={o.id} size="sm" variant="secondary" disabled={!aiOn || !!busy} title={aiOn ? o.description : "Add ANTHROPIC_API_KEY on the server to use Claude"} onClick={() => propose(o)}>
-            {busy === o.id ? <Spinner className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5 text-brand-ink" />}
+          <Button key={o.id} size="sm" variant="secondary" disabled={!aiOn || !!busy} loading={busy === o.id} title={aiOn ? o.description : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to use AI fixes"} onClick={() => propose(o)}>
+            {busy !== o.id && <Sparkles className="h-3.5 w-3.5 text-brand-ink" />}
             {o.label}
           </Button>
         ) : (
@@ -99,22 +110,23 @@ export function FixActions({ draftId, feature, fixes, aiOn, className }: { draft
       {error && <span className="text-[12px] text-critical-ink">{error}</span>}
       <Dialog
         open={!!open}
-        onClose={() => setOpen(null)}
+        onClose={close}
         title={open?.title ?? ""}
         description={open?.note}
         size="lg"
+        dismissible={!busy}
+        error={applyError}
         footer={
-          open && open.options.length === 1 ? (
-            <>
-              <Button variant="ghost" onClick={() => setOpen(null)}>
-                Cancel
-              </Button>
-              <Button variant="primary" disabled={!!busy} onClick={() => apply(open.options[0])}>
-                {busy ? <Spinner className="h-3.5 w-3.5 border-white border-r-transparent" /> : null}
+          <>
+            <Button variant="ghost" onClick={close} disabled={!!busy}>
+              Cancel
+            </Button>
+            {open && open.options.length === 1 && (
+              <Button variant="primary" loading={!!busy} onClick={() => apply(open.options[0])}>
                 Apply &amp; re-score
               </Button>
-            </>
-          ) : undefined
+            )}
+          </>
         }
       >
         {open && open.options.length === 1 && open.options[0].fix && <Preview fix={open.options[0].fix} />}
@@ -126,8 +138,7 @@ export function FixActions({ draftId, feature, fixes, aiOn, className }: { draft
                   <div className="text-[13.5px] text-text">{o.label}</div>
                   <div className="text-[12px] text-text-3">{o.description}</div>
                 </div>
-                <Button size="sm" variant="primary" disabled={!!busy} onClick={() => apply(o)}>
-                  {busy === o.id ? <Spinner className="h-3.5 w-3.5 border-white border-r-transparent" /> : null}
+                <Button size="sm" variant="primary" disabled={!!busy && busy !== o.id} loading={busy === o.id} onClick={() => apply(o)}>
                   Apply
                 </Button>
               </li>

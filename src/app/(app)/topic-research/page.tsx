@@ -96,7 +96,7 @@ export default async function TopicResearchPage({ searchParams }: PageProps<"/to
         actions={
           <>
             <AddToListButton keywords={t.subtopics.map((s) => s.keyword)} db={db} defaultName={`${topic} topics`} from="topic-research" label="Add subtopics to list" />
-            <ButtonLink href={`/keyword-magic-tool?q=${encodeURIComponent(topic)}&db=${db}`}>Keyword Magic Tool</ButtonLink>
+            <ButtonLink prefetch={false} href={`/keyword-magic-tool?q=${encodeURIComponent(topic)}&db=${db}`}>Keyword Magic Tool</ButtonLink>
           </>
         }
       >

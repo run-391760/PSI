@@ -9,7 +9,7 @@ import type { OnboardingStep } from "@/lib/reports/platform";
 import { bandFor } from "@/lib/sensor/bands";
 import type { DataSource } from "@/lib/providers/labels";
 import { cn } from "@/lib/utils";
-import { NAV } from "@/components/shell/nav";
+import { NAV, NAV_HOME_GROUP, navGroupTitle } from "@/components/shell/nav";
 import { DomainAvatar } from "@/components/seo/badges";
 import { DataSourceBadge } from "@/components/seo/source-badge";
 import { NewProjectButton } from "@/components/projects/project-form";
@@ -213,7 +213,10 @@ export function RecentJobsCard({ jobs, title = "Recent jobs", showProject = true
 // --------------------------------------------------------------------------------- quick tools
 
 export function QuickToolsGrid() {
-  const groups = NAV.filter((g) => g.id !== "home");
+  // Every tool, including ones hidden from the sidebar by default; Home and Projects are already on this page.
+  const groups = NAV.map((g) =>
+    g.id === NAV_HOME_GROUP ? { ...g, label: "Create", items: g.items.filter((i) => i.href !== "/dashboard" && i.href !== "/projects") } : { ...g, label: navGroupTitle(g) },
+  ).filter((g) => g.items.length);
   return (
     <Card>
       <CardHeader title="All tools" description="Jump to any tool — grouped like the sidebar" />

@@ -12,7 +12,7 @@ import { bySeverity } from "@/lib/optimizer/analyze";
 import { featureById } from "@/lib/optimizer/features";
 import { parseDraft } from "@/lib/optimizer/parse";
 import type { Draft, FixOption, Report } from "@/lib/optimizer/types";
-import { FixActions, runFix } from "../fix-actions";
+import { FixActions, tryFix } from "../fix-actions";
 import { flashScore } from "../score-flash";
 import { SeverityBadge } from "../ui";
 
@@ -81,9 +81,14 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
   const [error, setError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{ note: string; option: FixOption } | null>(null);
   const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const discard = () => {
+    setProposal(null);
+    setApplyError(null);
+  };
   return (
     <Card>
-      <CardHeader title="Rewrite a section with Claude" description={aiOn ? "Describe the change; Claude rewrites only that part, you review it, then apply & re-score." : "Add ANTHROPIC_API_KEY on the server to enable."} />
+      <CardHeader title="Rewrite a section with Claude" description={aiOn ? "Describe the change; Claude rewrites only that part, you review it, then apply & re-score." : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to enable."} />
       <CardBody className="space-y-3">
         <div className="grid gap-3 md:grid-cols-[260px_1fr]">
           <Field label="Section">
@@ -104,7 +109,7 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
         </div>
         <Button
           variant="primary"
-          disabled={!aiOn || ask.trim().length < 3}
+          disabled={busy || !aiOn || ask.trim().length < 3}
           loading={busy}
           onClick={async () => {
             setBusy(true);
@@ -120,13 +125,15 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
         {error && <p className="text-[13px] text-critical-ink">{error}</p>}
         <Dialog
           open={!!proposal}
-          onClose={() => setProposal(null)}
+          onClose={discard}
           title="Proposed rewrite"
           description={proposal?.note}
           size="lg"
+          dismissible={!applying}
+          error={applyError}
           footer={
             <>
-              <Button variant="ghost" onClick={() => setProposal(null)}>
+              <Button variant="ghost" onClick={discard} disabled={applying}>
                 Discard
               </Button>
               <Button
@@ -135,13 +142,13 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
                 onClick={async () => {
                   if (!proposal?.option.fix) return;
                   setApplying(true);
-                  const ok = await runFix(draft.id, proposal.option.fix, `Claude rewrite: ${target.startsWith("__") ? target.slice(2) : target}`);
+                  setApplyError(null);
+                  const err = await tryFix(draft.id, proposal.option.fix, `Claude rewrite: ${target.startsWith("__") ? target.slice(2) : target}`);
                   setApplying(false);
-                  if (ok) {
-                    setProposal(null);
-                    setAsk("");
-                    router.refresh();
-                  }
+                  if (err) return setApplyError(err);
+                  discard();
+                  setAsk("");
+                  router.refresh();
                 }}
               >
                 Apply &amp; re-score
@@ -149,7 +156,7 @@ export function SectionRewriter({ draft, aiOn }: { draft: Draft; aiOn: boolean }
             </>
           }
         >
-          <pre className="scroll-thin max-h-[55vh] overflow-auto rounded-md border border-border bg-surface-2 p-3 text-[12.5px] whitespace-pre-wrap text-text">{proposal?.option.description}</pre>
+          <pre className="overflow-x-auto rounded-md border border-border bg-surface-2 p-3 text-[12.5px] break-words whitespace-pre-wrap text-text">{proposal?.option.description}</pre>
         </Dialog>
       </CardBody>
     </Card>

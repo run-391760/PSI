@@ -1,5 +1,6 @@
 import { AppError } from "@/lib/domain";
 import { askClaude, anthropicEnabled, CLAUDE_MODEL } from "./anthropic";
+import { GEMINI_DEFAULT_MODEL, OPENAI_DEFAULT_MODEL } from "./llm";
 import { dfs, market } from "./dataforseo";
 import { liveEnabled } from "./source";
 
@@ -34,8 +35,8 @@ type EngineDef = {
 };
 
 export const LIVE_ENGINES: EngineDef[] = [
-  { id: "chatgpt", name: "ChatGPT", env: ["OPENAI_API_KEY"], enabled: () => !!process.env.OPENAI_API_KEY, model: () => process.env.OPENAI_MODEL || "gpt-6-astra" },
-  { id: "gemini", name: "Gemini", env: ["GEMINI_API_KEY"], enabled: () => !!process.env.GEMINI_API_KEY, model: () => process.env.GEMINI_MODEL || "gemini-3.8-flash" },
+  { id: "chatgpt", name: "ChatGPT", env: ["OPENAI_API_KEY"], enabled: () => !!process.env.OPENAI_API_KEY, model: () => process.env.OPENAI_MODEL || OPENAI_DEFAULT_MODEL },
+  { id: "gemini", name: "Gemini", env: ["GEMINI_API_KEY"], enabled: () => !!process.env.GEMINI_API_KEY, model: () => process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL },
   {
     id: "perplexity",
     name: "Perplexity",

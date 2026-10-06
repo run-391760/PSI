@@ -30,11 +30,13 @@ export function Button({
   size = "md",
   className,
   loading,
+  disabled,
   children,
   ...props
 }: ComponentProps<"button"> & { variant?: Variant; size?: Size; loading?: boolean }) {
+  // `loading` must win over an explicit disabled={false}, so it is applied after the spread.
   return (
-    <button className={buttonClass(variant, size, className)} disabled={loading || props.disabled} {...props}>
+    <button {...props} className={buttonClass(variant, size, className)} disabled={loading || disabled} aria-busy={loading || undefined}>
       {loading && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" aria-hidden />}
       {children}
     </button>

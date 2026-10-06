@@ -11,6 +11,7 @@ import type { SerpFeature } from "@/lib/seo/types";
 import { DomainAvatar, FeatureIcon, IntentBadges, KdBadge, featureLabel } from "@/components/seo/badges";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Callout, Skeleton } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { Drawer } from "./drawer";
@@ -52,6 +53,7 @@ export function KeywordDrawer({
   const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
 
   const rowId = row?.id ?? null;
   useEffect(() => {
@@ -303,8 +305,8 @@ export function KeywordDrawer({
               variant="ghost"
               className="text-critical-ink"
               loading={pending}
-              onClick={() => {
-                if (!confirm(`Stop tracking “${row.keyword}”? Its history will be deleted.`)) return;
+              onClick={async () => {
+                if (!(await confirm({ title: `Stop tracking “${row.keyword}”?`, description: "Its ranking history will be deleted.", confirmLabel: "Stop tracking" }))) return;
                 start(async () => {
                   const res = await deleteKeywordsAction(projectId, [row.id]);
                   if (!res.ok) return setError(res.error);
@@ -315,6 +317,7 @@ export function KeywordDrawer({
             >
               <Trash2 className="h-3.5 w-3.5" /> Stop tracking this keyword
             </Button>
+            {confirmDialog}
           </div>
         </div>
       )}

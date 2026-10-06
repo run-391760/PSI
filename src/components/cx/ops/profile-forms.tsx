@@ -45,7 +45,7 @@ export function NameForm({ name, email }: { name: string; email: string }) {
         </Field>
       </div>
       <div className="flex items-center gap-3">
-        <Button type="submit" variant="primary" size="sm" loading={pending} disabled={trimmed === name.trim() || !!invalid}>Save name</Button>
+        <Button type="submit" variant="primary" size="sm" loading={pending} disabled={pending || trimmed === name.trim() || !!invalid}>Save name</Button>
         <Saved show={saved} />
       </div>
     </form>
@@ -83,7 +83,7 @@ export function SignatureForm({ brand, brandName, body, enabled, imageUrl }: { b
         </div>
       )}
       <div className="flex items-center gap-3">
-        <Button type="submit" variant="primary" size="sm" loading={pending} disabled={!dirty}>Save signature</Button>
+        <Button type="submit" variant="primary" size="sm" loading={pending} disabled={pending || !dirty}>Save signature</Button>
         <Saved show={saved} />
       </div>
     </form>

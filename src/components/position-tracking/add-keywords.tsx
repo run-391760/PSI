@@ -64,29 +64,29 @@ export function AddKeywordsButton({
         onClose={close}
         size="xl"
         title="Add keywords"
-        description={`Up to ${remaining.toLocaleString()} more keyword${remaining === 1 ? "" : "s"} can be tracked in this campaign. New keywords get the campaign's history backfilled.`}
+        description={`Up to ${remaining.toLocaleString()} more keyword${remaining === 1 ? "" : "s"} can be tracked in this campaign.`}
+        dismissible={!pending}
+        error={error}
         footer={
           <>
-            <Button variant="ghost" onClick={close}>
+            <Button variant="ghost" onClick={close} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={!kw.entries.length || kw.errors.length > 0} onClick={submit}>
+            <Button variant="primary" loading={pending} disabled={pending || !kw.entries.length || kw.errors.length > 0} onClick={submit}>
               Add {kw.entries.length ? kw.entries.length.toLocaleString() : ""} keyword{kw.entries.length === 1 ? "" : "s"}
             </Button>
           </>
         }
       >
-        {prefill.length > 0 && (
-          <Callout tone="info" className="mb-3">
-            {prefill.length} keyword{prefill.length === 1 ? " was" : "s were"} sent here from another tool.
-          </Callout>
-        )}
-        {error && (
-          <Callout tone="critical" className="mb-3">
-            {error}
-          </Callout>
-        )}
-        {open && <KeywordInput initial={prefill.join("\n")} suggestions={suggestions} existing={existing} max={remaining} onChange={onChange} tagNames={tagNames} />}
+        <div className="space-y-3">
+          {prefill.length > 0 && (
+            <Callout tone="info">
+              {prefill.length} keyword{prefill.length === 1 ? " was" : "s were"} sent here from another tool.
+            </Callout>
+          )}
+          {open && <KeywordInput initial={prefill.join("\n")} suggestions={suggestions} existing={existing} max={remaining} onChange={onChange} tagNames={tagNames} />}
+          <p className="text-[12px] text-text-3">New keywords get the campaign&apos;s ranking history backfilled.</p>
+        </div>
       </Dialog>
     </>
   );

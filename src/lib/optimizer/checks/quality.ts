@@ -1,4 +1,5 @@
 import { hasKeyword, isComplexWord, isPassive, readabilityOf, wordList } from "@/lib/content/text";
+import { toneEvidence, toneOf } from "../signals";
 import { answered, covered, STOP, type Ctx } from "../context";
 import { hasCta } from "../intent";
 import { contentTokens, isConclusionHeading, stem } from "../parse";
@@ -445,6 +446,8 @@ export function readability(ctx: Ctx): Finding {
   const pScore = clamp01(1 - (passive.length / Math.max(1, d.sentences.length) - 0.1) * 4);
   const paraScore = clamp01(1 - longParas.length * 0.2);
   const score = 0.4 * fScore + 0.25 * lScore + 0.15 * pScore + 0.2 * paraScore;
+  // Tone of voice (from the former Writing Assistant): evidence only, it does not change the score.
+  const tone = toneEvidence(toneOf(d.sentences));
   return finding("readability", score, `Flesch reading ease ${r.flesch ?? "n/a"} (grade ${r.grade ?? "n/a"}); ${plural(long.length, "long sentence")}, ${plural(passive.length, "passive sentence")}, ${plural(longParas.length, "long paragraph")}.`, ["content"], {
     metrics: [
       { label: "Flesch", value: String(r.flesch ?? "n/a") },
@@ -453,6 +456,7 @@ export function readability(ctx: Ctx): Finding {
       { label: "Complex words", value: pct(complexShare) },
     ],
     items: [
+      ...(tone ? [tone] : []),
       ...long.slice(0, 6).map((s) => ({ label: quote(s, 160), detail: `${words(s)} words — split it`, tone: "warning" as const })),
       ...longParas.slice(0, 3).map((p) => ({ label: `Long paragraph: ${quote(p.text, 90)}`, detail: `${p.words} words — break it up`, tone: "warning" as const })),
       ...passive.slice(0, 4).map((s) => ({ label: quote(s, 140), detail: "Passive voice", tone: "neutral" as const })),

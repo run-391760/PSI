@@ -6,7 +6,6 @@ import { useState, useTransition } from "react";
 import { saveSurveyAction } from "@/app/(app)/cx/surveys/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { Question, Survey, SurveyKind } from "@/lib/cx/insights/surveys";
@@ -49,11 +48,11 @@ export function SurveyEditor({ brand, survey }: { brand: string; survey?: Survey
   return (
     <>
       {survey ? (
-        <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => { setError(null); setOpen(true); }}>
           <Pencil className="h-4 w-4" /> Edit
         </Button>
       ) : (
-        <Button variant="primary" onClick={() => setOpen(true)}>
+        <Button variant="primary" onClick={() => { setError(null); setOpen(true); }}>
           <Plus className="h-4 w-4" /> New survey
         </Button>
       )}
@@ -62,23 +61,24 @@ export function SurveyEditor({ brand, survey }: { brand: string; survey?: Survey
         onClose={() => setOpen(false)}
         size="lg"
         title={survey ? "Edit survey" : "New survey"}
+        error={error}
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" loading={pending} disabled={!name.trim()} onClick={save}>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" loading={pending} disabled={pending || !name.trim()} onClick={save}>
               {survey ? "Save" : "Create survey"}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
-          {error && <Callout tone="critical">{error}</Callout>}
           {!survey && (
             <div className="grid gap-2 sm:grid-cols-3">
               {KINDS.map((k) => (
                 <button
                   key={k.value}
                   type="button"
+                  aria-pressed={kind === k.value}
                   onClick={() => {
                     setKind(k.value);
                     setQuestion(k.q);

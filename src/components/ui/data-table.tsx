@@ -308,8 +308,9 @@ export function CellLink({ href, children, external }: { href: string; children:
         {children}
       </a>
     );
+  // Rows can hold hundreds of links to heavy report pages: no prefetch.
   return (
-    <Link href={href} className="text-link hover:underline">
+    <Link prefetch={false} href={href} className="text-link hover:underline">
       {children}
     </Link>
   );

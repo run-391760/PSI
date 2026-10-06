@@ -1,12 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AppError } from "@/lib/domain";
+import { anthropicClient, CLAUDE_MODEL, llmError } from "./llm";
 
 /**
  * Claude (Anthropic Messages API) with the server-side web search tool — used by AI Visibility to ask
  * tracked prompts the way a user would and record which brands and URLs the answer mentions/cites.
  * Enabled when ANTHROPIC_API_KEY is set.
  */
-export const CLAUDE_MODEL = "claude-opus-5";
+export { CLAUDE_MODEL };
 const MAX_CONTINUATIONS = 3;
 
 export const anthropicEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
@@ -22,20 +23,6 @@ export type ClaudeAnswer = {
   stopReason: string;
   usage: { inputTokens: number; outputTokens: number; webSearches: number };
 };
-
-let client: Anthropic | null = null;
-const anthropic = () => (client ??= new Anthropic({ timeout: 180_000, maxRetries: 2 }));
-
-/** Translate SDK errors (most specific first) into user-facing AppErrors. */
-function toAppError(error: unknown): AppError {
-  if (error instanceof Anthropic.AuthenticationError) return new AppError("ANTHROPIC_API_KEY was rejected (401). Check the key in your environment.", 401);
-  if (error instanceof Anthropic.RateLimitError) return new AppError(`Anthropic rate limit reached: ${error.message}`, 429);
-  if (error instanceof Anthropic.APIConnectionTimeoutError) return new AppError("Claude did not respond within 3 minutes.", 502);
-  if (error instanceof Anthropic.APIConnectionError) return new AppError("Could not reach the Anthropic API.", 502);
-  if (error instanceof Anthropic.InternalServerError) return new AppError(`Anthropic API is unavailable (${error.status}): ${error.message}`, 502);
-  if (error instanceof Anthropic.APIError) return new AppError(`Anthropic API error (${error.status ?? "?"}): ${error.message}`, 502);
-  return new AppError(error instanceof Error ? error.message : "Unexpected error calling Claude.", 502);
-}
 
 /** Ask Claude a prompt with web search enabled and collect the answer, citations and sources. */
 export async function askClaude(prompt: string, opts: { country?: string; maxSearches?: number } = {}): Promise<ClaudeAnswer> {
@@ -54,7 +41,7 @@ export async function askClaude(prompt: string, opts: { country?: string; maxSea
   const usage = { inputTokens: 0, outputTokens: 0, webSearches: 0 };
   for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
     try {
-      response = await anthropic().beta.messages.create({
+      response = await anthropicClient().beta.messages.create({
         model: CLAUDE_MODEL,
         max_tokens: 16000,
         // Server-side refusal fallbacks: a declined prompt is re-run on Anthropic's recommended model.
@@ -64,7 +51,7 @@ export async function askClaude(prompt: string, opts: { country?: string; maxSea
         messages,
       });
     } catch (error) {
-      throw toAppError(error);
+      throw llmError(error);
     }
     usage.inputTokens += response.usage.input_tokens ?? 0;
     usage.outputTokens += response.usage.output_tokens ?? 0;

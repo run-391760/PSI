@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { requireUser } from "@/lib/auth";
 import { AppError } from "@/lib/domain";
-import { complete } from "@/lib/cx/ai";
+import { aiConfigured } from "@/lib/cx/ai";
+import { completeOrThrow } from "@/lib/providers/llm";
 import { inflateRawSync } from "node:zlib";
 import { parseBulkCsv, parseBulkTable, pubChannel, type Utm } from "@/lib/cx/publishing/core";
 import * as d from "@/lib/cx/publishing/data";
@@ -112,12 +113,13 @@ export async function composeFromPromptAction(brandId: string, input: { prompt: 
     const a = await d.requireBrand(u.id, brandId, "author");
     if (!input.prompt.trim()) throw new AppError("Describe the post you want.");
     const ch = pubChannel(input.channel);
-    const out = await complete(
+    // A null result means no key; a configured provider that fails surfaces its error instead.
+    if (!aiConfigured()) return null;
+    const { text: out } = await completeOrThrow(
       `You write social media posts for the brand "${a.brand.name}" (${a.brand.domain}). Write one ${input.postType === "poll" ? "poll question (the options go on separate lines after a line containing exactly ---)" : "post"} for ${ch?.name ?? "social media"} within ${Math.min(ch?.limit ?? 2200, 2200)} characters. Use only facts given in the prompt; never invent prices, dates, statistics or claims. Where a link belongs write {link}. Return only the post text.`,
       input.prompt.slice(0, 4000),
-      900,
+      { maxTokens: 900 },
     );
-    if (out === null) return null;
     const [text, opts] = out.split(/\n\s*---\s*\n/);
     return { text: text.trim(), pollOptions: opts ? opts.split("\n").map((s) => s.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 4) : [] };
   });
@@ -144,12 +146,12 @@ export async function suggestCaptionsAction(brandId: string, input: { text: stri
     const a = await d.requireBrand(u.id, brandId, "author");
     const ch = pubChannel(input.channel);
     const limit = ch?.limit ?? 2200;
-    const out = await complete(
+    if (!aiConfigured()) return null;
+    const { text: out } = await completeOrThrow(
       `You write social media captions for the brand "${a.brand.name}" (${a.brand.domain}). Write 3 alternative captions for ${ch?.name ?? "social media"} (hard limit ${Math.min(limit, 2200)} characters each${input.channel === "x" ? "; links count as 23" : ""}). Keep facts from the draft; never invent prices, dates, statistics or claims. Keep a {link} placeholder where the draft has one. Match the channel's style. Return only the 3 captions separated by a line containing exactly ---.`,
       `Brief: ${input.brief || "(none)"}\n\nDraft:\n${input.text || "(empty)"}`,
-      1200,
+      { maxTokens: 1200 },
     );
-    if (out === null) return null;
     return out.split(/\n\s*---\s*\n/).map((s) => s.trim()).filter(Boolean).slice(0, 3);
   });
 }

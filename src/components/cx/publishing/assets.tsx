@@ -6,6 +6,7 @@ import { useRef, useState, useTransition } from "react";
 import { decideAssetAction, deleteAssetAction, requestAssetApprovalAction, setAssetTagsAction } from "@/app/(app)/cx/publishing/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
@@ -36,6 +37,7 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
   const [open, setOpen] = useState<AssetItem | null>(null);
   const [editTags, setEditTags] = useState("");
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const [drag, setDrag] = useState(false);
   const [note, setNote] = useState("");
   const [approver, setApprover] = useState("");
@@ -99,7 +101,7 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
           </div>
         </Card>
       )}
-      {error && <Callout tone="critical">{error}</Callout>}
+      {error && !open && <Callout tone="critical">{error}</Callout>}
       <div className="flex flex-wrap items-center gap-2">
         <form className="relative w-full sm:w-72" onSubmit={(e) => { e.preventDefault(); nav({ q }); }}>
           <Search className="absolute top-2.5 left-2.5 h-3.5 w-3.5 text-text-3" />
@@ -129,7 +131,7 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
       {assets.length ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
           {assets.map((a) => (
-            <button key={a.id} type="button" onClick={() => { setOpen(a); setEditTags(a.tags.join(", ")); }} className="group overflow-hidden rounded-lg border border-border bg-surface text-left shadow-card hover:border-border-strong">
+            <button key={a.id} type="button" onClick={() => { setError(null); setOpen(a); setEditTags(a.tags.join(", ")); }} className="group overflow-hidden rounded-lg border border-border bg-surface text-left shadow-card hover:border-border-strong">
               <div className="relative aspect-square bg-surface-3">
                 {a.mime.startsWith("video/") ? (
                   <>
@@ -160,11 +162,12 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
         onClose={() => setOpen(null)}
         title={open?.filename ?? ""}
         size="lg"
-        footer={
+        error={open ? error : null}
+        footerStart={
           open &&
           canAuthor && (
             <>
-              <Button variant="danger" disabled={pending} onClick={() => confirm("Delete this asset? Posts using it lose the media.") && start(async () => { await deleteAssetAction(brandId, open.id); setOpen(null); router.refresh(); })}>
+              <Button variant="ghost" className="text-critical-ink" disabled={pending} onClick={async () => (await confirm({ title: "Delete this asset?", description: open.used ? `It is used in ${open.used} post${open.used === 1 ? "" : "s"}; ${open.used === 1 ? "that post loses" : "those posts lose"} the media.` : `${open.filename} is removed from the library.` })) && start(async () => { const r = await deleteAssetAction(brandId, open.id); if (!r.ok) return setError(r.error); setOpen(null); router.refresh(); })}>
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
               {open.mime.startsWith("image/") && open.mime !== "image/gif" && (
@@ -172,7 +175,15 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
                   <Crop className="h-4 w-4" /> Edit / crop
                 </Button>
               )}
-              <Button variant="primary" disabled={pending} onClick={() => start(async () => { await setAssetTagsAction(brandId, open.id, editTags.split(",")); setOpen(null); router.refresh(); })}>
+            </>
+          )
+        }
+        footer={
+          open &&
+          canAuthor && (
+            <>
+              <Button variant="ghost" onClick={() => setOpen(null)}>Cancel</Button>
+              <Button variant="primary" loading={pending} onClick={() => start(async () => { const r = await setAssetTagsAction(brandId, open.id, editTags.split(",")); if (!r.ok) return setError(r.error); setOpen(null); router.refresh(); })}>
                 Save tags
               </Button>
             </>
@@ -181,11 +192,11 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
       >
         {open && (
           <div className="grid gap-3">
-            <div className="flex max-h-[50vh] justify-center overflow-hidden rounded-md bg-surface-3">
+            <div className="flex justify-center overflow-hidden rounded-md bg-surface-3">
               {open.mime.startsWith("video/") ? (
-                <video src={url(open.id)} controls className="max-h-[50vh]" />
+                <video src={url(open.id)} controls className="max-h-[45dvh]" />
               ) : open.mime.startsWith("image/") ? (
-                <img src={url(open.id)} alt={open.filename} className="max-h-[50vh] object-contain" />
+                <img src={url(open.id)} alt={open.filename} className="max-h-[45dvh] object-contain" />
               ) : (
                 <a href={url(open.id)} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-8 text-link hover:underline"><FileText className="h-6 w-6" /> Open document</a>
               )}
@@ -246,6 +257,7 @@ export function AssetLibrary({ brandId, assets, tags, canAuthor, canApprove, app
           </div>
         )}
       </Dialog>
+      {confirmDialog}
       <ImageEditor
         brandId={brandId}
         asset={editing}

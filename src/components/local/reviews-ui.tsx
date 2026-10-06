@@ -11,7 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Select, Textarea } from "@/components/ui/input";
 
 export type ReviewItem = {
@@ -183,21 +182,30 @@ function ReplyDialog({ projectId, review, onClose, templates, business, phone }:
     setText(review.reply?.by === "you" ? review.reply.body : review.reply ? "" : fillTemplate(templates.find((x) => x.id === t)?.body ?? "", review, business, phone));
     setError(null);
   }
-  const save = (status: "draft" | "posted") =>
+  const [action, setAction] = useState<"draft" | "posted" | "delete" | null>(null);
+  const busy = pending ? action : null;
+  const save = (status: "draft" | "posted") => {
+    setAction(status);
     start(async () => {
       if (!review) return;
+      setError(null);
       const res = await saveReplyAction(projectId, review.id, text, status);
       if (!res.ok) return setError(res.error);
       router.refresh();
       onClose();
     });
-  const remove = () =>
+  };
+  const remove = () => {
+    setAction("delete");
     start(async () => {
       if (!review) return;
-      await deleteReplyAction(projectId, review.id);
+      setError(null);
+      const res = await deleteReplyAction(projectId, review.id);
+      if (!res.ok) return setError(res.error);
       router.refresh();
       onClose();
     });
+  };
   const readOnly = review?.reply?.by === "demo";
   return (
     <Dialog
@@ -206,23 +214,33 @@ function ReplyDialog({ projectId, review, onClose, templates, business, phone }:
       title={review ? `Review by ${review.author}` : ""}
       description={review ? `${review.platformName} · ${dateLabel(review.date)} · Demo review` : undefined}
       size="lg"
+      dismissible={!pending}
+      error={readOnly ? null : error}
+      footerStart={
+        review &&
+        !readOnly &&
+        review.reply?.by === "you" && (
+          <Button variant="ghost" onClick={remove} disabled={pending} loading={busy === "delete"} className="text-critical-ink">
+            Delete reply
+          </Button>
+        )
+      }
       footer={
         review &&
-        !readOnly && (
+        (readOnly ? (
+          <Button variant="ghost" onClick={() => (setLastId(null), onClose())}>
+            Close
+          </Button>
+        ) : (
           <>
-            {review.reply?.by === "you" && (
-              <Button variant="ghost" onClick={remove} disabled={pending} className="mr-auto text-critical-ink">
-                Delete reply
-              </Button>
-            )}
-            <Button onClick={() => save("draft")} loading={pending}>
+            <Button onClick={() => save("draft")} disabled={pending} loading={busy === "draft"}>
               Save draft
             </Button>
-            <Button variant="primary" onClick={() => save("posted")} loading={pending}>
+            <Button variant="primary" onClick={() => save("posted")} disabled={pending} loading={busy === "posted"}>
               Mark as replied
             </Button>
           </>
-        )
+        ))
       }
     >
       {review && (
@@ -241,7 +259,6 @@ function ReplyDialog({ projectId, review, onClose, templates, business, phone }:
             </div>
           ) : (
             <>
-              {error && <Callout tone="critical">{error}</Callout>}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[12.5px] font-medium text-text-2">Template</span>
                 <Select
@@ -262,7 +279,7 @@ function ReplyDialog({ projectId, review, onClose, templates, business, phone }:
                 </Select>
               </div>
               <div>
-                <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} maxLength={4000} aria-label="Reply" placeholder="Write a reply…" />
+                <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} maxLength={4000} aria-label="Reply" placeholder="Write a reply…" autoFocus />
                 <div className="mt-1 flex justify-between text-[12px] text-text-3">
                   <span>Personalise the reply; mention specifics from the review.</span>
                   <span className="tabular">{text.length}/4000</span>

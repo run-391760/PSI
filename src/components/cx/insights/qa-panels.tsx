@@ -60,7 +60,7 @@ export function SamplePanel({ brand, scorecards, agents, channels }: { brand: st
         <Button
           variant="primary"
           loading={pending}
-          disabled={!card}
+          disabled={pending || !card}
           onClick={() =>
             start(async () => {
               const r = await sampleAction(brand, { scorecardId: card, count, days, agentId: agent, channel });
@@ -100,7 +100,7 @@ export function ReviewableTickets({ brand, tickets, scorecards }: { brand: strin
         <Button
           size="sm"
           loading={busy === r.id}
-          disabled={!card}
+          disabled={busy === r.id || !card}
           onClick={async () => {
             setBusy(r.id);
             const res = await openReviewAction(brand, r.id, card);

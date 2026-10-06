@@ -11,6 +11,7 @@ import { runQuickActionAction } from "@/app/(app)/cx/settings/automation/admin-a
 import { mergeAction, moderateCommentAction, summarizeAction, translateMessageAction, unlinkParentAction, updateTicketsAction } from "@/app/(app)/cx/inbox/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog, Menu } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Input, Select } from "@/components/ui/input";
@@ -82,8 +83,9 @@ export function Conversation(props: Props) {
   const threadKey = (t as unknown as { external_thread_id?: string | null }).external_thread_id ?? "";
   const socialThread = /^(fbc|fbp|fbr|igc|igm|lic\||lip\|)/.test(threadKey);
   const moderatable = /^(fbc|igc):/.test(threadKey) && !readOnlyRole;
+  const { confirm, confirmDialog } = useConfirm();
   const moderate = async (m: MessageRow, action: "hide" | "unhide" | "delete") => {
-    if (action === "delete" && !confirm("Delete this comment on the platform? This can't be undone.")) return;
+    if (action === "delete" && !(await confirm({ title: "Delete this comment on the platform?", description: "It is removed from the network for everyone. This can't be undone." }))) return;
     const r = await moderateCommentAction(brand.id, t.id, m.id, action);
     if (!r.ok) setError(r.error);
     else router.refresh();
@@ -439,6 +441,7 @@ export function Conversation(props: Props) {
       {dialog?.kind === "parent" && <ParentDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} />}
       {dialog?.kind === "task" && <TaskDialog brand={brand.id} agents={agents} tree={props.tree} me={me} ticket={dialog.existing ? null : { id: t.id, number: t.number, subject: t.subject }} existing={dialog.existing ?? null} onClose={() => setDialog(null)} />}
       {dialog?.kind === "merge" && <MergeDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} onDone={() => { setDialog(null); router.refresh(); }} />}
+      {confirmDialog}
     </div>
   );
 }
@@ -575,15 +578,22 @@ function MergeDialog({ brand, detail, onClose, onDone }: { brand: string; detail
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [numbers, setNumbers] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const candidates = (detail.related ?? []).filter((r) => r.status !== "closed");
+  const nums = numbers.split(/[\s,#]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const merge = async () => {
+    if (busy || (!picked.size && !nums.length)) return;
+    setBusy(true);
+    setError(null);
+    const r = await mergeAction(brand, detail.ticket.id, [...picked], nums);
+    setBusy(false);
+    if (r.ok) onDone(); else setError(r.error);
+  };
   return (
-    <Dialog open onClose={onClose} title={`Merge into #${detail.ticket.number}`} description="Messages of the selected tickets move into this ticket; those tickets are closed and tagged “merged”."
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={async () => {
-        const nums = numbers.split(/[\s,#]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
-        const r = await mergeAction(brand, detail.ticket.id, [...picked], nums);
-        if (r.ok) onDone(); else setError(r.error);
-      }}><Send className="h-3.5 w-3.5" />Merge</Button></>}>
+    <Dialog open onClose={onClose} title={`Merge into #${detail.ticket.number}`} error={error} onSubmit={merge}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy} disabled={busy || (!picked.size && !nums.length)}><Send className="h-3.5 w-3.5" />Merge</Button></>}>
       <div className="space-y-3 text-[13px]">
+        <p className="text-[12.5px] text-text-2">Messages of the selected tickets move into this ticket; those tickets are closed and tagged “merged”.</p>
         {candidates.length > 0 ? (
           <div>
             <div className="mb-1 text-text-2">Other open tickets from this customer</div>
@@ -599,7 +609,6 @@ function MergeDialog({ brand, detail, onClose, onDone }: { brand: string; detail
           <label className="mb-1 block text-text-2" htmlFor="merge-n">Or ticket numbers</label>
           <Input id="merge-n" value={numbers} onChange={(e) => setNumbers(e.target.value)} placeholder="e.g. 12, 15" />
         </div>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

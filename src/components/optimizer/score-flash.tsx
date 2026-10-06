@@ -1,13 +1,29 @@
 "use client";
 
 import { ArrowRight, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 /**
  * Before → after banner shown after a fix is applied and the draft re-scored (One-Click Apply &
  * Re-score). Any component calls flashScore(); the banner is mounted once per optimizer page.
+ *
+ * The banner is a manual popover, so it sits in the top layer above open modal dialogs. While a modal
+ * is open it is portalled into that <dialog>, otherwise the modal would make it inert (unclickable).
  */
+
+/** The topmost open modal <dialog>, if any (the last one opened is last in the top layer). */
+function topModal(): HTMLElement | null {
+  const open = [...document.querySelectorAll("dialog")].filter((d) => {
+    try {
+      return d.open && d.matches(":modal");
+    } catch {
+      return d.open;
+    }
+  });
+  return open.at(-1) ?? null;
+}
 
 export type Flash = { title: string; before?: number | null; after?: number | null; status?: string; error?: boolean; detail?: string };
 
@@ -17,9 +33,12 @@ export function flashScore(f: Flash) {
 
 export function ScoreFlash() {
   const [f, setF] = useState<Flash | null>(null);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | undefined;
     const on = (e: Event) => {
+      setHost(topModal() ?? document.body);
       setF((e as CustomEvent<Flash>).detail);
       clearTimeout(t);
       t = setTimeout(() => setF(null), (e as CustomEvent<Flash>).detail.error ? 9000 : 6500);
@@ -30,10 +49,39 @@ export function ScoreFlash() {
       clearTimeout(t);
     };
   }, []);
-  if (!f) return null;
+  // Hosted in a dialog: move back to <body> when it closes, or the closed dialog would hide it.
+  useEffect(() => {
+    if (!host || host === document.body) return;
+    const back = () => setHost(document.body);
+    host.addEventListener("close", back);
+    return () => host.removeEventListener("close", back);
+  }, [host]);
+
+  // (Re)show on every flash so the banner is raised above any dialog opened since the last one.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof el.showPopover !== "function") return;
+    try {
+      if (el.matches(":popover-open")) el.hidePopover();
+      el.showPopover();
+    } catch {
+      /* popover unsupported: the fixed z-[70] fallback still shows it */
+    }
+  }, [f, host]);
+
+  if (!f || !host) return null;
   const delta = f.before != null && f.after != null ? Math.round((f.after - f.before) * 10) / 10 : null;
-  return (
-    <div role="status" aria-live="polite" className={cn("no-print fixed right-4 bottom-4 left-4 z-[70] ml-auto max-w-sm rounded-lg border bg-surface p-3 shadow-pop sm:left-auto", f.error ? "border-critical/40" : "border-border")}>
+  return createPortal(
+    <div
+      ref={ref}
+      popover="manual"
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "no-print fixed inset-auto right-4 bottom-4 left-4 z-[70] m-0 ml-auto h-auto w-auto max-w-sm overflow-visible rounded-lg border bg-surface p-3 text-text shadow-pop sm:left-auto",
+        f.error ? "border-critical/40" : "border-border",
+      )}
+    >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className={cn("text-[13px] font-semibold", f.error ? "text-critical-ink" : "text-text")}>{f.title}</div>
@@ -52,6 +100,7 @@ export function ScoreFlash() {
           <X className="h-4 w-4" />
         </button>
       </div>
-    </div>
+    </div>,
+    host,
   );
 }

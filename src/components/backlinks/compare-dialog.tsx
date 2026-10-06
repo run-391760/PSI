@@ -2,11 +2,10 @@
 
 import { GitCompareArrows, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { looseRootDomain } from "@/lib/backlinks/normalize";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 
 /** Opens a dialog to compare up to 5 domains' backlink profiles (navigates to ?q=a,b,c). */
@@ -20,8 +19,8 @@ export function CompareButton({ initial, label = "Compare domains", variant = "s
   });
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const submit = () => {
+    if (pending) return;
     const entered = values.map((v) => v.trim()).filter(Boolean);
     const invalid = entered.filter((v) => !looseRootDomain(v));
     if (invalid.length) return setError(`Not a valid domain: ${invalid.join(", ")}`);
@@ -33,6 +32,10 @@ export function CompareButton({ initial, label = "Compare domains", variant = "s
       setOpen(false);
     });
   };
+  const close = () => {
+    setOpen(false);
+    setError(null);
+  };
   return (
     <>
       <Button variant={variant} onClick={() => setOpen(true)}>
@@ -40,28 +43,29 @@ export function CompareButton({ initial, label = "Compare domains", variant = "s
       </Button>
       <Dialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={close}
         title="Compare backlink profiles"
         description="Up to 5 domains side by side: authority, referring domains, backlinks and link velocity."
+        error={error}
+        onSubmit={submit}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={close}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form="bl-compare-form" loading={pending}>
+            <Button variant="primary" type="submit" loading={pending}>
               Compare
             </Button>
           </>
         }
       >
-        <form id="bl-compare-form" onSubmit={submit} className="space-y-2.5">
-          {error && <Callout tone="critical">{error}</Callout>}
+        <div className="space-y-2.5">
           {values.map((v, i) => (
             <div key={i} className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: `var(--series-${i + 1})` }} aria-hidden />
               <Input value={v} onChange={(e) => setValues((all) => all.map((x, j) => (j === i ? e.target.value : x)))} placeholder={i === 0 ? "your-domain.com" : `competitor${i}.com`} aria-label={`Domain ${i + 1}`} />
               {values.length > 2 && (
-                <button type="button" onClick={() => setValues((all) => all.filter((_, j) => j !== i))} className="rounded p-1 text-text-3 hover:bg-surface-3 hover:text-text" aria-label="Remove domain">
+                <button type="button" onClick={() => setValues((all) => all.filter((_, j) => j !== i))} className="inline-flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-md text-text-3 hover:bg-surface-3 hover:text-text" aria-label={`Remove domain ${i + 1}`}>
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -72,7 +76,7 @@ export function CompareButton({ initial, label = "Compare domains", variant = "s
               <Plus className="h-3.5 w-3.5" /> Add domain
             </Button>
           )}
-        </form>
+        </div>
       </Dialog>
     </>
   );

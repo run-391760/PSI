@@ -8,7 +8,7 @@ import { MERGE_FIELDS, OUTREACH_LABELS, OUTREACH_STATUSES, renderTemplate, type 
 import { cn } from "@/lib/utils";
 import { AsBadge, DomainLink } from "@/components/seo/badges";
 import { Dot } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { type Column, DataTable } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
@@ -140,6 +140,17 @@ function ComposeDialog({ row, template, ourSite, onClose }: { row: PipelineRow; 
   const body = renderTemplate(`${template.body}${template.senderName ? `\n${template.senderName}` : ""}`, vars);
   const to = row.contactEmail;
   const [copied, setCopied] = useState(false);
+  // Primary when there is no address to open a mail app with; otherwise a secondary action on the left.
+  const copyButton = (primary: boolean) => (
+    <Button
+      variant={primary ? "primary" : "secondary"}
+      onClick={async () => {
+        if (await copyText(`${to ? `To: ${to}\n` : ""}Subject: ${subject}\n\n${body}`)) setCopied(true);
+      }}
+    >
+      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Copied" : "Copy email"}
+    </Button>
+  );
   return (
     <Dialog
       open
@@ -147,22 +158,18 @@ function ComposeDialog({ row, template, ourSite, onClose }: { row: PipelineRow; 
       title={`Email ${row.domain}`}
       description="Copy the message into your email client. Nothing is sent from SynapseSEO."
       size="lg"
+      footerStart={to ? copyButton(false) : undefined}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
-          <Button
-            onClick={async () => {
-              if (await copyText(`${to ? `To: ${to}\n` : ""}Subject: ${subject}\n\n${body}`)) setCopied(true);
-            }}
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Copied" : "Copy email"}
-          </Button>
-          {to && (
-            <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`} className="inline-flex h-8.5 items-center gap-1.5 rounded-md bg-brand px-3.5 text-[13px] font-medium text-white hover:bg-brand-hover">
+          {to ? (
+            <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`} className={buttonClass("primary")}>
               <Mail className="h-4 w-4" /> Open in mail app
             </a>
+          ) : (
+            copyButton(true)
           )}
         </>
       }
@@ -187,6 +194,7 @@ function EditDialog({ projectId, row, onClose }: { projectId: string; row: Pipel
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const save = () => {
+    if (pending) return;
     if (v.contactEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.contactEmail.trim())) return setError("Enter a valid email address.");
     start(async () => {
       const res = await updatePipelineAction(projectId, row.domain, v);
@@ -200,19 +208,21 @@ function EditDialog({ projectId, row, onClose }: { projectId: string; row: Pipel
       open
       onClose={onClose}
       title={`Edit ${row.domain}`}
+      dismissible={!pending}
+      error={error}
+      onSubmit={save}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button variant="primary" loading={pending} onClick={save}>
+          <Button type="submit" variant="primary" loading={pending}>
             Save
           </Button>
         </>
       }
     >
       <div className="space-y-3">
-        {error && <Callout tone="critical">{error}</Callout>}
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Contact name" htmlFor="pl-name">
             <Input id="pl-name" value={v.contactName} onChange={(e) => setV((x) => ({ ...x, contactName: e.target.value }))} placeholder="Jane Doe" maxLength={120} />
@@ -235,7 +245,8 @@ export function AddLinkDialog({ projectId, prospectDomain, onClose, prospects = 
   const [prospect, setProspect] = useState(prospectDomain ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const submit = () =>
+  const submit = () => {
+    if (pending || !url.trim()) return;
     start(async () => {
       const res = await addLinkAction(projectId, { sourceUrl: url, prospectDomain: prospect || null });
       if (!res.ok) return setError(res.error);
@@ -243,31 +254,28 @@ export function AddLinkDialog({ projectId, prospectDomain, onClose, prospects = 
       router.push(`/link-building?project=${projectId}&tab=monitor`);
       router.refresh();
     });
+  };
   return (
     <Dialog
       open
       onClose={onClose}
       title="Monitor an acquired link"
       description="We'll crawl the page now and daily to confirm it still links to your site."
+      dismissible={!pending}
+      error={error}
+      onSubmit={submit}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button variant="primary" loading={pending} onClick={submit} disabled={!url.trim()}>
+          <Button type="submit" variant="primary" loading={pending} disabled={!url.trim() || pending}>
             <Link2 className="h-4 w-4" /> Start monitoring
           </Button>
         </>
       }
     >
-      <form
-        className="space-y-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
-        {error && <Callout tone="critical">{error}</Callout>}
+      <div className="space-y-3">
         <Field label="Page with the link (source URL)" htmlFor="al-url" hint="The exact page where your link was published.">
           <Input id="al-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/blog/article" autoFocus />
         </Field>
@@ -283,7 +291,7 @@ export function AddLinkDialog({ projectId, prospectDomain, onClose, prospects = 
             </Select>
           </Field>
         )}
-      </form>
+      </div>
     </Dialog>
   );
 }

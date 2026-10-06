@@ -1,19 +1,19 @@
 "use client";
 
 import { ChevronDown, ExternalLink, Info, Palette, Pause, Pencil, Play, Plus, RefreshCw, Trash2, Webhook } from "lucide-react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NetworkIcon } from "@/components/cx/network-icon";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog, MenuItem } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import type { ChannelRow } from "@/lib/cx/inbox/channels";
 import type { Profile } from "@/lib/cx/admin/profiles";
 import { PROFILE_NETWORKS, profileSections, profileState, type NetworkDef } from "@/lib/cx/admin/pure/settings";
 import { cn } from "@/lib/utils";
-import { ColorDialog, ColorDot, GearMenu, KAvatar, KButton, KDate } from "../_admin/k-ui";
+import { ColorDialog, ColorDot, GearMenu, KAvatar, KButton, KDate, runOk } from "../_admin/k-ui";
 import { useRun } from "../_admin/ui";
 import { channelStatusAction, deleteChannelAction, profileColorAction, syncEmailAction } from "./actions";
 import { ChannelDialog, ProfileDetails, WebhookEndpoints, type EditKind, type Env } from "./channels-client";
@@ -38,9 +38,11 @@ const asRow = (p: Profile, brand: string): ChannelRow => ({ ...p, project_id: br
 export function ProfilesClient({ brand, origin, env, profiles, connectors, apiInfo, canEdit }: Props) {
   const router = useRouter();
   const sp = useSearchParams();
-  const [open, setOpen] = useState<Open>(null);
+  const [open, setOpenState] = useState<Open>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  // A dialog never opens showing an older action's error.
+  const setOpen = (o: Open) => { if (o) setError(null); setOpenState(o); };
   const sections = profileSections(profiles);
 
   // ?add=<kind> (from All Apps) opens the matching connect flow once.
@@ -177,7 +179,8 @@ export function ProfilesClient({ brand, origin, env, profiles, connectors, apiIn
       )}
       {open?.t === "api" && (
         <Dialog open onClose={() => setOpen(null)} title={`${open.info.name} needs its API`} description={open.info.api}
-          footer={<><Button onClick={() => setOpen({ t: "add" })}>Back</Button><Link href={`/cx/settings/apps?brand=${brand}`} className="inline-flex h-8.5 items-center gap-1.5 rounded-md bg-brand px-3.5 text-[13px] font-medium text-white hover:bg-brand-hover">All Apps<ExternalLink className="h-3.5 w-3.5" /></Link></>}>
+          footerStart={<Button variant="ghost" onClick={() => setOpen({ t: "add" })}>Back</Button>}
+          footer={<ButtonLink variant="primary" href={`/cx/settings/apps?brand=${brand}`}>All Apps<ExternalLink className="h-3.5 w-3.5" /></ButtonLink>}>
           <div className="space-y-3 text-[13px]">
             <Callout tone={open.info.configured ? "info" : "warning"} title={open.info.configured ? "Server keys are set" : "Not available yet"}>
               {open.info.configured ? "The keys are configured, but inbox ingestion for this network isn't built yet. Its posts and analytics are available where the Publishing and Social analytics modules support it." : "Ask your administrator to add these server variables, then come back to connect the profile."}
@@ -205,14 +208,13 @@ export function ProfilesClient({ brand, origin, env, profiles, connectors, apiIn
         </Dialog>
       )}
       {open?.t === "color" && (
-        <ColorDialog open title={`Color for ${open.profile.name}`} value={open.profile.color} busy={busy === "color"} onClose={() => setOpen(null)}
-          onSave={async (c) => { await run("color", profileColorAction(brand, open.profile.id, c), () => "Color saved."); setOpen(null); }} />
+        <ColorDialog open title={`Color for ${open.profile.name}`} value={open.profile.color} busy={busy === "color"} error={error} onClose={() => setOpen(null)}
+          onSave={async (c) => { if (await runOk(run, "color", profileColorAction(brand, open.profile.id, c), () => "Color saved.")) setOpen(null); }} />
       )}
       {open?.t === "delete" && (
-        <Dialog open onClose={() => setOpen(null)} size="sm" title="Delete profile?" description="Existing tickets stay in the inbox; new messages from this profile stop arriving. Clusters drop it."
-          footer={<><Button onClick={() => setOpen(null)}>Cancel</Button><Button variant="danger" loading={busy === "del"} onClick={async () => { await run("del", deleteChannelAction(brand, open.profile.id), () => `${open.profile.name} deleted.`); setOpen(null); }}>Delete</Button></>}>
-          <p className="text-[13px] text-text-2">{open.profile.name}</p>
-        </Dialog>
+        <ConfirmDialog open onCancel={() => setOpen(null)} title={`Delete “${open.profile.name}”?`} busy={busy === "del"} error={error}
+          description="Existing tickets stay in the inbox, but new messages from this profile stop arriving. Clusters drop it."
+          onConfirm={async () => { if (await runOk(run, "del", deleteChannelAction(brand, open.profile.id), () => `${open.profile.name} deleted.`)) setOpen(null); }} />
       )}
     </div>
   );

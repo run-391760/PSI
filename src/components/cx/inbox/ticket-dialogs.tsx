@@ -72,8 +72,18 @@ export function PendingFiles({ uploads }: { uploads: Uploads }) {
 }
 export const fmtSize = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
-function Footer({ onClose, busy, label, onSubmit, disabled }: { onClose: () => void; busy: boolean; label: string; onSubmit: () => void; disabled?: boolean }) {
-  return <><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || disabled} onClick={onSubmit}>{busy ? "Saving…" : label}</Button></>;
+/** Cancel + primary. Without `onSubmit` the primary is a submit button for a Dialog that has its own onSubmit (Enter submits). */
+function Footer({ onClose, busy, label, onSubmit, disabled }: { onClose: () => void; busy: boolean; label: string; onSubmit?: () => void; disabled?: boolean }) {
+  return (
+    <>
+      <Button variant="ghost" onClick={onClose}>Cancel</Button>
+      {onSubmit ? (
+        <Button variant="primary" loading={busy} disabled={busy || disabled} onClick={onSubmit}>{label}</Button>
+      ) : (
+        <Button type="submit" variant="primary" loading={busy} disabled={busy || disabled}>{label}</Button>
+      )}
+    </>
+  );
 }
 function useSubmit(onDone: () => void) {
   const router = useRouter();
@@ -101,11 +111,10 @@ export function ReminderDialog({ brand, ticketId, agents, me, existing, onClose 
   const s = useSubmit(onClose);
   const presets = [["In 30 min", 30], ["In 1 hour", 60], ["In 4 hours", 240], ["Tomorrow 9:00", -1]] as const;
   return (
-    <Dialog open onClose={onClose} title={existing ? "Edit reminder" : "Set reminder"} description={`A pop-up and a notification reach everyone selected at that time (at least ${REMINDER_MIN_MINUTES} minutes from now). Reminders are logged in the ticket activity.`}
-      footer={<>
-        {existing && <Button variant="danger" className="mr-auto" onClick={() => s.submit(deleteReminderAction(brand, existing.id))}><Trash className="h-3.5 w-3.5" />Delete</Button>}
-        <Footer onClose={onClose} busy={s.busy} label={existing ? "Save reminder" : "Set reminder"} disabled={!users.size} onSubmit={() => s.submit(saveReminderAction(brand, { id: existing?.id, ticketId, remindAt: new Date(at).toISOString(), note, userIds: [...users] }))} />
-      </>}>
+    <Dialog open onClose={onClose} title={existing ? "Edit reminder" : "Set reminder"} description={`A pop-up and a notification reach everyone selected at that time (at least ${REMINDER_MIN_MINUTES} minutes from now).`}
+      error={s.error}
+      footerStart={existing && <Button variant="ghost" className="text-critical-ink" disabled={s.busy} onClick={() => s.submit(deleteReminderAction(brand, existing.id))}><Trash className="h-3.5 w-3.5" />Delete</Button>}
+      footer={<Footer onClose={onClose} busy={s.busy} label={existing ? "Save reminder" : "Set reminder"} disabled={!users.size} onSubmit={() => s.submit(saveReminderAction(brand, { id: existing?.id, ticketId, remindAt: new Date(at).toISOString(), note, userIds: [...users] }))} />}>
       <div className="space-y-3">
         <div className="flex flex-wrap gap-1.5">
           {presets.map(([l, m]) => (
@@ -115,7 +124,7 @@ export function ReminderDialog({ brand, ticketId, agents, me, existing, onClose 
             }}>{l}</button>
           ))}
         </div>
-        <Field label="Remind at" htmlFor="rm-at"><Input id="rm-at" type="datetime-local" value={at} min={localInput(new Date(Date.now() + REMINDER_MIN_MINUTES * 60_000))} onChange={(e) => setAt(e.target.value)} /></Field>
+        <Field label="Remind at" htmlFor="rm-at" hint="Reminders are logged in the ticket activity."><Input id="rm-at" type="datetime-local" value={at} min={localInput(new Date(Date.now() + REMINDER_MIN_MINUTES * 60_000))} onChange={(e) => setAt(e.target.value)} /></Field>
         <Field label="Note" htmlFor="rm-note"><Textarea id="rm-note" rows={2} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Call back about the refund" /></Field>
         <div>
           <div className="mb-1 text-[13px] font-medium text-text">Remind</div>
@@ -128,7 +137,6 @@ export function ReminderDialog({ brand, ticketId, agents, me, existing, onClose 
             ))}
           </div>
         </div>
-        {s.error && <Callout tone="critical">{s.error}</Callout>}
       </div>
     </Dialog>
   );
@@ -158,7 +166,7 @@ export function EmailDialog({ brand, kind, detail, suggestions, settings, hasEma
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
   const k = KIND_TEXT[kind];
   return (
-    <Dialog open onClose={onClose} size="lg" title={k.title} description={k.desc}
+    <Dialog open onClose={onClose} size="lg" title={k.title} description={k.desc} error={s.error}
       footer={<Footer onClose={onClose} busy={s.busy} label={k.send} disabled={!hasEmail || !all[0].valid.length || invalid.length > 0 || blocked.length > 0 || uploads.busy}
         onSubmit={() => s.submit(sendEmailAction(brand, t.id, { kind, ...f, attachmentIds: uploads.ids, originalAttachmentIds: [...keep], includeHistory: kind === "forward" && history, includeSignature: sig }).then((r) => (r.ok && r.data.status === "failed" ? { ok: false as const, error: `Not sent: ${r.data.error}` } : r)))} />}>
       <div className="space-y-3">
@@ -196,7 +204,6 @@ export function EmailDialog({ brand, kind, detail, suggestions, settings, hasEma
           </label>
         </div>
         <PendingFiles uploads={uploads} />
-        {s.error && <Callout tone="critical">{s.error}</Callout>}
       </div>
     </Dialog>
   );
@@ -211,6 +218,7 @@ export function AssignDialog({ brand, detail, agents, me, onClose }: { brand: st
   const s = useSubmit(onClose);
   return (
     <Dialog open onClose={onClose} title={`Assign #${detail.ticket.number}`} description="Hand the ticket over with context. The note and files are added to the private messages and the assignee is notified."
+      error={s.error}
       footer={<Footer onClose={onClose} busy={s.busy} label="Assign" disabled={uploads.busy} onSubmit={() => s.submit(assignAction(brand, detail.ticket.id, { assigneeId: assignee || null, note, attachmentIds: uploads.ids }))} />}>
       <div className="space-y-3">
         <Field label="Assign to" htmlFor="as-a">
@@ -222,7 +230,6 @@ export function AssignDialog({ brand, detail, agents, me, onClose }: { brand: st
         <Field label="Note (optional)" htmlFor="as-n"><Textarea id="as-n" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should they know?" /></Field>
         <div className="flex items-center gap-2"><AttachButton uploads={uploads} label="Attach media" className="border border-border" /></div>
         <PendingFiles uploads={uploads} />
-        {s.error && <Callout tone="critical">{s.error}</Callout>}
       </div>
     </Dialog>
   );
@@ -235,15 +242,18 @@ export function ChildDialog({ brand, detail, agents, onClose, onCreated }: { bra
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <Dialog open onClose={onClose} title={`New child ticket of #${detail.ticket.number}`} description="Split work into child tickets (same customer and channel). The parent stays open until every child is closed; notes of the family show together."
-      footer={<Footer onClose={onClose} busy={busy} label="Create child ticket" disabled={!f.subject.trim()} onSubmit={async () => {
+    <Dialog open onClose={onClose} title={`New child ticket of #${detail.ticket.number}`} description="Same customer and channel as the parent." error={error}
+      onSubmit={async () => {
+        if (busy || !f.subject.trim()) return;
         setBusy(true); setError(null);
         const r = await createChildAction(brand, detail.ticket.id, { ...f, assigneeId: f.assigneeId || null });
         setBusy(false);
         if (r.ok) onCreated(r.data.id); else setError(r.error);
-      }} />}>
+      }}
+      footer={<Footer onClose={onClose} busy={busy} label="Create child ticket" disabled={!f.subject.trim()} />}>
       <div className="space-y-3">
-        <Field label="Subject" htmlFor="ch-s"><Input id="ch-s" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></Field>
+        <p className="text-[12.5px] text-text-2">The parent stays open until every child is closed; notes of the family show together.</p>
+        <Field label="Subject" htmlFor="ch-s"><Input id="ch-s" autoFocus value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></Field>
         <Field label="Internal note" htmlFor="ch-b"><Textarea id="ch-b" rows={3} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} placeholder="What needs to happen in this child ticket?" /></Field>
         <Field label="Assignee" htmlFor="ch-a">
           <Select id="ch-a" value={f.assigneeId} onChange={(e) => setF({ ...f, assigneeId: e.target.value })}>
@@ -251,7 +261,6 @@ export function ChildDialog({ brand, detail, agents, onClose, onCreated }: { bra
             {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Select>
         </Field>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );
@@ -260,11 +269,13 @@ export function ParentDialog({ brand, detail, onClose }: { brand: string; detail
   const [n, setN] = useState("");
   const s = useSubmit(onClose);
   const num = Number(n.replace(/^#/, ""));
+  const valid = Number.isInteger(num) && num > 0;
   return (
     <Dialog open onClose={onClose} size="sm" title="Link to a parent ticket" description="This ticket becomes a child; the parent can't be resolved until its children are closed."
-      footer={<Footer onClose={onClose} busy={s.busy} label="Link" disabled={!Number.isInteger(num) || num <= 0} onSubmit={() => s.submit(linkParentAction(brand, detail.ticket.id, num))} />}>
-      <Field label="Parent ticket number" htmlFor="pa-n"><Input id="pa-n" value={n} onChange={(e) => setN(e.target.value)} placeholder="#123" inputMode="numeric" /></Field>
-      {s.error && <Callout tone="critical" className="mt-3">{s.error}</Callout>}
+      error={s.error}
+      onSubmit={() => valid && !s.busy && s.submit(linkParentAction(brand, detail.ticket.id, num))}
+      footer={<Footer onClose={onClose} busy={s.busy} label="Link" disabled={!valid} />}>
+      <Field label="Parent ticket number" htmlFor="pa-n"><Input id="pa-n" autoFocus value={n} onChange={(e) => setN(e.target.value)} placeholder="#123" inputMode="numeric" /></Field>
     </Dialog>
   );
 }
@@ -287,7 +298,7 @@ export function SettingsDialog({ brand, canAdmin, settings, signature, onClose }
     </label>
   );
   return (
-    <Dialog open onClose={onClose} size="lg" title="Inbox settings" description="Your workspace preferences apply to you only; ticket settings apply to everyone on this brand.">
+    <Dialog open onClose={onClose} size="lg" title="Inbox settings" description="Your workspace preferences apply to you only; ticket settings apply to everyone on this brand." error={s.error} initialFocus="none">
       <Tabs variant="pill" tabs={[
         {
           id: "view", label: "My workspace", content: (
@@ -320,7 +331,7 @@ export function SettingsDialog({ brand, canAdmin, settings, signature, onClose }
               <PendingFiles uploads={uploads} />
               <div className="flex items-center justify-end gap-2">
                 {saved === "sig" && <span className="text-[12.5px] text-good-ink">Saved</span>}
-                <Button variant="primary" size="sm" disabled={s.busy || uploads.busy} onClick={async () => { setSaved(null); if (await s.submit(saveSignatureAction(brand, { body: sig.body, enabled: sig.enabled, imageFileId: img?.id ?? sig.imageFileId }))) setSaved("sig"); }}>Save signature</Button>
+                <Button variant="primary" size="sm" loading={s.busy} disabled={uploads.busy} onClick={async () => { setSaved(null); if (await s.submit(saveSignatureAction(brand, { body: sig.body, enabled: sig.enabled, imageFileId: img?.id ?? sig.imageFileId }))) setSaved("sig"); }}>Save signature</Button>
               </div>
             </div>
           ),
@@ -339,13 +350,12 @@ export function SettingsDialog({ brand, canAdmin, settings, signature, onClose }
               </div>
               <div className="flex items-center justify-end gap-2 pt-2">
                 {saved === "ticket" && <span className="text-[12.5px] text-good-ink">Saved</span>}
-                <Button variant="primary" size="sm" disabled={!canAdmin || s.busy} onClick={async () => { setSaved(null); if (await s.submit(saveSettingsAction(brand, { ...st, allowedEmailDomains: domains.split(/[\s,;]+/).filter(Boolean) }))) setSaved("ticket"); }}>Save ticket settings</Button>
+                <Button variant="primary" size="sm" loading={s.busy} disabled={s.busy || !canAdmin} onClick={async () => { setSaved(null); if (await s.submit(saveSettingsAction(brand, { ...st, allowedEmailDomains: domains.split(/[\s,;]+/).filter(Boolean) }))) setSaved("ticket"); }}>Save ticket settings</Button>
               </div>
             </div>
           ),
         },
       ]} />
-      {s.error && <Callout tone="critical" className="mt-3">{s.error}</Callout>}
     </Dialog>
   );
 }

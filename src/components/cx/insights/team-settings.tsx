@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { deleteTeamAction, inviteMemberAction, removeMemberAction, saveHoursAction, saveSlaAction, saveTeamAction, updateMemberAction } from "@/app/(app)/cx/settings/team/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
@@ -42,7 +43,8 @@ function useRun() {
 }
 
 export function MembersPanel({ brand, members, teams }: { brand: string; members: Member[]; teams: Team[] }) {
-  const { pending, error, run } = useRun();
+  const { pending, error, run, setError } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("agent");
@@ -53,13 +55,13 @@ export function MembersPanel({ brand, members, teams }: { brand: string; members
         title={`Members (${members.length})`}
         description="Invite existing SynapseSEO users by email and give them a role. Agents can be assigned tickets and appear in reports."
         actions={
-          <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
+          <Button variant="primary" size="sm" onClick={() => { setError(null); setOpen(true); }}>
             <UserPlus className="h-3.5 w-3.5" /> Invite
           </Button>
         }
       />
       <CardBody className="pt-1">
-        {error && <Callout tone="critical" className="mb-3">{error}</Callout>}
+        {error && !open && <Callout tone="critical" className="mb-3">{error}</Callout>}
         <div className="scroll-thin overflow-x-auto">
           <table className="w-full min-w-[560px] text-[13px]">
             <thead>
@@ -100,7 +102,7 @@ export function MembersPanel({ brand, members, teams }: { brand: string; members
                   <td className="py-2 pr-3 text-text-2">{dateLabel(m.created_at)}</td>
                   <td className="py-2 text-right">
                     {!m.owner && (
-                      <Button variant="ghost" size="icon" aria-label={`Remove ${m.email}`} disabled={pending} onClick={() => confirm(`Remove ${m.email} from this brand?`) && run(() => removeMemberAction(brand, m.user_id))}>
+                      <Button variant="ghost" size="icon" aria-label={`Remove ${m.email}`} disabled={pending} onClick={async () => (await confirm({ title: `Remove ${m.email} from this brand?`, description: "They lose access to this brand's CX workspace.", confirmLabel: "Remove" })) && run(() => removeMemberAction(brand, m.user_id))}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
@@ -125,17 +127,18 @@ export function MembersPanel({ brand, members, teams }: { brand: string; members
         onClose={() => setOpen(false)}
         title="Invite a team member"
         description="They need a SynapseSEO account already; invitations use the email they signed up with."
+        error={error}
+        onSubmit={() => email.trim() && !pending && run(() => inviteMemberAction(brand, email, role, team || null), () => { setOpen(false); setEmail(""); })}
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" loading={pending} disabled={!email.trim()} onClick={() => run(() => inviteMemberAction(brand, email, role, team || null), () => { setOpen(false); setEmail(""); })}>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !email.trim()}>
               Invite
             </Button>
           </>
         }
       >
         <div className="space-y-3">
-          {error && <Callout tone="critical">{error}</Callout>}
           <Field label="Email" htmlFor="invite-email">
             <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="agent@company.com" autoFocus />
           </Field>
@@ -158,12 +161,14 @@ export function MembersPanel({ brand, members, teams }: { brand: string; members
           </div>
         </div>
       </Dialog>
+      {confirmDialog}
     </Card>
   );
 }
 
 export function TeamsPanel({ brand, teams }: { brand: string; teams: Team[] }) {
-  const { pending, error, run } = useRun();
+  const { pending, error, run, setError } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<{ id?: string; name: string; description: string } | null>(null);
   return (
     <Card>
@@ -171,7 +176,7 @@ export function TeamsPanel({ brand, teams }: { brand: string; teams: Team[] }) {
         title={`Teams (${teams.length})`}
         description="Group agents (e.g. Billing, Tier 2, Social). Tickets can be routed to a team."
         actions={
-          <Button variant="primary" size="sm" onClick={() => setEdit({ name: "", description: "" })}>
+          <Button variant="primary" size="sm" onClick={() => { setError(null); setEdit({ name: "", description: "" }); }}>
             <Plus className="h-3.5 w-3.5" /> New team
           </Button>
         }
@@ -189,8 +194,8 @@ export function TeamsPanel({ brand, teams }: { brand: string; teams: Team[] }) {
                   <div className="truncate text-[12px] text-text-3">{t.description || "No description"} · {t.members} member{t.members === 1 ? "" : "s"}</div>
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <Button size="sm" onClick={() => setEdit({ id: t.id, name: t.name, description: t.description })}>Edit</Button>
-                  <Button variant="ghost" size="icon" aria-label={`Delete ${t.name}`} disabled={pending} onClick={() => confirm(`Delete team ${t.name}? Members stay in the brand.`) && run(() => deleteTeamAction(brand, t.id))}>
+                  <Button size="sm" onClick={() => { setError(null); setEdit({ id: t.id, name: t.name, description: t.description }); }}>Edit</Button>
+                  <Button variant="ghost" size="icon" aria-label={`Delete ${t.name}`} disabled={pending} onClick={async () => (await confirm({ title: `Delete the team “${t.name}”?`, description: "Its members stay in the brand." })) && run(() => deleteTeamAction(brand, t.id))}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
@@ -204,16 +209,17 @@ export function TeamsPanel({ brand, teams }: { brand: string; teams: Team[] }) {
         onClose={() => setEdit(null)}
         title={edit?.id ? "Edit team" : "New team"}
         size="sm"
+        error={error}
+        onSubmit={() => edit && !pending && run(() => saveTeamAction(brand, edit), () => setEdit(null))}
         footer={
           <>
-            <Button onClick={() => setEdit(null)}>Cancel</Button>
-            <Button variant="primary" loading={pending} onClick={() => edit && run(() => saveTeamAction(brand, edit), () => setEdit(null))}>Save</Button>
+            <Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={pending}>Save</Button>
           </>
         }
       >
         {edit && (
           <div className="space-y-3">
-            {error && <Callout tone="critical">{error}</Callout>}
             <Field label="Name" htmlFor="team-name">
               <Input id="team-name" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus />
             </Field>
@@ -223,6 +229,7 @@ export function TeamsPanel({ brand, teams }: { brand: string; teams: Team[] }) {
           </div>
         )}
       </Dialog>
+      {confirmDialog}
     </Card>
   );
 }

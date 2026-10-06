@@ -294,7 +294,7 @@ export default async function KeywordOverviewPage({ searchParams }: PageProps<"/
           title="SERP analysis"
           description={`Google top ${o.serp.length} for “${keyword}” in ${info.name}${projectDomains.length ? " · your project domains are included in the ranking" : ""}`}
           actions={
-            <ButtonLink size="sm" variant="ghost" href={`/seo-content-template?q=${encodeURIComponent(keyword)}&db=${db}`}>
+            <ButtonLink size="sm" variant="ghost" href={`/optimizer/content-planning?q=${encodeURIComponent(keyword)}&db=${db}`}>
               Content brief <ArrowRight className="h-3.5 w-3.5" />
             </ButtonLink>
           }
@@ -489,7 +489,7 @@ function TextOverview({ o, perf }: { o: KeywordOverview; perf: Awaited<ReturnTyp
         shows={[`The live Google top 20 for “${keyword}” in ${info.name}`, "Whether your project domains rank there", "SERP features present on the results page"]}
       >
         <p className="mt-2 text-[12.5px] text-text-2">
-          Meanwhile, <Link href={`/seo-content-template?q=${encodeURIComponent(keyword)}&db=${db}`} className="text-link hover:underline">create a content brief</Link> or{" "}
+          Meanwhile, <Link href={`/optimizer/content-planning?q=${encodeURIComponent(keyword)}&db=${db}`} className="text-link hover:underline">create a content brief</Link> or{" "}
           <a href={`https://www.google.com/search?q=${encodeURIComponent(keyword)}`} target="_blank" rel="noopener noreferrer" className="text-link hover:underline">open the results on Google</a>.
         </p>
       </NeedsData>

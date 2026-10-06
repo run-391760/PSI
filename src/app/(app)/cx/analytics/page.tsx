@@ -1,4 +1,4 @@
-import { ExternalLink, Plug } from "lucide-react";
+import { ExternalLink, Plug, Star } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
@@ -25,6 +25,8 @@ import { Heatmap } from "@/components/cx/listening/viz";
 import { NeedsData } from "@/components/seo/needs-data";
 import { formulaText } from "@/lib/cx/listening/social";
 import { contentTags, ga4Audience, getFormula, prevClickSeries, scorePosts, suggestionInputs } from "@/lib/cx/listening/social-data";
+import { getLiveReviews } from "@/lib/local/live";
+import { liveEnabled } from "@/lib/providers/source";
 
 export const metadata: Metadata = { title: "Social analytics" };
 
@@ -42,6 +44,10 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const formula = await getFormula(brand.id);
   const scored = scorePosts(insights, formula);
   const [sugg, prevClicks, tags, ga4] = await Promise.all([suggestionInputs(brand.id, scored), prevClickSeries(brand.id, days), contentTags(brand.id, days, scored), ga4Audience(brand.owner_id, brand.id, days)]);
+  // Google reviews come from DataForSEO (SEO Local reviews, also ingested by brand listening topics).
+  const reviewsLive = liveEnabled();
+  const gReviews = reviewsLive ? await getLiveReviews(brand.id).catch(() => null) : null;
+  const newReviews = gReviews ? gReviews.reviews.filter((r) => Date.parse(r.date) >= Date.now() - days * 86_400_000).length : 0;
   const clickSeries = clicks.series.map((d, i) => ({ ...d, prev_clicks: prevClicks[i] ?? 0 }));
   const hh = (x: number) => `${String(x).padStart(2, "0")}:00`;
   const topPosts = [...scored].filter((p) => (formula.denominator === "none" ? p.engagements : p.rate) != null).sort((a, b) => ((formula.denominator === "none" ? b.engagements : b.rate) ?? 0) - ((formula.denominator === "none" ? a.engagements : a.rate) ?? 0)).slice(0, 8);
@@ -230,7 +236,30 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         ))}
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <NeedsData compact providers={["business-profile"]} title="Connect Google Business Profile for location insights" shows={["Star breakdown, new reviews and average rating per location", "Direction requests, website and call clicks", "Location filter"]} />
+        {reviewsLive ? (
+          <Card className="p-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-ink"><Star className="h-4 w-4" /></span>
+              <div className="min-w-0 text-[13px]">
+                <h3 className="text-[14px] font-semibold">Google reviews</h3>
+                {gReviews ? (
+                  <p className="mt-1 text-text-2">
+                    {gReviews.rating == null ? "No average rating" : `${gReviews.rating.toFixed(1)} average`} · {n(gReviews.total)} reviews · {newReviews.toLocaleString("en-US")} new in {days}D · DataForSEO {timeAgo(gReviews.fetchedAt)}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-text-2">Not fetched yet. Add Google reviews to a brand listening topic (it needs the Local SEO business profile); reviews are refreshed at most daily.</p>
+                )}
+                <p className="mt-1 text-text-3">Direction requests, website and call clicks need the Business Profile API.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link href={`/cx/listening?brand=${brand.id}&source=google-reviews`} className={buttonClass("secondary", "sm")}>Reviews in listening</Link>
+                  <Link href={`/local/reviews?project=${brand.id}`} className={buttonClass("ghost", "sm")}>Local SEO reviews</Link>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ) : (
+          <NeedsData compact providers={["business-profile"]} title="Connect Google Business Profile for location insights" shows={["Star breakdown, new reviews and average rating per location", "Direction requests, website and call clicks", "Location filter"]} />
+        )}
         <Card className="p-4">
           <div className="flex items-start gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-ink"><Plug className="h-4 w-4" /></span>

@@ -70,7 +70,7 @@ function IdeaRow({ idea, fav, subtopic, db }: { idea: TopicIdea; fav: Fav; subto
         {idea.kind === "related" ? <KeywordLink keyword={idea.text} db={db} /> : <span className="text-text">{idea.text}</span>}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-text-3">
           {idea.domain && (
-            <Link href={`/domain-overview?q=${encodeURIComponent(idea.domain)}&db=${db}`} className="inline-flex items-center gap-1 hover:text-link">
+            <Link prefetch={false} href={`/domain-overview?q=${encodeURIComponent(idea.domain)}&db=${db}`} className="inline-flex items-center gap-1 hover:text-link">
               <DomainAvatar domain={idea.domain} size={13} /> {idea.domain}
             </Link>
           )}
@@ -292,7 +292,7 @@ export function FavoritesTable({ favorites }: { favorites: Favorite[] }) {
   const columns: Column<Favorite>[] = [
     { key: "text", header: "Idea", render: (f) => <span className="text-text">{f.text}</span> },
     { key: "kind", header: "Type", render: (f) => <Badge>{f.kind[0].toUpperCase() + f.kind.slice(1)}</Badge> },
-    { key: "topic", header: "Topic", render: (f) => <Link href={`/topic-research?q=${encodeURIComponent(f.topic)}&db=${f.db}`} className="text-link hover:underline">{f.topic}</Link> },
+    { key: "topic", header: "Topic", render: (f) => <Link prefetch={false} href={`/topic-research?q=${encodeURIComponent(f.topic)}&db=${f.db}`} className="text-link hover:underline">{f.topic}</Link> },
     { key: "subtopic", header: "Subtopic" },
     { key: "db", header: "DB" },
     { key: "createdAt", header: "Saved", align: "right", render: (f) => <span className="text-[12px] whitespace-nowrap text-text-3">{dateLabel(f.createdAt)}</span>, csv: (f) => f.createdAt.slice(0, 10) },

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import type { AuditRow } from "@/lib/cx/admin/audit";
 import { ACTION_PERMS, BUILT_IN, PAGE_PERMS } from "@/lib/cx/admin/pure/permissions";
 import { csvLine } from "@/lib/cx/admin/pure/fields";
 import type { CustomRole } from "@/lib/cx/admin/roles";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, FileButton, When, downloadText, useRun } from "../_admin/ui";
 import { assignRoleAction, deleteRoleAction, importUsersAction, saveRoleAction, saveSecurityAction } from "./actions";
 
@@ -20,14 +22,17 @@ type RoleEdit = { id?: string; name: string; description: string; pages: string[
 const BASES = ["supervisor", "agent", "viewer"] as const;
 
 export function RolesPanel({ brand, roles }: { brand: string; roles: CustomRole[] }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<RoleEdit | null>(null);
+  const open = (r: RoleEdit) => { setError(null); setEdit(r); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveRoleAction(brand, edit), () => `${edit.name || "Role"} saved.`))) setEdit(null); };
   const groups = useMemo(() => [...new Set(ACTION_PERMS.map((a) => a.group))], []);
   const toggle = (list: string[], k: string, on: boolean) => (on ? [...new Set([...list, k])] : list.filter((x) => x !== k));
   return (
     <Card>
       <CardHeader title="Custom roles" description="A custom role replaces the built-in role's permissions for the members it's given to. Owners always keep full access."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit({ name: "", description: "", pages: [...BUILT_IN.agent.pages], actions: [...BUILT_IN.agent.actions] })}><Plus className="h-3.5 w-3.5" />New role</Button>} />
+        actions={<Button size="sm" variant="primary" onClick={() => open({ name: "", description: "", pages: [...BUILT_IN.agent.pages], actions: [...BUILT_IN.agent.actions] })}><Plus className="h-3.5 w-3.5" />New role</Button>} />
       <CardBody>
         {messages}
         {roles.length ? (
@@ -39,15 +44,16 @@ export function RolesPanel({ brand, roles }: { brand: string; roles: CustomRole[
                   {r.description && <p className="text-[12px] text-text-2">{r.description}</p>}
                   <p className="text-[12px] text-text-3">{r.pages.length} pages · {r.actions.length} actions</p>
                 </div>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${r.name}`} onClick={() => setEdit({ id: r.id, name: r.name, description: r.description, pages: r.pages, actions: r.actions })}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${r.name}`} onClick={() => confirm(`Delete "${r.name}"? Its members fall back to their built-in role.`) && run("d", deleteRoleAction(brand, r.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${r.name}`} onClick={() => open({ id: r.id, name: r.name, description: r.description, pages: r.pages, actions: r.actions })}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${r.name}`} onClick={async () => { if (await confirm({ title: `Delete “${r.name}”?`, description: `Its ${r.members} member${r.members === 1 ? "" : "s"} fall back to their built-in role.` })) run("d", deleteRoleAction(brand, r.id), () => `${r.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
               </li>
             ))}
           </ul>
         ) : <EmptyState icon={<ShieldCheck className="h-5 w-5" />} title="Only built-in roles" description="Admin, Supervisor, Agent and Viewer cover most teams. Create a custom role to fine-tune which pages and actions a group can use." />}
       </CardBody>
-      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New role"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveRoleAction(brand, edit)))) setEdit(null); }}>Save role</Button></>}>
+      {confirmDialog}
+      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New role"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save role</Button></>}>
         {edit && (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">

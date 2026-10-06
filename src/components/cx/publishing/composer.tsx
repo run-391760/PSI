@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { commentAction, deletePublishedAction, markManualAction, savePostAction, suggestCaptionsAction, transitionAction } from "@/app/(app)/cx/publishing/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -98,6 +99,7 @@ export function Composer(props: ComposerProps) {
   const { brandId, post } = props;
   const router = useRouter();
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [title, setTitle] = useState(post?.title ?? "");
@@ -329,7 +331,7 @@ export function Composer(props: ComposerProps) {
             />
             {(!props.ai || !props.imageAi) && (
               <p className="text-[12px] text-text-3">
-                {!props.ai ? "AI captions and prompt-based writing: connect an AI key (ANTHROPIC_API_KEY or OPENAI_API_KEY) on the server. " : ""}
+                {!props.ai ? "AI captions and prompt-based writing: connect an AI key (Anthropic, OpenAI or Gemini) on the server. " : ""}
                 {!props.imageAi ? "AI image generation: set OPENAI_API_KEY (image API) on the server." : ""}
               </p>
             )}
@@ -467,7 +469,7 @@ export function Composer(props: ComposerProps) {
                   <Button variant="primary" disabled={pending || !channels.length || hasProblems || !when} title={!when ? "Pick a date and time" : undefined} onClick={() => save((id) => transitionAction(brandId, id, "schedule", "", new Date(when).toISOString()), "Scheduled.")}>
                     Schedule
                   </Button>
-                  <Button disabled={pending || !channels.length || hasProblems} onClick={() => confirm("Publish to the selected channels now?") && save((id) => transitionAction(brandId, id, "publish_now", ""), "Publishing now — results appear in a minute.")}>
+                  <Button disabled={pending || !channels.length || hasProblems} onClick={async () => (await confirm({ title: "Publish now?", description: `The post goes out to ${channels.length === 1 ? "the selected channel" : `the ${channels.length} selected channels`} immediately.`, tone: "primary", confirmLabel: "Publish now" })) && save((id) => transitionAction(brandId, id, "publish_now", ""), "Publishing now — results appear in a minute.")}>
                     Publish now
                   </Button>
                 </>
@@ -538,6 +540,7 @@ export function Composer(props: ComposerProps) {
         />
       </div>
 
+      {confirmDialog}
       <Dialog open={pickOpen} onClose={() => setPickOpen(false)} title="Asset library" description={props.requireAssetApproval ? "Pick media in order. This brand only allows approved assets." : "Pick images, videos or a PDF (in order)."} size="xl" footer={<Button variant="primary" onClick={() => setPickOpen(false)}>Done</Button>}>
         {props.assets.length ? (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
@@ -546,7 +549,7 @@ export function Composer(props: ComposerProps) {
               const blocked = props.requireAssetApproval && a.approval !== "approved" && i < 0;
               const k = kindOf(a.mime);
               return (
-                <button key={a.id} type="button" disabled={blocked} onClick={() => setMedia(i >= 0 ? media.filter((m) => m !== a.id) : [...media, a.id])} className={cn("relative aspect-square overflow-hidden rounded-md border-2 bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40", i >= 0 ? "border-brand" : "border-transparent")} title={blocked ? `${a.filename} — not approved` : a.filename}>
+                <button key={a.id} type="button" disabled={blocked} aria-pressed={i >= 0} onClick={() => setMedia(i >= 0 ? media.filter((m) => m !== a.id) : [...media, a.id])} className={cn("relative aspect-square overflow-hidden rounded-md border-2 bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40", i >= 0 ? "border-brand" : "border-transparent")} title={blocked ? `${a.filename} — not approved` : a.filename}>
                   {k === "video" ? <video src={assetUrl(a.id)} className="h-full w-full object-cover" muted preload="metadata" /> : k === "document" ? <DocTile name={a.filename} /> : <img src={assetUrl(a.id)} alt={a.filename} loading="lazy" className="h-full w-full object-cover" />}
                   {i >= 0 && <span className="absolute top-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-brand text-[11px] font-semibold text-white">{i + 1}</span>}
                   {a.approval !== "none" && <span className={cn("absolute right-1 bottom-1 rounded px-1 text-[10px] font-medium", a.approval === "approved" ? "bg-good-soft text-good-ink" : a.approval === "rejected" ? "bg-critical-soft text-critical-ink" : "bg-warning-soft text-warning-ink")}>{a.approval}</span>}
@@ -570,6 +573,7 @@ function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn, deletabl
   const [url, setUrl] = useState("");
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const tone = !r ? "neutral" : r.status === "published" || r.status === "manual" ? "good" : r.status === "failed" ? "critical" : "warning";
   const label = !r ? (conn?.connected ? "Will publish automatically" : "Channel not connected") : r.status === "manual" ? "Published manually" : r.status === "not_connected" ? "Not published" : r.status === "published" ? "Published" : r.status === "deleted" ? "Deleted" : "Failed";
   const done = r && ["published", "manual", "deleted"].includes(r.status);
@@ -591,8 +595,8 @@ function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn, deletabl
           type="button"
           disabled={pending}
           className="mt-1 ml-3 inline-flex items-center gap-1 text-[12px] text-critical-ink hover:underline"
-          onClick={() =>
-            confirm(`Delete this post from ${kind === "gbp" ? "Business Profile" : kind}? This cannot be undone.`) &&
+          onClick={async () =>
+            (await confirm({ title: `Delete this post from ${kind === "gbp" ? "Business Profile" : (pubChannel(kind)?.name ?? kind)}?`, description: "It is removed from the network. This cannot be undone." })) &&
             start(async () => {
               const res = await deletePublishedAction(brandId, postId, kind);
               if (!res.ok) setError(res.error);
@@ -618,6 +622,7 @@ function ResultRow({ brandId, postId, kind, r, status, canAuthor, conn, deletabl
           </button>
         )
       )}
+      {confirmDialog}
     </div>
   );
 }
@@ -663,34 +668,41 @@ function AiSuggest({ brandId, text, channel, onUse, disabled }: { brandId: strin
   const [items, setItems] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const suggest = () =>
+    !pending &&
+    start(async () => {
+      const r = await suggestCaptionsAction(brandId, { text, channel, brief });
+      if (!r.ok) return setError(r.error);
+      setError(null);
+      if (r.data === null) setError("No AI key is configured on the server.");
+      else setItems(r.data);
+    });
   return (
     <>
       <Button size="sm" disabled={disabled} onClick={() => setOpen(true)}>
         <Sparkles className="h-3.5 w-3.5" /> Suggest captions
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title={`Caption ideas for ${pubChannel(channel)?.name ?? channel}`} description="Generated from your draft; review before using." size="lg">
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Caption ideas for ${pubChannel(channel)?.name ?? channel}`}
+        description="Generated from your draft; review before using."
+        size="lg"
+        error={error}
+        onSubmit={suggest}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={pending}>
+              <Sparkles className="h-3.5 w-3.5" /> {items ? "Suggest again" : "Suggest"}
+            </Button>
+          </>
+        }
+      >
         <div className="grid gap-3">
           <Field label="Brief (optional)" htmlFor="ai-brief">
-            <Input id="ai-brief" value={brief} onChange={(e) => setBrief(e.target.value)} placeholder="Audience, tone, call to action…" />
+            <Input id="ai-brief" autoFocus value={brief} onChange={(e) => setBrief(e.target.value)} placeholder="Audience, tone, call to action…" />
           </Field>
-          <div>
-            <Button
-              variant="primary"
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  const r = await suggestCaptionsAction(brandId, { text, channel, brief });
-                  if (!r.ok) return setError(r.error);
-                  setError(null);
-                  if (r.data === null) setError("No AI key is configured on the server.");
-                  else setItems(r.data);
-                })
-              }
-            >
-              {pending ? "Writing…" : "Suggest"}
-            </Button>
-          </div>
-          {error && <Callout tone="critical">{error}</Callout>}
           {items?.map((t, i) => (
             <div key={i} className="rounded-md border border-border p-3 text-[13px]">
               <p className="whitespace-pre-wrap">{t}</p>

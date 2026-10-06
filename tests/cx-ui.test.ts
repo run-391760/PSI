@@ -85,6 +85,47 @@ test("movePinned reorders pins; hiddenNavItems lists user- and default-hidden", 
   assert.deepEqual(p.hiddenNavItems(groups, { ...p.DEFAULT_NAV, hidden: ["/cx/contacts"] }).map((i) => i.href), ["/cx/contacts", "/cx/listening/ugc"]);
 });
 
+// prefs.nav is shared by the SEO and CX menus: one workspace's edits must leave the other's alone.
+const seoGroups = [
+  { id: "seo-top", label: "", items: [{ href: "/dashboard" }, { href: "/optimizer" }] },
+  { id: "seo-keywords", label: "Keywords", items: [{ href: "/keyword-overview" }, { href: "/topic-research", defaultHidden: true }] },
+];
+const seoOwn = (href: string) => seoGroups.some((g) => g.items.some((i) => i.href === href));
+
+test("movePinned with `within` skips the other workspace's pins", () => {
+  const nav = { ...p.DEFAULT_NAV, pinned: ["/dashboard", "/cx/inbox", "/optimizer"] };
+  assert.deepEqual(p.movePinned(nav, "/optimizer", -1, seoOwn).pinned, ["/optimizer", "/cx/inbox", "/dashboard"]);
+  assert.equal(p.movePinned(nav, "/dashboard", -1, seoOwn), nav);
+  assert.equal(p.movePinned(nav, "/optimizer", 1, seoOwn), nav);
+  // Without `within` the move is a plain neighbour swap.
+  assert.deepEqual(p.movePinned(nav, "/optimizer", -1).pinned, ["/dashboard", "/optimizer", "/cx/inbox"]);
+});
+
+test("scopeNav: scoped flag, own pins, and reset() keeps the other workspace's prefs", () => {
+  const nav = {
+    pinned: ["/dashboard", "/cx/inbox", "/optimizer"],
+    hidden: ["/keyword-overview", "/cx/contacts"],
+    shown: ["/topic-research", "/cx/listening/ugc"],
+    order: { "seo-keywords": ["/topic-research", "/keyword-overview"], inbox: ["/cx/contacts", "/cx/inbox"] },
+  };
+  const s = p.scopeNav(nav, seoGroups);
+  assert.equal(s.scoped, true);
+  assert.deepEqual(s.pinned, ["/dashboard", "/optimizer"]);
+  assert.deepEqual(s.reset(), { pinned: ["/cx/inbox"], hidden: ["/cx/contacts"], shown: ["/cx/listening/ugc"], order: { inbox: ["/cx/contacts", "/cx/inbox"] } });
+  // The CX scope resets its own half and keeps the SEO one.
+  assert.deepEqual(p.scopeNav(nav, groups).reset(), { pinned: ["/dashboard", "/optimizer"], hidden: ["/keyword-overview"], shown: ["/topic-research"], order: { "seo-keywords": ["/topic-research", "/keyword-overview"] } });
+});
+
+test("scopeNav: not scoped when only the other workspace is customised", () => {
+  const cxOnly = { pinned: ["/cx/inbox"], hidden: ["/cx/contacts"], shown: ["/cx/listening/ugc"], order: { inbox: ["/cx/contacts", "/cx/inbox"] } };
+  const s = p.scopeNav(cxOnly, seoGroups);
+  assert.equal(s.scoped, false);
+  assert.deepEqual(s.pinned, []);
+  assert.deepEqual(s.reset(), cxOnly);
+  assert.equal(p.scopeNav(p.DEFAULT_NAV, seoGroups).scoped, false);
+  assert.equal(p.scopeNav(cxOnly, groups).scoped, true);
+});
+
 test("activeHref picks the longest matching prefix", () => {
   assert.equal(p.activeHref("/cx/listening/ugc", ["/cx", "/cx/listening", "/cx/listening/ugc"]), "/cx/listening/ugc");
   assert.equal(p.activeHref("/cx/listening/reviews/x", ["/cx", "/cx/listening"]), "/cx/listening");

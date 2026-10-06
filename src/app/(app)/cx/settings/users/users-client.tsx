@@ -4,11 +4,12 @@ import { CheckCircle2, Clock, Copy, Pencil, Plus, RefreshCw, ShieldCheck, Trash2
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog, MenuItem } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
 import type { UserGroup, UserRow } from "@/lib/cx/admin/users";
-import { GearMenu, KAvatar, KButton, KDate, KSection } from "../_admin/k-ui";
+import { GearMenu, KAvatar, KButton, KDate, KSection, runOk } from "../_admin/k-ui";
 import { Field, FileButton, useRun } from "../_admin/ui";
 import { addExistingUsersAction, changeUserRoleAction, deleteUserGroupAction, inviteUserAction, removeUserAction, revokeInviteAction, saveUserGroupAction, uploadUsersAction } from "./actions";
 
@@ -29,7 +30,7 @@ function CopyLink({ value }: { value: string }) {
   return (
     <div className="flex items-center gap-2">
       <code className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] text-text">{value}</code>
-      <Button size="sm" onClick={() => navigator.clipboard?.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {})}><Copy className="h-3.5 w-3.5" />{done ? "Copied" : "Copy"}</Button>
+      <Button size="sm" onClick={() => navigator.clipboard?.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }).catch(() => {})}><Copy className="h-3.5 w-3.5" /><span aria-live="polite">{done ? "Copied" : "Copy"}</span></Button>
     </div>
   );
 }
@@ -46,7 +47,7 @@ function RoleFields({ role, setRole, custom, setCustom, roles }: { role: Role; s
 }
 
 export function UsersClient({ brand, me, users, groups, roles, teams, candidates, canEdit }: Props) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
   const [dlg, setDlg] = useState<null | "new" | "existing" | "upload" | { t: "role"; u: UserRow } | { t: "remove"; u: UserRow } | { t: "group"; g: UserGroup | null } | { t: "delgroup"; g: UserGroup }>(null);
   const members = users.filter((u) => u.userId);
   const nameOf = (id: string) => members.find((m) => m.userId === id)?.name ?? "Removed user";
@@ -77,7 +78,7 @@ export function UsersClient({ brand, me, users, groups, roles, teams, candidates
                 <td className="py-2.5 pr-3 text-text-2"><div>{roleLabel(u.role)}</div>{u.customRole && <div className="text-[11.5px] text-text-3">{u.customRole}</div>}</td>
                 <td className="py-2.5 pr-3"><span className="inline-flex max-w-full items-center gap-1.5 text-text-2"><span className="truncate" title={u.email}>{u.email}</span>{u.verified ? <CheckCircle2 className="h-4 w-4 shrink-0 text-good-ink" aria-label="Account verified" /> : <Badge tone="warning"><Clock className="h-3 w-3" />Invite pending</Badge>}</span></td>
                 <td className="py-2.5 pr-3 text-text-2"><div className="truncate">{u.createdBy ?? (u.owner ? "Brand owner" : "n/a")}</div><KDate iso={u.createdAt} /></td>
-                <td className="py-2.5 text-right">{canEdit && !u.owner && <UserMenu u={u} me={me} onRole={() => setDlg({ t: "role", u })} onRemove={() => setDlg({ t: "remove", u })} onRevoke={() => run(`rv-${u.id}`, revokeInviteAction(brand, u.inviteId!), () => `Invite for ${u.email} revoked.`)} onResend={() => run(`rs-${u.id}`, inviteUserAction(brand, { email: u.email, role: u.role as Role, customRoleId: u.customRoleId }), (r) => (r.added ? `${u.email} added.` : r.emailed ? `New invite emailed to ${u.email}.` : `New invite link: ${r.link}`))} />}</td>
+                <td className="py-2.5 text-right">{canEdit && !u.owner && <UserMenu u={u} me={me} onRole={() => setDlg({ t: "role", u })} onRemove={() => { setError(null); setDlg({ t: "remove", u }); }} onRevoke={() => run(`rv-${u.id}`, revokeInviteAction(brand, u.inviteId!), () => `Invite for ${u.email} revoked.`)} onResend={() => run(`rs-${u.id}`, inviteUserAction(brand, { email: u.email, role: u.role as Role, customRoleId: u.customRoleId }), (r) => (r.added ? `${u.email} added.` : r.emailed ? `New invite emailed to ${u.email}.` : `New invite link: ${r.link}`))} />}</td>
               </tr>
             ))}
           </tbody>
@@ -91,7 +92,7 @@ export function UsersClient({ brand, me, users, groups, roles, teams, candidates
                 <div className="flex items-center gap-1 truncate text-text-2">{u.email}{u.verified ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-good-ink" aria-label="Account verified" /> : <Badge tone="warning">Pending</Badge>}</div>
                 <div className="text-[12px] text-text-3">{roleLabel(u.role)}{u.customRole ? ` · ${u.customRole}` : ""} · <KDate iso={u.createdAt} time={false} /></div>
               </div>
-              {canEdit && !u.owner && <UserMenu u={u} me={me} onRole={() => setDlg({ t: "role", u })} onRemove={() => setDlg({ t: "remove", u })} onRevoke={() => run(`rv-${u.id}`, revokeInviteAction(brand, u.inviteId!), () => `Invite for ${u.email} revoked.`)} onResend={() => run(`rs-${u.id}`, inviteUserAction(brand, { email: u.email, role: u.role as Role, customRoleId: u.customRoleId }), (r) => (r.added ? `${u.email} added.` : r.emailed ? `New invite emailed to ${u.email}.` : `New invite link: ${r.link}`))} />}
+              {canEdit && !u.owner && <UserMenu u={u} me={me} onRole={() => setDlg({ t: "role", u })} onRemove={() => { setError(null); setDlg({ t: "remove", u }); }} onRevoke={() => run(`rv-${u.id}`, revokeInviteAction(brand, u.inviteId!), () => `Invite for ${u.email} revoked.`)} onResend={() => run(`rs-${u.id}`, inviteUserAction(brand, { email: u.email, role: u.role as Role, customRoleId: u.customRoleId }), (r) => (r.added ? `${u.email} added.` : r.emailed ? `New invite emailed to ${u.email}.` : `New invite link: ${r.link}`))} />}
             </li>
           ))}
         </ul>
@@ -115,7 +116,7 @@ export function UsersClient({ brand, me, users, groups, roles, teams, candidates
                     {(close) => (
                       <>
                         <MenuItem icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => { close(); setDlg({ t: "group", g }); }}>Edit group</MenuItem>
-                        <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setDlg({ t: "delgroup", g }); }}>Delete group</MenuItem>
+                        <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setError(null); setDlg({ t: "delgroup", g }); }}>Delete group</MenuItem>
                       </>
                     )}
                   </GearMenu>
@@ -131,17 +132,15 @@ export function UsersClient({ brand, me, users, groups, roles, teams, candidates
       {dlg === "upload" && <UploadDialog brand={brand} onClose={() => setDlg(null)} />}
       {dlg && typeof dlg === "object" && dlg.t === "role" && <RoleDialog brand={brand} u={dlg.u} roles={roles} onClose={() => setDlg(null)} />}
       {dlg && typeof dlg === "object" && dlg.t === "remove" && (
-        <Dialog open onClose={() => setDlg(null)} size="sm" title="Remove user?" description="They lose access to this brand. Their past replies and notes stay."
-          footer={<><Button onClick={() => setDlg(null)}>Cancel</Button><Button variant="danger" loading={busy === "rm"} onClick={async () => { await run("rm", removeUserAction(brand, dlg.u.userId!), () => `${dlg.u.email} removed.`); setDlg(null); }}>Remove</Button></>}>
-          <p className="text-[13px] text-text-2">{dlg.u.name} ({dlg.u.email})</p>
-        </Dialog>
+        <ConfirmDialog open onCancel={() => setDlg(null)} title={`Remove ${dlg.u.name}?`} confirmLabel="Remove" busy={busy === "rm"} error={error}
+          description={<>{dlg.u.email} loses access to this brand. Their past replies and notes stay.</>}
+          onConfirm={async () => { if (await runOk(run, "rm", removeUserAction(brand, dlg.u.userId!), () => `${dlg.u.email} removed.`)) setDlg(null); }} />
       )}
       {dlg && typeof dlg === "object" && dlg.t === "group" && <GroupDialog brand={brand} g={dlg.g} members={members} onClose={() => setDlg(null)} />}
       {dlg && typeof dlg === "object" && dlg.t === "delgroup" && (
-        <Dialog open onClose={() => setDlg(null)} size="sm" title="Delete user group?" description="Queue segments routed to it go back to any available agent."
-          footer={<><Button onClick={() => setDlg(null)}>Cancel</Button><Button variant="danger" loading={busy === "dg"} onClick={async () => { await run("dg", deleteUserGroupAction(brand, dlg.g.id), () => `${dlg.g.name} deleted.`); setDlg(null); }}>Delete</Button></>}>
-          <p className="text-[13px] text-text-2">{dlg.g.name}</p>
-        </Dialog>
+        <ConfirmDialog open onCancel={() => setDlg(null)} title={`Delete “${dlg.g.name}”?`} busy={busy === "dg"} error={error}
+          description="Its members keep their access. Queue segments routed to this group go back to any available agent."
+          onConfirm={async () => { if (await runOk(run, "dg", deleteUserGroupAction(brand, dlg.g.id), () => `${dlg.g.name} deleted.`)) setDlg(null); }} />
       )}
     </div>
   );
@@ -168,17 +167,23 @@ function UserMenu({ u, me, onRole, onRemove, onRevoke, onResend }: { u: UserRow;
 }
 
 function NewUserDialog({ brand, roles, teams, onClose }: { brand: string; roles: Opt[]; teams: Opt[]; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("agent");
   const [custom, setCustom] = useState("");
   const [team, setTeam] = useState("");
   const [link, setLink] = useState<{ url: string; emailed: boolean; err: string | null } | null>(null);
+  const invite = async () => {
+    if (busy === "inv") return;
+    const r = await run("inv", inviteUserAction(brand, { email, role, customRoleId: custom || null, teamId: team || null }), (d) => (d.added ? `${email} added to the brand.` : undefined));
+    if (r?.added) onClose();
+    else if (r?.link) setLink({ url: r.link, emailed: r.emailed, err: r.emailError });
+  };
   return (
-    <Dialog open onClose={onClose} title="Add new user" description="People who already have an account are added right away. Everyone else gets an invite link (valid 14 days) to create an account with this email and join."
-      footer={link ? <Button variant="primary" onClick={onClose}>Done</Button> : <><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy === "inv"} onClick={async () => { const r = await run("inv", inviteUserAction(brand, { email, role, customRoleId: custom || null, teamId: team || null }), (d) => (d.added ? `${email} added to the brand.` : undefined)); if (r?.added) onClose(); else if (r?.link) setLink({ url: r.link, emailed: r.emailed, err: r.emailError }); }}>Add user</Button></>}>
+    // Once the invite link shows, only Done closes the dialog, so the link isn't lost to Esc or a stray click.
+    <Dialog open onClose={onClose} title="Add new user" error={link ? null : error} dismissible={!link} onSubmit={link ? undefined : invite}
+      footer={link ? <Button variant="primary" onClick={onClose}>Done</Button> : <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "inv"}>Add user</Button></>}>
       <div className="space-y-3">
-        {messages}
         {link ? (
           <>
             <Callout tone={link.emailed ? "good" : "info"} title={link.emailed ? "Invite emailed" : "Share this invite link"}>{link.emailed ? `We emailed the link to ${email}. You can also share it yourself:` : `${link.err ?? "No email channel is connected."} Send this link to ${email}:`}</Callout>
@@ -186,7 +191,8 @@ function NewUserDialog({ brand, roles, teams, onClose }: { brand: string; roles:
           </>
         ) : (
           <>
-            <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" autoComplete="off" /></Field>
+            <p className="text-[12.5px] text-text-2">People who already have an account are added right away. Everyone else gets an invite link, valid for 14 days, to create an account with this email and join.</p>
+            <Field label="Email"><Input type="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" autoComplete="off" /></Field>
             <RoleFields role={role} setRole={setRole} custom={custom} setCustom={setCustom} roles={roles} />
             <Field label="Team (optional)"><Select value={team} onChange={(e) => setTeam(e.target.value)}><option value="">No team</option>{teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select></Field>
           </>
@@ -197,23 +203,28 @@ function NewUserDialog({ brand, roles, teams, onClose }: { brand: string; roles:
 }
 
 function ExistingDialog({ brand, roles, candidates, onClose }: { brand: string; roles: Opt[]; candidates: Candidate[]; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [pick, setPick] = useState<string[]>([]);
   const [q, setQ] = useState("");
   const [role, setRole] = useState<Role>("agent");
   const [custom, setCustom] = useState("");
   const shown = candidates.filter((c) => !q || `${c.name} ${c.email} ${c.brands}`.toLowerCase().includes(q.toLowerCase()));
+  const add = async () => {
+    if (!pick.length || busy === "ex") return;
+    if (await runOk(run, "ex", addExistingUsersAction(brand, pick, role, custom || null), (d) => `${d} user${d === 1 ? "" : "s"} added.`)) onClose();
+  };
   return (
-    <Dialog open onClose={onClose} size="lg" title="Add existing user" description="People who already work on your other brands."
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!pick.length} loading={busy === "ex"} onClick={async () => { const n = await run("ex", addExistingUsersAction(brand, pick, role, custom || null), (d) => `${d} user${d === 1 ? "" : "s"} added.`); if (n) onClose(); }}>Add {pick.length || ""}</Button></>}>
+    <Dialog open onClose={onClose} size="lg" title="Add existing user" description="People who already work on your other brands." error={error} onSubmit={candidates.length ? add : undefined}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button>{candidates.length > 0 && <Button type="submit" variant="primary" disabled={!pick.length || busy === "ex"} loading={busy === "ex"}>{pick.length ? `Add ${pick.length} user${pick.length === 1 ? "" : "s"}` : "Add users"}</Button>}</>}>
       <div className="space-y-3">
-        {messages}
         {candidates.length === 0 ? (
           <EmptyState title="Nobody to add yet" description="This lists members of the other brands you own or administer. Use Add new user to invite someone by email." />
         ) : (
           <>
-            <Input aria-label="Search people" placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} />
-            <ul className="scroll-thin max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border">
+            {/* Enter in the search box filters; it must not add the picked people. */}
+            <Input type="search" aria-label="Search people" placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} />
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {shown.length === 0 && <li className="px-3 py-6 text-center text-[12.5px] text-text-3">Nobody matches “{q}”.</li>}
               {shown.map((c) => (
                 <li key={c.id}>
                   <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-[13px]">
@@ -233,14 +244,13 @@ function ExistingDialog({ brand, roles, candidates, onClose }: { brand: string; 
 
 const TEMPLATE = "email,role,team\nagent.one@example.com,agent,Support\nlead@example.com,supervisor,\n";
 function UploadDialog({ brand, onClose }: { brand: string; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [csv, setCsv] = useState("");
   const [result, setResult] = useState<{ added: number; invited: number; skipped: string[]; errors: string[] } | null>(null);
   return (
-    <Dialog open onClose={onClose} size="lg" title="Upload users" description="CSV with columns email, role (admin, supervisor, agent, viewer or a custom role name) and team (created when missing). Accounts are added; other emails get invites."
-      footer={result ? <Button variant="primary" onClick={onClose}>Done</Button> : <><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!csv.trim()} loading={busy === "up"} onClick={async () => { const r = await run("up", uploadUsersAction(brand, csv)); if (r) setResult(r); }}>Upload</Button></>}>
+    <Dialog open onClose={onClose} size="lg" title="Upload users" error={result ? null : error}
+      footer={result ? <Button variant="primary" onClick={onClose}>Done</Button> : <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!csv.trim() || busy === "up"} loading={busy === "up"} onClick={async () => { const r = await run("up", uploadUsersAction(brand, csv)); if (r) setResult(r); }}>Upload</Button></>}>
       <div className="space-y-3">
-        {messages}
         {result ? (
           <>
             <Callout tone="good" title="Upload finished">{result.added} added · {result.invited} invited{result.skipped.length ? ` · ${result.skipped.length} skipped` : ""}</Callout>
@@ -249,6 +259,7 @@ function UploadDialog({ brand, onClose }: { brand: string; onClose: () => void }
           </>
         ) : (
           <>
+            <p className="text-[12.5px] text-text-2">A CSV with the columns <code>email</code>, <code>role</code> (admin, supervisor, agent, viewer or a custom role name) and <code>team</code> (created when missing). People with an account are added; other emails get invites.</p>
             <div className="flex flex-wrap gap-2">
               <FileButton label={<><Upload className="h-3.5 w-3.5" />Choose CSV file</>} onText={setCsv} />
               <Button size="sm" variant="ghost" onClick={() => setCsv(TEMPLATE)}>Use template</Button>
@@ -262,32 +273,33 @@ function UploadDialog({ brand, onClose }: { brand: string; onClose: () => void }
 }
 
 function RoleDialog({ brand, u, roles, onClose }: { brand: string; u: UserRow; roles: Opt[]; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [role, setRole] = useState<Role>((u.role === "owner" ? "admin" : u.role) as Role);
   const [custom, setCustom] = useState(u.customRoleId ?? "");
   return (
-    <Dialog open onClose={onClose} title={`Change role: ${u.name}`}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy === "role"} onClick={async () => { await run("role", changeUserRoleAction(brand, u.userId!, role, custom || null), () => "Role updated."); onClose(); }}>Save</Button></>}>
-      <div className="space-y-3">{messages}<RoleFields role={role} setRole={setRole} custom={custom} setCustom={setCustom} roles={roles} /></div>
+    <Dialog open onClose={onClose} title={`Change role: ${u.name}`} error={error}
+      onSubmit={async () => { if (busy !== "role" && (await runOk(run, "role", changeUserRoleAction(brand, u.userId!, role, custom || null), () => "Role updated."))) onClose(); }}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "role"}>Save</Button></>}>
+      <RoleFields role={role} setRole={setRole} custom={custom} setCustom={setCustom} roles={roles} />
     </Dialog>
   );
 }
 
 function GroupDialog({ brand, g, members, onClose }: { brand: string; g: UserGroup | null; members: UserRow[]; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [name, setName] = useState(g?.name ?? "");
   const [description, setDescription] = useState(g?.description ?? "");
   const [ids, setIds] = useState<string[]>(g?.memberIds ?? []);
   return (
-    <Dialog open onClose={onClose} title={g ? "Edit user group" : "Add user group"}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy === "grp"} onClick={async () => { const r = await run("grp", saveUserGroupAction(brand, { id: g?.id, name, description, memberIds: ids }), () => (g ? "Group updated." : "Group created.")); if (r) onClose(); }}>Save</Button></>}>
+    <Dialog open onClose={onClose} title={g ? "Edit user group" : "Add user group"} error={error}
+      onSubmit={async () => { if (busy !== "grp" && (await runOk(run, "grp", saveUserGroupAction(brand, { id: g?.id, name, description, memberIds: ids }), () => (g ? "Group updated." : "Group created.")))) onClose(); }}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "grp"}>Save</Button></>}>
       <div className="space-y-3">
-        {messages}
-        <Field label="Name"><Input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="e.g. Admissions desk" /></Field>
+        <Field label="Name"><Input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="e.g. Admissions desk" /></Field>
         <Field label="Description (optional)"><Input value={description} maxLength={300} onChange={(e) => setDescription(e.target.value)} /></Field>
         <div>
           <div className="mb-1 text-[12.5px] font-medium text-text">Members</div>
-          <ul className="scroll-thin max-h-56 divide-y divide-border overflow-y-auto rounded-md border border-border">
+          <ul className="divide-y divide-border rounded-md border border-border">
             {members.map((m) => (
               <li key={m.userId}>
                 <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-[13px]">

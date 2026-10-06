@@ -9,6 +9,7 @@ import { TrendChart } from "@/components/charts/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Field, Input, Textarea } from "@/components/ui/input";
@@ -28,6 +29,9 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const run = async (p: Promise<{ ok: boolean; error?: string }>) => {
     setError(null);
     const r = await p;
@@ -51,7 +55,7 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
                 <div className="truncate text-[15px] font-semibold text-text">{c.name || "Unnamed"}</div>
                 <div className="flex gap-1.5 text-text-3">{channels.map((k) => <span key={k} title={channelLabel(k)}><ChannelIcon kind={k} /></span>)}</div>
               </div>
-              <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setEdit(true)}>Edit</Button>
+              <Button size="sm" variant="ghost" className="ml-auto" onClick={() => { setError(null); setEdit(true); }}>Edit</Button>
             </div>
             <div className="mt-3 divide-y divide-border">
               <KeyValue label="Email">{c.email ?? <span className="text-text-3">n/a</span>}</KeyValue>
@@ -91,11 +95,11 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
             )}
           </CardBody>
         </Card>
-        <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}><Trash className="h-3.5 w-3.5" />Delete contact</Button>
+        <Button variant="ghost" size="sm" onClick={() => { setDeleteError(null); setConfirmDelete(true); }}><Trash className="h-3.5 w-3.5" />Delete contact</Button>
       </div>
 
       <div className="min-w-0 space-y-4">
-        {error && <Callout tone="critical">{error}</Callout>}
+        {error && !edit && <Callout tone="critical">{error}</Callout>}
         <Card>
           <MetricStrip className="border-0 shadow-none">
             <Metric label="Tickets" value={detail.tickets.length} size="sm" />
@@ -130,11 +134,23 @@ export function ContactProfile({ brand, detail, duplicates }: { brand: string; d
         </Card>
       </div>
 
-      {edit && <EditContact c={c} onClose={() => setEdit(false)} onSave={async (p) => { if (await run(updateContactAction(brand, c.id, p))) setEdit(false); }} error={error} />}
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} size="sm" title="Delete contact?" description="Tickets stay in the inbox without a linked contact."
-        footer={<><Button onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" onClick={async () => { const r = await deleteContactAction(brand, c.id); if (r.ok) router.push(`/cx/contacts?brand=${brand}`); else setError(r.error); }}>Delete</Button></>}>
-        <p className="text-[13px] text-text-2">{c.name}</p>
-      </Dialog>
+      {edit && <EditContact c={c} onClose={() => setEdit(false)} saving={saving} onSave={async (p) => { if (saving) return; setSaving(true); const ok = await run(updateContactAction(brand, c.id, p)); setSaving(false); if (ok) setEdit(false); }} error={error} />}
+      <ConfirmDialog
+        open={confirmDelete}
+        onCancel={() => setConfirmDelete(false)}
+        title={c.name ? `Delete the contact “${c.name}”?` : "Delete this contact?"}
+        description="Tickets stay in the inbox without a linked contact."
+        busy={deleting}
+        error={deleteError}
+        onConfirm={async () => {
+          setDeleting(true);
+          setDeleteError(null);
+          const r = await deleteContactAction(brand, c.id);
+          if (r.ok) return router.push(`/cx/contacts?brand=${brand}`); // stays busy while navigating
+          setDeleting(false);
+          setDeleteError(r.error);
+        }}
+      />
     </div>
   );
 }
@@ -282,15 +298,15 @@ function Attributes({ attrs, onSave }: { attrs: Record<string, string>; onSave: 
   );
 }
 
-function EditContact({ c, onClose, onSave, error }: { c: ContactDetail["contact"]; onClose: () => void; onSave: (p: { name: string; email: string | null; phone: string | null }) => void; error: string | null }) {
+function EditContact({ c, onClose, onSave, error, saving }: { c: ContactDetail["contact"]; onClose: () => void; onSave: (p: { name: string; email: string | null; phone: string | null }) => void; error: string | null; saving?: boolean }) {
   const [f, setF] = useState({ name: c.name, email: c.email ?? "", phone: c.phone ?? "" });
   return (
-    <Dialog open onClose={onClose} title="Edit contact" footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={() => onSave({ name: f.name, email: f.email || null, phone: f.phone || null })}>Save</Button></>}>
+    <Dialog open onClose={onClose} title="Edit contact" error={error} onSubmit={() => onSave({ name: f.name, email: f.email || null, phone: f.phone || null })}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={saving}>Save</Button></>}>
       <div className="space-y-3">
-        <Field label="Name" htmlFor="c-n"><Input id="c-n" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+        <Field label="Name" htmlFor="c-n"><Input id="c-n" autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Email" htmlFor="c-e"><Input id="c-e" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Phone" htmlFor="c-p"><Input id="c-p" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

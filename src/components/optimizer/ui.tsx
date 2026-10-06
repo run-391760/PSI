@@ -35,7 +35,7 @@ export function StatusPill({ status }: { status: Status }) {
 
 export const PRIORITY_TONE: Record<string, Tone> = { critical: "critical", high: "serious", medium: "warning" };
 
-const SOURCE_LABEL: Record<EvidenceSource, string> = { content: "Draft", serp: "Live SERP", competitors: "Competitor pages", autocomplete: "Google Autocomplete", ai: "Claude", "live-url": "Live URL" };
+const SOURCE_LABEL: Record<EvidenceSource, string> = { content: "Draft", serp: "Live SERP", competitors: "Competitor pages", autocomplete: "Google Autocomplete", ai: "AI review", "live-url": "Live URL", "search-console": "Search Console", "keyword-data": "DataForSEO keyword data" };
 export function SourceTags({ sources }: { sources: EvidenceSource[] }) {
   return (
     <span className="inline-flex flex-wrap gap-1">

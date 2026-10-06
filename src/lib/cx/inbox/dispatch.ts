@@ -1,6 +1,7 @@
 import { query, transaction } from "@/lib/db";
 import { AppError } from "@/lib/domain";
-import { channelInfo } from "@/lib/cx/channels";
+import { channelInfo, metaGraphUrl } from "@/lib/cx/channels";
+import { pickWhatsAppSender } from "@/lib/cx/providers";
 import { channelSecret, type EmailConfig } from "./channels";
 import { sendEmail } from "./email";
 import { asAttachment, claimFiles, getFiles, readFileBytes, type FileRow } from "./files";
@@ -131,23 +132,27 @@ async function deliver(projectId: string, t: T, body: string, extra: Extra = {})
   }
   const plain = toPlainText(body) + ((extra.files ?? []).length ? `\n\n(${(extra.files ?? []).length} attachment(s) could not be sent on this channel)` : "");
   if (kind === "whatsapp") {
-    const token = process.env.WHATSAPP_TOKEN, phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    // Send from the number the conversation came in on (channel config.accountId = phone number id).
+    const [ch] = t.channel_id ? await query<{ secret_enc: string | null; config: { accountId?: string } | null }>("SELECT secret_enc,config FROM cx_channels WHERE id=$1 AND project_id=$2", [t.channel_id, projectId]) : [];
+    const sender = pickWhatsAppSender(ch ? { phoneId: ch.config?.accountId ?? null, token: channelSecret(ch) } : null, process.env);
     const to = t.handles?.whatsapp ?? t.contact_phone?.replace(/^\+/, "");
-    if (!token || !phoneId || !to) return { result: { delivery: "stored", note: "WhatsApp sending needs WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID on the server. The reply was stored only." }, externalId: null };
-    const r = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: plain } }), signal: AbortSignal.timeout(20_000) });
+    if (!sender || !to) return { result: { delivery: "stored", note: "WhatsApp sending needs WHATSAPP_TOKEN on the server and the phone number id (the channel's account id or WHATSAPP_PHONE_NUMBER_ID). The reply was stored only." }, externalId: null };
+    const { token, phoneId } = sender;
+    const r = await fetch(`${metaGraphUrl()}/${phoneId}/messages`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: plain } }), signal: AbortSignal.timeout(20_000) });
     const d = (await r.json().catch(() => ({}))) as { messages?: { id: string }[]; error?: { message?: string } };
     if (!r.ok) throw new Error(d.error?.message ?? `WhatsApp API ${r.status}`);
     return { result: { delivery: "sent", note: null }, externalId: d.messages?.[0]?.id ?? null };
   }
   if ((kind === "facebook" || kind === "instagram") && t.channel_id) {
-    const [ch] = await query<{ secret_enc: string | null; config: { accountId?: string; humanAgent?: boolean } }>("SELECT secret_enc,config FROM cx_channels WHERE id=$1", [t.channel_id]);
-    const token = ch ? channelSecret(ch) : null;
+    const [ch] = await query<{ project_id: string; secret_enc: string | null; config: { accountId?: string; humanAgent?: boolean } }>("SELECT project_id,secret_enc,config FROM cx_channels WHERE id=$1", [t.channel_id]);
+    const { graph, metaToken } = await import("./social");
+    // The channel's Page token, else the brand's Publishing token for the same account, else META_PAGE_ACCESS_TOKEN.
+    const token = ch ? await metaToken(ch, kind) : null;
     const thread = parseMetaThread(t.external_thread_id);
     const net = kind === "facebook" ? "Facebook" : "Instagram";
-    const { graph } = await import("./social");
     if (thread) {
       // Public thread (comment, mention, tag, review): answer in public on the post, or privately by DM to the commenter.
-      if (!token) return { result: { delivery: "stored", note: `Replying to ${net} comments needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
+      if (!token) return { result: { delivery: "stored", note: `Replying to ${net} comments needs a Page access token on the channel (or the Page connected in Publishing). The reply was stored only.` }, externalId: null };
       const target = extra.replyTo?.external_id && !extra.replyTo.external_id.startsWith("tag:") ? extra.replyTo.external_id : null;
       if (extra.privateReply) {
         const commentId = target ?? (thread.kind === "igm" ? thread.commentId : thread.kind === "fbc" || thread.kind === "igc" ? (await lastInboundExternalId(t.id)) : null);
@@ -166,7 +171,7 @@ async function deliver(projectId: string, t: T, body: string, extra: Extra = {})
       return { result: { delivery: "sent", note: null }, externalId: d.id ? String(d.id) : null };
     }
     const psid = t.handles?.[kind];
-    if (!token || !psid) return { result: { delivery: "stored", note: `Sending ${kind === "facebook" ? "Messenger" : "Instagram"} replies needs a Page access token on the channel. The reply was stored only.` }, externalId: null };
+    if (!token || !psid) return { result: { delivery: "stored", note: `Sending ${kind === "facebook" ? "Messenger" : "Instagram"} replies needs a Page access token on the channel (or the Page connected in Publishing). The reply was stored only.` }, externalId: null };
     // Messaging window: 24 h after the customer's last message; up to 7 days with the Human Agent tag (Meta approval).
     const age = await lastInboundAgeHours(t.id);
     const tag = messagingTag(age, !!ch?.config?.humanAgent);

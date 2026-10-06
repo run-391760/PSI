@@ -7,6 +7,7 @@ import { useState } from "react";
 import { aiReviewAction, createDraftAction, deleteDraftAction, duplicateDraftAction, publishAction, researchAction, unpublishAction } from "@/app/(app)/optimizer/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
@@ -60,6 +61,7 @@ export function NewDraftButton({ variant = "primary", label = "New draft" }: { v
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const submit = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     const r = await createDraftAction({
@@ -84,16 +86,22 @@ export function NewDraftButton({ variant = "primary", label = "New draft" }: { v
       </Button>
       <Dialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false);
+          setError(null);
+        }}
         title="New draft to optimize"
-        description="Paste your article (Markdown or plain text) or import an existing page. You can also start from a brief in Content Planning."
+        description="Paste your article (Markdown or plain text) or import an existing page."
         size="lg"
+        dismissible={!busy}
+        error={error}
+        onSubmit={submit}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" loading={busy} onClick={submit}>
+            <Button type="submit" variant="primary" loading={busy}>
               Create and audit
             </Button>
           </>
@@ -135,7 +143,7 @@ export function NewDraftButton({ variant = "primary", label = "New draft" }: { v
           <Field label="Competitor URLs (optional)" hint="2–5 pages that rank for the keyword, separated by spaces or new lines. Used when live SERP data isn't configured.">
             <Textarea value={form.competitors} onChange={set("competitors")} rows={2} />
           </Field>
-          {error && <p className="text-[13px] text-critical-ink">{error}</p>}
+          <p className="text-[12.5px] text-text-3">You can also start from a brief in Content Planning.</p>
         </div>
       </Dialog>
     </>
@@ -146,6 +154,7 @@ export function NewDraftButton({ variant = "primary", label = "New draft" }: { v
 export function DraftActions({ draftId, status, published, aiOn, serpOn, hasCompetitors, blockers }: { draftId: string; status: PublishStatus; published: boolean; aiOn: boolean; serpOn: boolean; hasCompetitors: boolean; blockers: number }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
   const run = async (key: string, fn: () => Promise<{ ok: boolean; error?: string }>, ok: (r: never) => Parameters<typeof flashScore>[0]) => {
     setBusy(key);
     const r = (await fn()) as { ok: boolean; error?: string; data?: unknown };
@@ -167,7 +176,7 @@ export function DraftActions({ draftId, status, published, aiOn, serpOn, hasComp
       <Button
         loading={busy === "ai"}
         disabled={!!busy || !aiOn}
-        title={aiOn ? "Claude scores intent, usefulness, originality, information gain and experience, and flags risky claims" : "Add ANTHROPIC_API_KEY on the server to enable Claude reviews"}
+        title={aiOn ? "Claude scores intent, usefulness, originality, information gain and experience, and flags risky claims" : "Add an AI key (Anthropic, OpenAI or Gemini) on the server to enable AI reviews"}
         onClick={() => run("ai", () => aiReviewAction(draftId), (d: { before: number | null; after: number | null; status: string }) => ({ title: "Claude review added", before: d.before, after: d.after, status: d.status }))}
       >
         {busy !== "ai" && <Bot className="h-4 w-4" />} Claude review
@@ -207,18 +216,18 @@ export function DraftActions({ draftId, status, published, aiOn, serpOn, hasComp
         <MenuItem
           danger
           onClick={async () => {
-            if (!confirm("Delete this draft and its history?")) return;
+            if (!(await confirm({ title: "Delete this draft?", description: "The draft and its score history are deleted. This cannot be undone.", confirmLabel: "Delete draft" }))) return;
             const r = await deleteDraftAction(draftId);
-            if (r.ok) {
-              router.push("/optimizer");
-              router.refresh();
-            }
+            if (!r.ok) return flashScore({ title: "Could not delete the draft", detail: r.error, error: true });
+            router.push("/optimizer");
+            router.refresh();
           }}
           icon={<Trash2 className="h-4 w-4" />}
         >
           Delete draft
         </MenuItem>
       </Menu>
+      {confirmDialog}
     </div>
   );
 }

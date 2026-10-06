@@ -4,14 +4,16 @@ import { Link2, Map as MapIcon, RefreshCw, Save, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { checkLinksAction, checkLiveAction, loadSitemapAction, researchAction, updateSettingsAction } from "@/app/(app)/optimizer/actions";
+import { IntentBadges, KdBadge } from "@/components/seo/badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/tabs";
-import { timeAgo } from "@/lib/format";
+import { compact, money, num, pct, timeAgo } from "@/lib/format";
 import { FORMAT_LABEL } from "@/lib/optimizer/intent";
-import type { Draft, DraftMeta, LinkCheck, LiveCheck, Research } from "@/lib/optimizer/types";
+import { gscFor } from "@/lib/optimizer/signals";
+import type { Draft, DraftMeta, GscPerformance, KeywordData, LinkCheck, LiveCheck, Research } from "@/lib/optimizer/types";
 import { flashScore } from "../score-flash";
 
 type Patch = Parameters<typeof updateSettingsAction>[1];
@@ -28,6 +30,90 @@ function useSaver(draftId: string) {
     router.refresh();
   };
   return { busy, save };
+}
+
+function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border px-2.5 py-2">
+      <div className="truncate text-[11.5px] text-text-3">{label}</div>
+      <div className="mt-0.5 text-[15px] font-semibold text-text tabular-nums">{value}</div>
+      {sub && <div className="truncate text-[11.5px] text-text-3">{sub}</div>}
+    </div>
+  );
+}
+
+/** DataForSEO Labs metrics of the primary keyword (same source as Keyword Overview). */
+function KeywordDataBlock({ data, stale }: { data: KeywordData; stale: boolean }) {
+  return (
+    <section>
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <h3 className="text-[12px] font-semibold tracking-wide text-text-3 uppercase">Keyword data</h3>
+        <Badge tone="info">DataForSEO</Badge>
+        <span className="text-[12px] text-text-3">
+          “{data.keyword}” · {data.db} · {timeAgo(data.fetchedAt)}
+          {stale && " · for an earlier keyword: re-run research"}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat label="Search volume" value={data.volume == null ? "n/a" : num(data.volume)} sub="Monthly, Google" />
+        <Stat label="Keyword difficulty" value={<KdBadge kd={data.kd == null ? null : Math.round(data.kd)} />} />
+        <Stat label="CPC" value={money(data.cpc)} sub={data.competition == null ? undefined : `Competition ${data.competition.toFixed(2)}`} />
+        <Stat label="Intent" value={data.intents.length ? <IntentBadges intents={data.intents} /> : "n/a"} sub={data.intents.length ? "Used as an intent signal" : undefined} />
+      </div>
+    </section>
+  );
+}
+
+/** Search Console performance of the draft URL (last 28 days) for a project linked to Search Console. */
+function GscBlock({ data, current }: { data: GscPerformance; current: boolean }) {
+  return (
+    <section>
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <h3 className="text-[12px] font-semibold tracking-wide text-text-3 uppercase">Search Console</h3>
+        <Badge tone="good">Your data</Badge>
+        <span className="min-w-0 truncate text-[12px] text-text-3">
+          {data.project.name} · {data.start} – {data.end}
+          {!current && " · for a different URL: re-run research"}
+        </span>
+      </div>
+      {data.page ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label="Clicks" value={compact(data.page.clicks)} />
+          <Stat label="Impressions" value={compact(data.page.impressions)} />
+          <Stat label="CTR" value={pct(data.page.ctr * 100)} />
+          <Stat label="Avg. position" value={data.page.position.toFixed(1)} />
+        </div>
+      ) : (
+        <p className="text-[12.5px] text-text-3">No Search Console data for {data.url} in the last 28 days (not published or not indexed yet).</p>
+      )}
+      {data.queries.length > 0 && (
+        <div className="scroll-thin mt-2 overflow-x-auto">
+          <table className="w-full min-w-[420px] text-[12.5px]">
+            <thead className="text-left text-text-3">
+              <tr className="border-b border-border">
+                <th className="py-1.5 pr-2 font-medium">Query the page ranks for</th>
+                <th className="py-1.5 pr-2 text-right font-medium">Clicks</th>
+                <th className="py-1.5 pr-2 text-right font-medium">Impr.</th>
+                <th className="py-1.5 pr-2 text-right font-medium">CTR</th>
+                <th className="py-1.5 text-right font-medium">Pos.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.queries.slice(0, 10).map((q) => (
+                <tr key={q.query} className="border-b border-border last:border-0">
+                  <td className="max-w-[260px] truncate py-1.5 pr-2 text-text">{q.query}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{num(q.clicks)}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{num(q.impressions)}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{pct(q.ctr * 100)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{q.position.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }
 
 /** Search Intent: competitor URLs + SERP research results (live SERP, crawled pages, autocomplete). */
@@ -48,7 +134,7 @@ export function ResearchPanel({ draft, research, serpOn }: { draft: Draft; resea
     <Card>
       <CardHeader
         title="SERP research"
-        description={serpOn ? "Live Google top results (DataForSEO) are crawled automatically; add extra competitor URLs if you like." : "Live SERP data needs DataForSEO. Add 2–5 URLs of pages that rank for your keyword: they are crawled and compared."}
+        description={`${serpOn ? "Live Google top results and keyword metrics (DataForSEO) are fetched automatically; add extra competitor URLs if you like." : "Live SERP data needs DataForSEO. Add 2–5 URLs of pages that rank for your keyword: they are crawled and compared."} Search Console data is added when the article URL belongs to a project linked to Search Console.`}
         actions={research ? <span className="text-[12px] text-text-3">Updated {timeAgo(research.fetchedAt)}</span> : undefined}
       />
       <CardBody className="space-y-3">
@@ -75,6 +161,8 @@ export function ResearchPanel({ draft, research, serpOn }: { draft: Draft; resea
                 {n}
               </p>
             ))}
+            {research.keywordData && <KeywordDataBlock data={research.keywordData} stale={research.keywordData.keyword.toLowerCase() !== draft.keyword.toLowerCase()} />}
+            {research.gsc && <GscBlock data={research.gsc} current={!!gscFor(draft, research)} />}
             {comps.length > 0 && (
               <div className="scroll-thin overflow-x-auto">
                 <table className="w-full min-w-[640px] text-[12.5px]">

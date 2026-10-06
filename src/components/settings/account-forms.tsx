@@ -279,32 +279,31 @@ export function DeleteAccount({ email }: { email: string }) {
         title="Delete your account?"
         description="This permanently deletes your account and everything in it."
         size="sm"
+        dismissible={!pending}
+        error={error}
+        onSubmit={() =>
+          ok &&
+          start(async () => {
+            setError(null);
+            const res = await deleteAccountAction({ email: typed, password });
+            if (res && !res.ok) setError(res.error);
+          })
+        }
         footer={
           <>
-            <Button variant="ghost" onClick={close}>
+            <Button type="button" variant="ghost" onClick={close} disabled={pending}>
               Cancel
             </Button>
-            <Button
-              variant="danger"
-              disabled={!ok}
-              loading={pending}
-              onClick={() =>
-                start(async () => {
-                  const res = await deleteAccountAction({ email: typed, password });
-                  if (res && !res.ok) setError(res.error);
-                })
-              }
-            >
+            <Button type="submit" variant="danger" disabled={!ok || pending} loading={pending}>
               Delete forever
             </Button>
           </>
         }
       >
         <div className="space-y-3 text-[13px] text-text-2">
-          {error && <Callout tone="critical">{error}</Callout>}
           <p>All projects, audits, tracked keywords, reports, schedules, alerts and usage history will be removed. This cannot be undone.</p>
           <Field label={<>Type <span className="font-semibold text-text">{email}</span> to confirm</>} htmlFor="del-email">
-            <Input id="del-email" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+            <Input id="del-email" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" autoFocus />
           </Field>
           <Field label="Your password" htmlFor="del-password">
             <Input id="del-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />

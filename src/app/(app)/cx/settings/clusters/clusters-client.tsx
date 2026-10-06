@@ -5,12 +5,13 @@ import { useState } from "react";
 import { NetworkIcon } from "@/components/cx/network-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Dialog, MenuItem } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Checkbox, Input } from "@/components/ui/input";
 import { clusterChips, splitPicker } from "@/lib/cx/admin/pure/settings";
-import { ColorDialog, ColorDot, GearMenu, KButton, KDate, KSection } from "../_admin/k-ui";
-import { useRun } from "../_admin/ui";
+import { ColorDialog, ColorDot, GearMenu, KButton, KDate, KSection, runOk } from "../_admin/k-ui";
+import { Field, useRun } from "../_admin/ui";
 import { clusterColorAction, deleteClusterAction, saveClusterAction } from "./actions";
 
 export type PickItem = { id: string; name: string; network: string; type: "channel" | "topic" | "source" };
@@ -20,7 +21,7 @@ const sourceId = (s: string) => `source:${s}`;
 
 /** Clusters table (screenshot 10): name, per-network profile chips (incl. Topic), created by, gear menu. */
 export function ClustersClient({ brand, clusters, items, canEdit }: { brand: string; clusters: ClusterRow[]; items: PickItem[]; canEdit: boolean }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
   const [edit, setEdit] = useState<ClusterRow | "new" | null>(null);
   const [color, setColor] = useState<ClusterRow | null>(null);
   const [del, setDel] = useState<ClusterRow | null>(null);
@@ -51,8 +52,8 @@ export function ClustersClient({ brand, clusters, items, canEdit }: { brand: str
                       {(close) => (
                         <>
                           <MenuItem icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => { close(); setEdit(c); }}>Edit Cluster</MenuItem>
-                          <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setDel(c); }}>Delete Cluster</MenuItem>
-                          <MenuItem icon={<Palette className="h-3.5 w-3.5" />} onClick={() => { close(); setColor(c); }}>Edit Color</MenuItem>
+                          <MenuItem danger icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => { close(); setError(null); setDel(c); }}>Delete Cluster</MenuItem>
+                          <MenuItem icon={<Palette className="h-3.5 w-3.5" />} onClick={() => { close(); setError(null); setColor(c); }}>Edit Color</MenuItem>
                         </>
                       )}
                     </GearMenu>
@@ -68,11 +69,10 @@ export function ClustersClient({ brand, clusters, items, canEdit }: { brand: str
         </div>
       )}
       {edit && <ClusterDialog brand={brand} cluster={edit === "new" ? null : edit} items={items} onClose={() => setEdit(null)} />}
-      {color && <ColorDialog open title={`Color for ${color.name}`} value={color.color} busy={busy === "color"} onClose={() => setColor(null)} onSave={async (v) => { await run("color", clusterColorAction(brand, color.id, v), () => "Color saved."); setColor(null); }} />}
-      <Dialog open={!!del} onClose={() => setDel(null)} size="sm" title="Delete cluster?" description="Profiles, topics and tickets are not affected; filters and reports using this cluster fall back to everything."
-        footer={<><Button onClick={() => setDel(null)}>Cancel</Button><Button variant="danger" loading={busy === "del"} onClick={async () => { if (del) await run("del", deleteClusterAction(brand, del.id), () => `${del.name} deleted.`); setDel(null); }}>Delete</Button></>}>
-        <p className="text-[13px] text-text-2">{del?.name}</p>
-      </Dialog>
+      {color && <ColorDialog open title={`Color for ${color.name}`} value={color.color} busy={busy === "color"} error={error} onClose={() => setColor(null)} onSave={async (v) => { if (await runOk(run, "color", clusterColorAction(brand, color.id, v), () => "Color saved.")) setColor(null); }} />}
+      <ConfirmDialog open={!!del} onCancel={() => setDel(null)} title={del ? `Delete “${del.name}”?` : "Delete cluster?"} busy={busy === "del"} error={del ? error : null}
+        description="Profiles, topics and tickets are not affected. Filters and reports that use this cluster fall back to everything."
+        onConfirm={async () => { if (del && (await runOk(run, "del", deleteClusterAction(brand, del.id), () => `${del.name} deleted.`))) setDel(null); }} />
     </KSection>
   );
 }
@@ -100,9 +100,9 @@ function PickRow({ item, add, onMove }: { item: PickItem; add: boolean; onMove: 
   );
 }
 
-/** Edit Cluster dialog (screenshot 11): name, "Search Profiles…", Selected vs Other lists with »/« buttons, CLOSE / UPDATE. */
+/** Edit cluster dialog (screenshot 11): name, "Search profiles…", Selected vs Other lists with «/» buttons, Cancel / Update. */
 function ClusterDialog({ brand, cluster, items, onClose }: { brand: string; cluster: ClusterRow | null; items: PickItem[]; onClose: () => void }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error } = useRun();
   const [name, setName] = useState(cluster?.name ?? "");
   const [q, setQ] = useState("");
   const [isDefault, setDefault] = useState(cluster?.isDefault ?? false);
@@ -110,7 +110,8 @@ function ClusterDialog({ brand, cluster, items, onClose }: { brand: string; clus
   const lists = splitPicker(items, selected, q);
   const save = async () => {
     const pick = (t: PickItem["type"]) => items.filter((i) => i.type === t && selected.includes(i.id));
-    const ok = await run(
+    const ok = await runOk(
+      run,
       "save",
       saveClusterAction(brand, { id: cluster?.id, name, channelIds: pick("channel").map((i) => i.id), topicIds: pick("topic").map((i) => i.id), sources: pick("source").map((i) => i.network), isDefault }),
       () => (cluster ? "Cluster updated." : "Cluster created."),
@@ -118,22 +119,22 @@ function ClusterDialog({ brand, cluster, items, onClose }: { brand: string; clus
     if (ok) onClose();
   };
   return (
-    <Dialog open onClose={onClose} size="xl" title={cluster ? "Edit Cluster" : "Add Cluster"}
-      footer={<><Button className="tracking-[0.06em] uppercase" onClick={onClose}>Close</Button><Button variant="primary" className="tracking-[0.06em] uppercase" loading={busy === "save"} onClick={save}>{cluster ? "Update" : "Create"}</Button></>}>
+    <Dialog open onClose={onClose} size="xl" title={cluster ? "Edit cluster" : "Add cluster"} error={error} onSubmit={() => busy !== "save" && save()}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>{cluster ? "Update" : "Create"}</Button></>}>
       <div className="space-y-3">
-        {messages}
-        <Input aria-label="Cluster name" placeholder="Cluster name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} className="bg-surface-2" />
-        <Input aria-label="Search profiles and topics" placeholder="Search Profiles…" value={q} onChange={(e) => setQ(e.target.value)} className="bg-surface-2" />
+        <Field label="Cluster name"><Input autoFocus placeholder="For example Overall or Main campus" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} /></Field>
+        {/* Enter in the search box filters; it must not save the cluster. */}
+        <Input type="search" aria-label="Search profiles and topics" placeholder="Search profiles and topics…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="min-w-0">
             <h3 className="mb-1.5 text-[13.5px] text-text">Selected Profiles/Topics <span className="text-text-3">({selected.length})</span></h3>
-            <ul className="scroll-thin max-h-72 divide-y divide-border overflow-y-auto rounded-md border border-border" aria-label="Selected profiles and topics">
+            <ul className="divide-y divide-border rounded-md border border-border" aria-label="Selected profiles and topics">
               {lists.selected.length ? lists.selected.map((i) => <PickRow key={i.id} item={i} add={false} onMove={() => setSelected((s) => s.filter((x) => x !== i.id))} />) : <li className="px-3 py-6 text-center text-[12.5px] text-text-3">{q ? "No selected item matches." : "Nothing selected yet. Use « to add."}</li>}
             </ul>
           </div>
           <div className="min-w-0">
             <h3 className="mb-1.5 text-[13.5px] text-text">Other Profiles/Topics</h3>
-            <ul className="scroll-thin max-h-72 divide-y divide-border overflow-y-auto rounded-md border border-border" aria-label="Other profiles and topics">
+            <ul className="divide-y divide-border rounded-md border border-border" aria-label="Other profiles and topics">
               {lists.other.length ? lists.other.map((i) => <PickRow key={i.id} item={i} add onMove={() => setSelected((s) => [...s, i.id])} />) : <li className="px-3 py-6 text-center text-[12.5px] text-text-3">{q ? "No match." : "Everything is selected."}</li>}
             </ul>
           </div>

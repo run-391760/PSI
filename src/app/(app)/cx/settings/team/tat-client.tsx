@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/feedback";
 import { Input, Select } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { Segmented } from "@/components/ui/tabs";
 import type { EscalationLevel, SlaRule } from "@/lib/cx/admin/pure/sla";
 import type { Escalation } from "@/lib/cx/admin/sla";
 import { ConditionsEditor, type ConditionContext } from "../_admin/conditions";
+import { runOk } from "../_admin/k-ui";
 import { CheckRow, Field, ListInput, useRun } from "../_admin/ui";
 import { deleteEscalationAction, deleteTatRuleAction, moveTatRuleAction, saveEscalationAction, saveTatRuleAction, type TatRuleInput } from "./tat-actions";
 
@@ -22,14 +24,17 @@ const numOrNull = (v: string) => (v === "" ? null : Number(v));
 const blankRule = (): TatRuleInput => ({ name: "", priority: null, channels: [], segment: null, team: null, first_response_minutes: 60, every_response_minutes: null, resolution_minutes: 1440, business_hours: true, start_from: "created", valid_from: null, valid_to: null, windows: [], active: true });
 
 export function TatRulesPanel({ brand, rules, refs }: { brand: string; rules: SlaRule[]; refs: Refs }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<TatRuleInput | null>(null);
+  const open = (r: TatRuleInput) => { setError(null); setEdit(r); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveTatRuleAction(brand, edit), () => "TAT rule saved."))) setEdit(null); };
   const scope = (r: SlaRule) => [r.priority && `${r.priority} priority`, r.channels.length && r.channels.join(", "), r.segment && `segment ${r.segment}`, r.team && `team ${r.team}`].filter(Boolean).join(" · ") || "All tickets";
   const when = (r: SlaRule) => [r.valid_from || r.valid_to ? `${r.valid_from ?? "…"} → ${r.valid_to ?? "…"}` : null, r.windows.length ? r.windows.map((w) => `${w.start}–${w.end}`).join(", ") : null].filter(Boolean).join(" · ");
   return (
     <Card>
       <CardHeader title="TAT rules" description="The first matching rule (top to bottom) sets a ticket's first response, every response and resolution targets. Tickets no rule matches use the SLA policies tab. Every change is kept in the audit log."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit(blankRule())}><Plus className="h-3.5 w-3.5" />New rule</Button>} />
+        actions={<Button size="sm" variant="primary" onClick={() => open(blankRule())}><Plus className="h-3.5 w-3.5" />New rule</Button>} />
       <CardBody>
         {messages}
         {rules.length ? (
@@ -45,16 +50,17 @@ export function TatRulesPanel({ brand, rules, refs }: { brand: string; rules: Sl
                 <div className="flex gap-0.5">
                   <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Move up" disabled={i === 0} onClick={() => run("m", moveTatRuleAction(brand, r.id, -1))}><ArrowUp className="h-3.5 w-3.5" /></Button>
                   <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Move down" disabled={i === rules.length - 1} onClick={() => run("m", moveTatRuleAction(brand, r.id, 1))}><ArrowDown className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${r.name}`} onClick={() => setEdit({ ...r })}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${r.name}`} onClick={() => confirm(`Delete "${r.name}"?`) && run("d", deleteTatRuleAction(brand, r.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${r.name}`} onClick={() => open({ ...r })}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${r.name}`} onClick={async () => { if (await confirm({ title: `Delete “${r.name}”?`, description: "Tickets it matched use the next matching rule, or the SLA policies." })) run("d", deleteTatRuleAction(brand, r.id), () => `${r.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               </li>
             ))}
           </ol>
         ) : <EmptyState icon={<Timer className="h-5 w-5" />} title="No TAT rules" description="Set different targets per channel, customer segment or team, for a date range (a sale week) or for parts of the day (night shift)." />}
       </CardBody>
-      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New TAT rule"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveTatRuleAction(brand, edit)))) setEdit(null); }}>Save rule</Button></>}>
+      {confirmDialog}
+      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New TAT rule"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save rule</Button></>}>
         {edit && (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-4">
@@ -104,14 +110,17 @@ type EscEdit = Omit<Escalation, "id"> & { id?: string };
 const blankEsc = (): EscEdit => ({ name: "", match: "all", conditions: [], prebreach: [50, 80], levels: [{ afterMinutes: 0, notifyUserIds: [], emails: [], reassignTo: null, priority: null }], active: true });
 
 export function EscalationsPanel({ brand, list, refs }: { brand: string; list: Escalation[]; refs: Refs }) {
-  const { run, busy, messages } = useRun();
+  const { run, busy, error, setError, messages } = useRun();
+  const { confirm, confirmDialog } = useConfirm();
   const [edit, setEdit] = useState<EscEdit | null>(null);
+  const open = (e: EscEdit) => { setError(null); setEdit(e); };
+  const save = async () => { if (edit && busy !== "save" && (await runOk(run, "save", saveEscalationAction(brand, edit), () => "Escalation matrix saved."))) setEdit(null); };
   const setLevel = (i: number, p: Partial<EscalationLevel>) => edit && setEdit({ ...edit, levels: edit.levels.map((l, j) => (j === i ? { ...l, ...p } : l)) });
   const agent = (id: string | null) => refs.agents.find((a) => a.id === id)?.name ?? "someone";
   return (
     <Card>
       <CardHeader title="Escalation matrix" description="Warn the assignee before a TAT target is missed, then escalate level by level after the breach: notify people in the app, email managers, reassign or raise priority. Escalation emails obey the brand's allowed domains."
-        actions={<Button size="sm" variant="primary" onClick={() => setEdit(blankEsc())}><Plus className="h-3.5 w-3.5" />New matrix</Button>} />
+        actions={<Button size="sm" variant="primary" onClick={() => open(blankEsc())}><Plus className="h-3.5 w-3.5" />New matrix</Button>} />
       <CardBody>
         {messages}
         {list.length ? (
@@ -125,15 +134,16 @@ export function EscalationsPanel({ brand, list, refs }: { brand: string; list: E
                     {e.levels.map((l, i) => <li key={i}>Level {i + 1}, {l.afterMinutes ? `${fmt(l.afterMinutes)} after breach` : "at breach"}: {[l.notifyUserIds.length && `notify ${l.notifyUserIds.map(agent).join(", ")}`, l.emails.length && `email ${l.emails.join(", ")}`, l.reassignTo && `reassign to ${agent(l.reassignTo)}`, l.priority && `priority ${l.priority}`].filter(Boolean).join(" · ") || "no action"}</li>)}
                   </ol>
                 </div>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${e.name}`} onClick={() => setEdit({ ...e })}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${e.name}`} onClick={() => confirm(`Delete "${e.name}"?`) && run("d", deleteEscalationAction(brand, e.id))}><Trash2 className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Edit ${e.name}`} onClick={() => open({ ...e })}><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Delete ${e.name}`} onClick={async () => { if (await confirm({ title: `Delete “${e.name}”?`, description: "Tickets it covered stop getting its warnings and escalations." })) run("d", deleteEscalationAction(brand, e.id), () => `${e.name} deleted.`); }}><Trash2 className="h-3.5 w-3.5" /></Button>
               </li>
             ))}
           </ul>
         ) : <EmptyState icon={<Siren className="h-5 w-5" />} title="No escalation matrix" description="Without one, breached tickets are only flagged in the inbox." />}
       </CardBody>
-      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New escalation matrix"}
-        footer={<><Button onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" loading={busy === "save"} onClick={async () => { if (edit && (await run("save", saveEscalationAction(brand, edit)))) setEdit(null); }}>Save</Button></>}>
+      {confirmDialog}
+      <Dialog size="xl" open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? `Edit ${edit.name}` : "New escalation matrix"} error={error} onSubmit={save}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={busy === "save"}>Save</Button></>}>
         {edit && (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">

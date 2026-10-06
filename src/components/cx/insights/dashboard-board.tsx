@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { createShareAction, deleteDashboardAction, previewWidgetAction, revokeShareAction, updateDashboardAction, widgetInsightAction } from "@/app/(app)/cx/dashboards/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout, EmptyState, Spinner } from "@/components/ui/feedback";
@@ -271,7 +272,7 @@ function WidgetBuilder({ brand, dashboardId, initial, options, isNew, onClose, o
       description="Pick a data source, a metric and how to slice it. Everything is computed from records stored for this brand."
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" disabled={!preview || !!error || !w.title.trim()} onClick={() => preview && onSave({ ...preview.widget, title: w.title.trim() }, preview.result)}>
             {isNew ? "Add to dashboard" : "Save widget"}
           </Button>
@@ -443,71 +444,77 @@ function SettingsDialog({ open, onClose, brand, meta, options, shares, onSaved, 
   const [shared, setShared] = useState(meta.shared);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title="Dashboard settings"
-      footer={
-        <>
-          <Button variant="danger" className="mr-auto" disabled={pending} onClick={() => confirm("Delete this dashboard?") && start(async () => { const r = await deleteDashboardAction(brand, meta.id); if (r.ok) onDeleted(); else setError(r.error); })}>
-            Delete
+    <>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        title="Dashboard settings"
+        error={error}
+        footerStart={
+          <Button variant="ghost" className="text-critical-ink" disabled={pending} onClick={async () => (await confirm({ title: `Delete the dashboard “${meta.name}”?`, description: "Its widgets are deleted and any public links stop working." })) && start(async () => { const r = await deleteDashboardAction(brand, meta.id); if (r.ok) onDeleted(); else setError(r.error); })}>
+            <Trash2 className="h-3.5 w-3.5" /> Delete
           </Button>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={pending} onClick={() => start(async () => { const r = await updateDashboardAction(brand, meta.id, { name, description, shared, theme, filters: { ...filters, fields: (filters.fields ?? []).filter((f) => f.value) } }); if (r.ok) { onClose(); onSaved(); } else setError(r.error); })}>
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        {error && <Callout tone="critical">{error}</Callout>}
-        <Field label="Name" htmlFor="d-name">
-          <Input id="d-name" value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Description" htmlFor="d-desc">
-          <Textarea id="d-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </Field>
-        <label className="flex items-center gap-2 text-[13px] text-text">
-          <Checkbox checked={shared} onChange={(e) => setShared(e.target.checked)} /> Share with everyone on this brand
-          <Badge tone={shared ? "good" : "neutral"}>{shared ? "Shared" : "Private"}</Badge>
-        </label>
-        <Field label="Theme" htmlFor="d-theme">
-          <div className="flex flex-wrap items-center gap-2">
-            <Select id="d-theme" value={theme} onChange={(e) => setTheme(e.target.value)} className="w-44">
-              {THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-            </Select>
-            <span className="flex gap-1" aria-hidden>
-              {(THEMES.find((t) => t.id === theme)?.colors.length ? THEMES.find((t) => t.id === theme)!.colors : [1, 2, 3, 4, 5, 6].map((i) => `var(--series-${i})`)).map((c, i) => <span key={i} className="h-4 w-4 rounded-sm" style={{ background: c }} />)}
-            </span>
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" loading={pending} onClick={() => start(async () => { const r = await updateDashboardAction(brand, meta.id, { name, description, shared, theme, filters: { ...filters, fields: (filters.fields ?? []).filter((f) => f.value) } }); if (r.ok) { onClose(); onSaved(); } else setError(r.error); })}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Name" htmlFor="d-name">
+            <Input id="d-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Description" htmlFor="d-desc">
+            <Textarea id="d-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          </Field>
+          <label className="flex items-center gap-2 text-[13px] text-text">
+            <Checkbox checked={shared} onChange={(e) => setShared(e.target.checked)} /> Share with everyone on this brand
+            <Badge tone={shared ? "good" : "neutral"}>{shared ? "Shared" : "Private"}</Badge>
+          </label>
+          <Field label="Theme" htmlFor="d-theme">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select id="d-theme" value={theme} onChange={(e) => setTheme(e.target.value)} className="w-44">
+                {THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </Select>
+              <span className="flex gap-1" aria-hidden>
+                {(THEMES.find((t) => t.id === theme)?.colors.length ? THEMES.find((t) => t.id === theme)!.colors : [1, 2, 3, 4, 5, 6].map((i) => `var(--series-${i})`)).map((c, i) => <span key={i} className="h-4 w-4 rounded-sm" style={{ background: c }} />)}
+              </span>
+            </div>
+          </Field>
+          <div>
+            <div className="mb-1.5 text-[12.5px] font-semibold text-text">Dashboard filters <span className="font-normal text-text-3">(apply to every widget; a widget&apos;s own filter wins)</span></div>
+            <div className="grid grid-cols-2 gap-2">
+              <Select aria-label="Channel filter" value={filters.channel ?? ""} onChange={(e) => setF("channel", e.target.value)}><option value="">Any channel</option>{options.channels.map((c) => <option key={c} value={c}>{c}</option>)}</Select>
+              <Select aria-label="Priority filter" value={filters.priority ?? ""} onChange={(e) => setF("priority", e.target.value)}><option value="">Any priority</option>{["urgent", "high", "normal", "low"].map((c) => <option key={c} value={c}>{c}</option>)}</Select>
+              <Select aria-label="Sentiment filter" value={filters.sentiment ?? ""} onChange={(e) => setF("sentiment", e.target.value)}><option value="">Any sentiment</option>{["positive", "neutral", "negative"].map((c) => <option key={c} value={c}>{c}</option>)}</Select>
+              <Select aria-label="Tag filter" value={filters.tag ?? ""} onChange={(e) => setF("tag", e.target.value)}><option value="">Any tag</option>{options.tags.map((c) => <option key={c} value={c}>{c}</option>)}</Select>
+            </div>
+            <FieldFilters fields={options.fields} classifications={options.classifications} value={{ fields: filters.fields ?? [], classificationIds: filters.classificationIds ?? [] }} onChange={(v) => setFilters({ ...filters, ...v })} />
           </div>
-        </Field>
-        <div>
-          <div className="mb-1.5 text-[12.5px] font-semibold text-text">Dashboard filters <span className="font-normal text-text-3">(apply to every widget; a widget&apos;s own filter wins)</span></div>
-          <div className="grid grid-cols-2 gap-2">
-            <Select aria-label="Channel filter" value={filters.channel ?? ""} onChange={(e) => setF("channel", e.target.value)}><option value="">Any channel</option>{options.channels.map((c) => <option key={c} value={c}>{c}</option>)}</Select>
-            <Select aria-label="Priority filter" value={filters.priority ?? ""} onChange={(e) => setF("priority", e.target.value)}><option value="">Any priority</option>{["urgent", "high", "normal", "low"].map((c) => <option key={c} value={c}>{c}</option>)}</Select>
-            <Select aria-label="Sentiment filter" value={filters.sentiment ?? ""} onChange={(e) => setF("sentiment", e.target.value)}><option value="">Any sentiment</option>{["positive", "neutral", "negative"].map((c) => <option key={c} value={c}>{c}</option>)}</Select>
-            <Select aria-label="Tag filter" value={filters.tag ?? ""} onChange={(e) => setF("tag", e.target.value)}><option value="">Any tag</option>{options.tags.map((c) => <option key={c} value={c}>{c}</option>)}</Select>
+          <div className="rounded-md border border-border p-3">
+            <div className="mb-1 flex items-center gap-2 text-[12.5px] font-semibold text-text"><Link2 className="h-4 w-4" /> Public links</div>
+            <p className="mb-2 text-[12px] text-text-3">Anyone with a link can view this dashboard (read-only, live data) without signing in. Revoke a link to disable it.</p>
+            {shares.map((l) => {
+              const url = `${origin}/share/${l.token}`;
+              return (
+                <div key={l.token} className="mb-1.5 flex items-center gap-2">
+                  <Input readOnly value={url} aria-label="Share link" className="min-w-0 flex-1 text-[12px]" onFocus={(e) => e.target.select()} />
+                  <Button size="sm" onClick={() => navigator.clipboard?.writeText(url).then(() => setCopied(l.token))}>{copied === l.token ? "Copied" : "Copy"}</Button>
+                  <Button size="sm" variant="ghost" onClick={() => start(async () => { const r = await revokeShareAction(brand, l.token); if (r.ok) onSaved(); else setError(r.error); })}>Revoke</Button>
+                </div>
+              );
+            })}
+            <Button size="sm" disabled={pending} onClick={() => start(async () => { const r = await createShareAction(brand, meta.id); if (r.ok) onSaved(); else setError(r.error); })}><Plus className="h-3.5 w-3.5" /> Create public link</Button>
           </div>
-          <FieldFilters fields={options.fields} classifications={options.classifications} value={{ fields: filters.fields ?? [], classificationIds: filters.classificationIds ?? [] }} onChange={(v) => setFilters({ ...filters, ...v })} />
         </div>
-        <div className="rounded-md border border-border p-3">
-          <div className="mb-1 flex items-center gap-2 text-[12.5px] font-semibold text-text"><Link2 className="h-4 w-4" /> Public links</div>
-          <p className="mb-2 text-[12px] text-text-3">Anyone with a link can view this dashboard (read-only, live data) without signing in. Revoke a link to disable it.</p>
-          {shares.map((l) => {
-            const url = `${origin}/share/${l.token}`;
-            return (
-              <div key={l.token} className="mb-1.5 flex items-center gap-2">
-                <Input readOnly value={url} aria-label="Share link" className="min-w-0 flex-1 text-[12px]" onFocus={(e) => e.target.select()} />
-                <Button size="sm" onClick={() => navigator.clipboard?.writeText(url).then(() => setCopied(l.token))}>{copied === l.token ? "Copied" : "Copy"}</Button>
-                <Button size="sm" variant="ghost" onClick={() => start(async () => { const r = await revokeShareAction(brand, l.token); if (r.ok) onSaved(); else setError(r.error); })}>Revoke</Button>
-              </div>
-            );
-          })}
-          <Button size="sm" disabled={pending} onClick={() => start(async () => { const r = await createShareAction(brand, meta.id); if (r.ok) onSaved(); else setError(r.error); })}><Plus className="h-3.5 w-3.5" /> Create public link</Button>
-        </div>
-      </div>
-    </Dialog>
+      </Dialog>
+      {confirmDialog}
+    </>
   );
 }

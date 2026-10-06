@@ -10,6 +10,7 @@ import type { OverviewRow, TagRef } from "@/lib/position-tracking/types";
 import type { Intent } from "@/lib/seo/types";
 import { IntentBadges, SerpFeatureIcons } from "@/components/seo/badges";
 import { Button, buttonClass } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -75,6 +76,7 @@ export function OverviewTable({
   const [tagName, setTagName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const domains = useMemo(() => [domain, ...competitors], [domain, competitors]);
   const openRow = rows.find((r) => r.id === openId) ?? null;
 
@@ -199,7 +201,14 @@ export function OverviewTable({
     return cols;
   }, [competitors, setKwParam, startDay, endDay, measured]);
 
+  const tagReady = !!tagName.trim() && (tagDialog?.mode !== "remove" || tags.some((t) => t.name.toLowerCase() === tagName.trim().toLowerCase()));
+  const closeTagDialog = () => {
+    setTagDialog(null);
+    setError(null);
+  };
   const applyTag = () =>
+    tagReady &&
+    !pending &&
     start(async () => {
       if (!tagDialog) return;
       setError(null);
@@ -326,8 +335,8 @@ export function OverviewTable({
               variant="ghost"
               className="text-critical-ink"
               loading={pending}
-              onClick={() => {
-                if (!confirm(`Stop tracking ${selected.length} keyword${selected.length === 1 ? "" : "s"}? Their history will be deleted.`)) return;
+              onClick={async () => {
+                if (!(await confirm({ title: `Stop tracking ${selected.length} keyword${selected.length === 1 ? "" : "s"}?`, description: "Their ranking history will be deleted.", confirmLabel: "Stop tracking" }))) return;
                 start(async () => {
                   const res = await deleteKeywordsAction(projectId, selected.map((s) => s.id));
                   if (!res.ok) return setError(res.error);
@@ -346,28 +355,27 @@ export function OverviewTable({
           {error}
         </Callout>
       )}
+      {confirmDialog}
       <Dialog
         open={Boolean(tagDialog)}
-        onClose={() => (setTagDialog(null), setError(null))}
+        onClose={closeTagDialog}
         size="sm"
         title={tagDialog?.mode === "remove" ? "Remove tag" : "Add tag"}
         description={`${tagDialog?.ids.length ?? 0} keyword${tagDialog?.ids.length === 1 ? "" : "s"} selected`}
+        dismissible={!pending}
+        error={tagDialog ? error : null}
+        onSubmit={applyTag}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setTagDialog(null)}>
+            <Button variant="ghost" onClick={closeTagDialog} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={!tagName.trim() || (tagDialog?.mode === "remove" && !tags.some((t) => t.name.toLowerCase() === tagName.trim().toLowerCase()))} onClick={applyTag}>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !tagReady}>
               {tagDialog?.mode === "remove" ? "Remove" : "Apply"}
             </Button>
           </>
         }
       >
-        {error && (
-          <Callout tone="critical" className="mb-3">
-            {error}
-          </Callout>
-        )}
         <Input value={tagName} onChange={(e) => setTagName(e.target.value)} placeholder={tagDialog?.mode === "remove" ? "Tag to remove" : "Existing or new tag"} list="pt-bulk-tags" maxLength={40} autoFocus aria-label="Tag name" />
         <datalist id="pt-bulk-tags">
           {tags.map((t) => (

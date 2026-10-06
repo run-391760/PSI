@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { deleteCampaignAction, reschedulePostAction, saveCampaignAction } from "@/app/(app)/cx/publishing/actions";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -190,6 +191,7 @@ export function CampaignsCard({ brandId, campaigns, canAuthor }: { brandId: stri
   const [edit, setEdit] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const save = () =>
     start(async () => {
       const r = await saveCampaignAction(brandId, { ...edit!, starts_on: edit!.starts_on || null, ends_on: edit!.ends_on || null });
@@ -203,7 +205,7 @@ export function CampaignsCard({ brandId, campaigns, canAuthor }: { brandId: stri
       <CardHeader
         title="Campaigns"
         description="Group posts and short links; campaign dates show as colored bars."
-        actions={canAuthor && <Button size="sm" onClick={() => setEdit({ name: "", color: (campaigns.length % 8) + 1, starts_on: "", ends_on: "", notes: "" })}><Plus className="h-3.5 w-3.5" /> New</Button>}
+        actions={canAuthor && <Button size="sm" onClick={() => { setError(null); setEdit({ name: "", color: (campaigns.length % 8) + 1, starts_on: "", ends_on: "", notes: "" }); }}><Plus className="h-3.5 w-3.5" /> New</Button>}
       />
       <CardBody className="grid gap-1.5">
         {campaigns.length ? (
@@ -218,8 +220,8 @@ export function CampaignsCard({ brandId, campaigns, canAuthor }: { brandId: stri
               </span>
               {canAuthor && (
                 <>
-                  <Button size="icon" variant="ghost" aria-label="Edit" onClick={() => setEdit({ id: c.id, name: c.name, color: c.color, starts_on: c.starts_on ?? "", ends_on: c.ends_on ?? "", notes: c.notes })}><Pencil className="h-3.5 w-3.5" /></Button>
-                  <Button size="icon" variant="ghost" aria-label="Delete" disabled={pending} onClick={() => confirm(`Delete campaign "${c.name}"? Posts stay, without campaign.`) && start(async () => { await deleteCampaignAction(brandId, c.id); router.refresh(); })}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" aria-label="Edit" onClick={() => { setError(null); setEdit({ id: c.id, name: c.name, color: c.color, starts_on: c.starts_on ?? "", ends_on: c.ends_on ?? "", notes: c.notes }); }}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button size="icon" variant="ghost" aria-label="Delete" disabled={pending} onClick={async () => (await confirm({ title: `Delete the campaign “${c.name}”?`, description: "Its posts stay, without a campaign." })) && start(async () => { await deleteCampaignAction(brandId, c.id); router.refresh(); })}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </>
               )}
             </div>
@@ -233,11 +235,13 @@ export function CampaignsCard({ brandId, campaigns, canAuthor }: { brandId: stri
         open={!!edit}
         onClose={() => setEdit(null)}
         title={edit?.id ? "Edit campaign" : "New campaign"}
-        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button variant="primary" disabled={pending || !edit?.name.trim()} onClick={save}>Save</Button></>}
+        error={error}
+        onSubmit={() => !pending && edit?.name.trim() && save()}
+        footer={<><Button variant="ghost" onClick={() => setEdit(null)}>Cancel</Button><Button type="submit" variant="primary" loading={pending} disabled={pending || !edit?.name.trim()}>Save</Button></>}
       >
         {edit && (
           <div className="grid gap-3">
-            <Field label="Name" htmlFor="cp-name"><Input id="cp-name" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+            <Field label="Name" htmlFor="cp-name"><Input id="cp-name" autoFocus value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Starts" htmlFor="cp-s"><Input id="cp-s" type="date" value={edit.starts_on} onChange={(e) => setEdit({ ...edit, starts_on: e.target.value })} /></Field>
               <Field label="Ends" htmlFor="cp-e"><Input id="cp-e" type="date" value={edit.ends_on} onChange={(e) => setEdit({ ...edit, ends_on: e.target.value })} /></Field>
@@ -246,15 +250,15 @@ export function CampaignsCard({ brandId, campaigns, canAuthor }: { brandId: stri
               <span className="mb-1 block text-[13px] font-medium">Color</span>
               <div className="flex gap-1.5">
                 {Array.from({ length: 8 }, (_, i) => i + 1).map((n) => (
-                  <button key={n} type="button" aria-label={`Color ${n}`} onClick={() => setEdit({ ...edit, color: n })} className={cn("h-6 w-6 rounded-md border-2", edit.color === n ? "border-text" : "border-transparent")} style={{ background: `var(--series-${n})` }} />
+                  <button key={n} type="button" aria-label={`Color ${n}`} aria-pressed={edit.color === n} onClick={() => setEdit({ ...edit, color: n })} className={cn("h-8 w-8 rounded-md border-2", edit.color === n ? "border-text" : "border-transparent")} style={{ background: `var(--series-${n})` }} />
                 ))}
               </div>
             </div>
             <Field label="Notes" htmlFor="cp-n"><Textarea id="cp-n" rows={3} value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
-            {error && <Callout tone="critical">{error}</Callout>}
           </div>
         )}
       </Dialog>
+      {confirmDialog}
     </Card>
   );
 }

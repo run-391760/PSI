@@ -7,6 +7,7 @@ import { useState, useTransition } from "react";
 import { createTagAction, deleteTagAction, renameTagAction } from "@/app/(app)/position-tracking/actions";
 import { compact, num, pct } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { DataTable } from "@/components/ui/data-table";
 import { Callout } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ export function TagsManager({ rows, projectId, base, trafficLabel = "Est. traffi
   const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) =>
     start(async () => {
       setError(null);
@@ -117,7 +119,7 @@ export function TagsManager({ rows, projectId, base, trafficLabel = "Est. traffi
                   className="h-7 w-7 text-critical-ink"
                   aria-label={`Delete ${r.name}`}
                   title="Delete tag (keywords stay tracked)"
-                  onClick={() => confirm(`Delete the tag “${r.name}”? Keywords stay tracked; alert rules scoped to it apply to all keywords.`) && run(() => deleteTagAction(projectId, r.id))}
+                  onClick={async () => (await confirm({ title: `Delete the tag “${r.name}”?`, description: "Keywords stay tracked; alert rules scoped to it apply to all keywords.", confirmLabel: "Delete tag" })) && run(() => deleteTagAction(projectId, r.id))}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -126,6 +128,7 @@ export function TagsManager({ rows, projectId, base, trafficLabel = "Est. traffi
           },
         ]}
       />
+      {confirmDialog}
     </>
   );
 }

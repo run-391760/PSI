@@ -139,7 +139,7 @@ function AddForm({ brand, kind }: { brand: string; kind: "handle" | "post" }) {
       </div>
       <div className="flex gap-1.5">
         <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" aria-label="Label" className="h-8 min-w-0 flex-1" maxLength={80} />
-        <Button type="submit" size="sm" className="h-8" loading={pending} disabled={!value.trim()}>
+        <Button type="submit" size="sm" className="h-8" loading={pending} disabled={pending || !value.trim()}>
           <Plus className="h-3.5 w-3.5" /> Add {kind === "handle" ? "handle" : "post"}
         </Button>
       </div>

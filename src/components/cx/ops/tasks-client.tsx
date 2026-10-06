@@ -9,6 +9,7 @@ import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataTable, type Column } from "@/components/ui/data-table";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -107,12 +108,23 @@ function TaskDetail({ brand, detail, readOnly, canDelete, onEdit, onClose }: { b
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
+  const remove = async () => {
+    if (!(await confirm({ title: `Delete task T-${t.number}?`, description: t.title }))) return;
+    setDeleting(true); setError(null);
+    const r = await deleteTaskAction(brand, t.id);
+    setDeleting(false);
+    if (!r.ok) return setError(r.error);
+    onClose(); router.refresh();
+  };
   return (
-    <Dialog open onClose={onClose} size="lg" title={<span><span className="font-normal text-text-3">T-{t.number}</span> {t.title}</span>}
+    <>
+    <Dialog open onClose={onClose} size="lg" title={<span><span className="font-normal text-text-3">T-{t.number}</span> {t.title}</span>} error={error}
       description={t.ticket_id ? <Link href={`/cx/inbox?brand=${brand}&view=all&t=${t.ticket_id}`} className="text-link hover:underline">Ticket #{t.ticket_number}: {t.ticket_subject}</Link> : "Standalone task"}
+      footerStart={canDelete && !readOnly && <Button variant="ghost" className="text-critical-ink" loading={deleting} onClick={remove}>{!deleting && <Trash2 className="h-3.5 w-3.5" />}Delete</Button>}
       footer={<>
-        {canDelete && !readOnly && <Button variant="ghost" className="mr-auto text-critical-ink" onClick={async () => { if (!confirm(`Delete task T-${t.number}?`)) return; const r = await deleteTaskAction(brand, t.id); if (!r.ok) return setError(r.error); onClose(); router.refresh(); }}><Trash2 className="h-3.5 w-3.5" />Delete</Button>}
-        <Button onClick={onClose}>Close</Button>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
         {!readOnly && <Button variant="primary" onClick={onEdit}><Pencil className="h-3.5 w-3.5" />Edit</Button>}
       </>}>
       <div className="space-y-3 text-[13px]">
@@ -126,12 +138,11 @@ function TaskDetail({ brand, detail, readOnly, canDelete, onEdit, onClose }: { b
         </div>
         {t.description ? <p className="rounded-md bg-surface-2 p-2.5 whitespace-pre-wrap text-text">{t.description}</p> : <p className="text-text-3">No description.</p>}
         {!readOnly && (
-          <form className="space-y-1.5" onSubmit={async (e) => { e.preventDefault(); setBusy(true); const r = await commentTaskAction(brand, t.id, comment); setBusy(false); if (!r.ok) return setError(r.error); setComment(""); router.refresh(); }}>
+          <form className="space-y-1.5" onSubmit={async (e) => { e.preventDefault(); if (busy || !comment.trim()) return; setBusy(true); setError(null); const r = await commentTaskAction(brand, t.id, comment); setBusy(false); if (!r.ok) return setError(r.error); setComment(""); router.refresh(); }}>
             <Textarea rows={2} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add a comment or progress note…" aria-label="Comment" />
-            <div className="flex justify-end"><Button size="sm" type="submit" disabled={busy || !comment.trim()}>{busy ? "Saving…" : "Comment"}</Button></div>
+            <div className="flex justify-end"><Button size="sm" type="submit" loading={busy} disabled={busy || !comment.trim()}>Comment</Button></div>
           </form>
         )}
-        {error && <Callout tone="critical">{error}</Callout>}
         <div>
           <div className="mb-1 text-[11.5px] font-medium tracking-wide text-text-3 uppercase">Activity</div>
           <ul className="space-y-1.5">
@@ -146,6 +157,8 @@ function TaskDetail({ brand, detail, readOnly, canDelete, onEdit, onClose }: { b
         </div>
       </div>
     </Dialog>
+    {confirmDialog}
+    </>
   );
 }
 const KV = ({ label, children }: { label: string; children: React.ReactNode }) => (

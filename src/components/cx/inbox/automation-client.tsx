@@ -6,6 +6,7 @@ import { useState } from "react";
 import { deleteCannedAction, deleteRuleAction, moveRuleAction, saveCannedAction, saveRuleAction, testRulesAction, toggleRuleAction } from "@/app/(app)/cx/settings/automation/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Callout, EmptyState } from "@/components/ui/feedback";
@@ -32,6 +33,8 @@ export function AutomationClient({ brand, rules, canned, agents, teams }: Props)
   const [draft, setDraft] = useState<Draft | null>(null);
   const [cannedDraft, setCannedDraft] = useState<{ id?: string; title: string; shortcut: string; body: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
   const run = async (p: Promise<{ ok: boolean; error?: string }>) => {
     setError(null);
     const r = await p;
@@ -39,12 +42,28 @@ export function AutomationClient({ brand, rules, canned, agents, teams }: Props)
     router.refresh();
     return r.ok;
   };
+  // Dialog saves: busy state against double submits; the dialog closes only on success.
+  const saveWith = async (p: () => Promise<{ ok: boolean; error?: string }>, done: () => void) => {
+    if (saving) return;
+    setSaving(true);
+    const ok = await run(p());
+    setSaving(false);
+    if (ok) done();
+  };
+  const openRule = (d: Draft) => {
+    setError(null);
+    setDraft(d);
+  };
+  const openCanned = (c: NonNullable<typeof cannedDraft>) => {
+    setError(null);
+    setCannedDraft(c);
+  };
   const newDraft = (kind: "route" | "tag"): Draft => ({ kind, name: "", active: true, match: "all", conditions: [{ field: kind === "tag" ? "keyword" : "intent", op: kind === "tag" ? "contains" : "is", value: "" }], team: "", assignee: "", priority: "", tags: "" });
   const edit = (r: RuleRow): Draft => ({ id: r.id, kind: r.kind, name: r.name, active: r.active, match: r.match, conditions: r.conditions, team: r.actions.team ?? "", assignee: r.actions.assignee ?? "", priority: r.actions.priority ?? "", tags: (r.actions.tags ?? []).join(", ") });
 
   const list = (kind: "route" | "tag") => {
     const rs = rules.filter((r) => r.kind === kind);
-    if (!rs.length) return <EmptyState title={kind === "route" ? "No routing rules" : "No tag rules"} description={kind === "route" ? "Example: intent is cancellation → team Retention, priority high." : "Example: message contains refund, money back → tag refund."} action={<Button size="sm" variant="primary" onClick={() => setDraft(newDraft(kind))}><Plus className="h-3.5 w-3.5" />Add rule</Button>} />;
+    if (!rs.length) return <EmptyState title={kind === "route" ? "No routing rules" : "No tag rules"} description={kind === "route" ? "Example: intent is cancellation → team Retention, priority high." : "Example: message contains refund, money back → tag refund."} action={<Button size="sm" variant="primary" onClick={() => openRule(newDraft(kind))}><Plus className="h-3.5 w-3.5" />Add rule</Button>} />;
     return (
       <ul className="divide-y divide-border">
         {rs.map((r, i) => (
@@ -73,8 +92,8 @@ export function AutomationClient({ brand, rules, canned, agents, teams }: Props)
             </div>
             <div className="flex gap-0.5">
               {kind === "route" && <><Button size="icon" variant="ghost" disabled={i === 0} onClick={() => run(moveRuleAction(brand, r.id, -1))} aria-label="Move up"><ArrowUp className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" disabled={i === rs.length - 1} onClick={() => run(moveRuleAction(brand, r.id, 1))} aria-label="Move down"><ArrowDown className="h-3.5 w-3.5" /></Button></>}
-              <Button size="icon" variant="ghost" onClick={() => setDraft(edit(r))} aria-label="Edit rule"><Pencil className="h-3.5 w-3.5" /></Button>
-              <Button size="icon" variant="ghost" onClick={() => run(deleteRuleAction(brand, r.id))} aria-label="Delete rule"><Trash className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" onClick={() => openRule(edit(r))} aria-label="Edit rule"><Pencil className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" onClick={async () => (await confirm({ title: `Delete the rule “${r.name}”?`, description: "New tickets are no longer checked against it." })) && run(deleteRuleAction(brand, r.id))} aria-label="Delete rule"><Trash className="h-3.5 w-3.5" /></Button>
             </div>
             </div>
           </li>
@@ -85,18 +104,18 @@ export function AutomationClient({ brand, rules, canned, agents, teams }: Props)
 
   return (
     <div className="space-y-4">
-      {error && <Callout tone="critical">{error}</Callout>}
+      {error && !draft && !cannedDraft && <Callout tone="critical">{error}</Callout>}
       <Card>
-        <CardHeader title="Routing rules" description="Checked top to bottom; the first matching rule sets team, assignee and priority (and may add tags)." actions={<Button size="sm" variant="primary" onClick={() => setDraft(newDraft("route"))}><Plus className="h-3.5 w-3.5" />Add rule</Button>} />
+        <CardHeader title="Routing rules" description="Checked top to bottom; the first matching rule sets team, assignee and priority (and may add tags)." actions={<Button size="sm" variant="primary" onClick={() => openRule(newDraft("route"))}><Plus className="h-3.5 w-3.5" />Add rule</Button>} />
         {list("route")}
       </Card>
       <Card>
-        <CardHeader title="Auto-tagging" description="Every matching rule adds its tags to the new ticket." actions={<Button size="sm" onClick={() => setDraft(newDraft("tag"))}><Plus className="h-3.5 w-3.5" />Add tag rule</Button>} />
+        <CardHeader title="Auto-tagging" description="Every matching rule adds its tags to the new ticket." actions={<Button size="sm" onClick={() => openRule(newDraft("tag"))}><Plus className="h-3.5 w-3.5" />Add tag rule</Button>} />
         {list("tag")}
       </Card>
       <RuleTester brand={brand} rules={rules} />
       <Card id="canned">
-        <CardHeader title="Canned responses" description="Reusable replies for the inbox composer. Placeholders: {{first_name}}, {{name}}, {{ticket}}, {{brand}}, {{agent}}." actions={<Button size="sm" onClick={() => setCannedDraft({ title: "", shortcut: "", body: "" })}><Plus className="h-3.5 w-3.5" />Add response</Button>} />
+        <CardHeader title="Canned responses" description="Reusable replies for the inbox composer. Placeholders: {{first_name}}, {{name}}, {{ticket}}, {{brand}}, {{agent}}." actions={<Button size="sm" onClick={() => openCanned({ title: "", shortcut: "", body: "" })}><Plus className="h-3.5 w-3.5" />Add response</Button>} />
         {canned.length === 0 ? (
           <EmptyState title="No canned responses" description="Save answers to common questions and insert them in one click while replying." />
         ) : (
@@ -108,44 +127,43 @@ export function AutomationClient({ brand, rules, canned, agents, teams }: Props)
                   <p className="mt-0.5 line-clamp-2 text-[12.5px] whitespace-pre-wrap text-text-2">{c.body}</p>
                 </div>
                 <span className="text-[12px] text-text-3 tabular-nums">used {c.uses}×</span>
-                <Button size="icon" variant="ghost" onClick={() => setCannedDraft(c)} aria-label="Edit response"><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" onClick={() => run(deleteCannedAction(brand, c.id))} aria-label="Delete response"><Trash className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" onClick={() => openCanned(c)} aria-label="Edit response"><Pencil className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" onClick={async () => (await confirm({ title: `Delete the canned response “${c.title}”?` })) && run(deleteCannedAction(brand, c.id))} aria-label="Delete response"><Trash className="h-3.5 w-3.5" /></Button>
               </li>
             ))}
           </ul>
         )}
       </Card>
 
-      {draft && <RuleDialog draft={draft} agents={agents} teams={teams} onClose={() => setDraft(null)} onSave={async (d) => {
-        const ok = await run(saveRuleAction(brand, { id: d.id, kind: d.kind, name: d.name, active: d.active, match: d.match, conditions: d.conditions, actions: { team: d.team || null, assignee: d.assignee || null, priority: (d.priority || null) as never, tags: d.tags.split(",").map((t) => t.trim()).filter(Boolean) } }));
-        if (ok) setDraft(null);
-      }} error={error} />}
+      {draft && <RuleDialog draft={draft} agents={agents} teams={teams} saving={saving} onClose={() => setDraft(null)} onSave={(d) =>
+        saveWith(() => saveRuleAction(brand, { id: d.id, kind: d.kind, name: d.name, active: d.active, match: d.match, conditions: d.conditions, actions: { team: d.team || null, assignee: d.assignee || null, priority: (d.priority || null) as never, tags: d.tags.split(",").map((t) => t.trim()).filter(Boolean) } }), () => setDraft(null))
+      } error={error} />}
       {cannedDraft && (
-        <Dialog open onClose={() => setCannedDraft(null)} title={cannedDraft.id ? "Edit canned response" : "New canned response"}
-          footer={<><Button onClick={() => setCannedDraft(null)}>Cancel</Button><Button variant="primary" onClick={async () => { if (await run(saveCannedAction(brand, cannedDraft))) setCannedDraft(null); }}>Save</Button></>}>
+        <Dialog open onClose={() => setCannedDraft(null)} title={cannedDraft.id ? "Edit canned response" : "New canned response"} error={error}
+          footer={<><Button variant="ghost" onClick={() => setCannedDraft(null)}>Cancel</Button><Button variant="primary" loading={saving} onClick={() => saveWith(() => saveCannedAction(brand, cannedDraft), () => setCannedDraft(null))}>Save</Button></>}>
           <div className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-              <Field label="Title" htmlFor="cn-t"><Input id="cn-t" value={cannedDraft.title} onChange={(e) => setCannedDraft({ ...cannedDraft, title: e.target.value })} placeholder="Refund policy" /></Field>
+              <Field label="Title" htmlFor="cn-t"><Input id="cn-t" autoFocus value={cannedDraft.title} onChange={(e) => setCannedDraft({ ...cannedDraft, title: e.target.value })} placeholder="Refund policy" /></Field>
               <Field label="Shortcut" htmlFor="cn-s"><Input id="cn-s" value={cannedDraft.shortcut} onChange={(e) => setCannedDraft({ ...cannedDraft, shortcut: e.target.value })} placeholder="refund" /></Field>
             </div>
             <Field label="Text" htmlFor="cn-b" hint="{{first_name}}, {{name}}, {{ticket}}, {{brand}}, {{agent}} are filled in when inserted."><Textarea id="cn-b" rows={7} value={cannedDraft.body} onChange={(e) => setCannedDraft({ ...cannedDraft, body: e.target.value })} placeholder={"Hi {{first_name}},\n\nThanks for reaching out about ticket {{ticket}}…\n\n{{agent}}, {{brand}}"} /></Field>
-            {error && <Callout tone="critical">{error}</Callout>}
           </div>
         </Dialog>
       )}
+      {confirmDialog}
     </div>
   );
 }
 
-function RuleDialog({ draft, agents, teams, onClose, onSave, error }: { draft: Draft; agents: Agent[]; teams: string[]; onClose: () => void; onSave: (d: Draft) => void; error: string | null }) {
+function RuleDialog({ draft, agents, teams, onClose, onSave, error, saving }: { draft: Draft; agents: Agent[]; teams: string[]; onClose: () => void; onSave: (d: Draft) => void; error: string | null; saving?: boolean }) {
   const [d, setD] = useState(draft);
   const setCond = (i: number, c: Partial<RuleCondition>) => setD((x) => ({ ...x, conditions: x.conditions.map((y, j) => (j === i ? { ...y, ...c } : y)) }));
   return (
-    <Dialog open onClose={onClose} size="lg" title={`${d.id ? "Edit" : "New"} ${d.kind === "route" ? "routing" : "auto-tag"} rule`}
-      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={() => onSave(d)}>Save rule</Button></>}>
+    <Dialog open onClose={onClose} size="lg" title={`${d.id ? "Edit" : "New"} ${d.kind === "route" ? "routing" : "auto-tag"} rule`} error={error}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={saving} onClick={() => onSave(d)}>Save rule</Button></>}>
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-          <Field label="Name" htmlFor="r-n"><Input id="r-n" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder={d.kind === "route" ? "Churn risk to Retention" : "Tag refunds"} /></Field>
+          <Field label="Name" htmlFor="r-n"><Input id="r-n" autoFocus value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder={d.kind === "route" ? "Churn risk to Retention" : "Tag refunds"} /></Field>
           <label className="flex items-center gap-2 self-end pb-2 text-[13px] text-text"><Checkbox checked={d.active} onChange={(e) => setD({ ...d, active: e.target.checked })} />Active</label>
         </div>
         <div>
@@ -189,7 +207,6 @@ function RuleDialog({ draft, agents, teams, onClose, onSave, error }: { draft: D
             <Field label="Add tags" htmlFor="r-tg2"><Input id="r-tg2" value={d.tags} onChange={(e) => setD({ ...d, tags: e.target.value })} placeholder="refund, billing" /></Field>
           )}
         </div>
-        {error && <Callout tone="critical">{error}</Callout>}
       </div>
     </Dialog>
   );

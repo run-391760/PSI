@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { actionError, type ActionResult } from "@/app/(app)/projects/actions";
-import { suggestReply } from "@/lib/cx/ai";
+import { aiConfigured, suggestReply } from "@/lib/cx/ai";
 import { classifyTicket } from "@/lib/cx/admin/fields";
 import { query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
@@ -78,7 +78,11 @@ export async function suggestReplyAction(brand: string, ticketId: string): Promi
     const d = await getTicket(brand, ticketId);
     if (!d) throw new AppError("Ticket not found.", 404);
     const conversation = d.messages.filter((m) => m.direction !== "note").slice(-20).map((m) => ({ from: m.direction === "in" ? ("customer" as const) : ("agent" as const), text: m.body.slice(0, 3000) }));
-    return suggestReply({ brand: project.name, conversation });
+    // null = no AI key (the UI explains how to connect one); a configured provider that fails is an error.
+    if (!aiConfigured()) return null;
+    const reply = await suggestReply({ brand: project.name, conversation });
+    if (reply === null) throw new AppError("The AI provider did not answer. Try again.", 502);
+    return reply;
   }, { revalidate: false });
 }
 

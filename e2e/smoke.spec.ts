@@ -25,8 +25,6 @@ const ROUTES = [
   "/bulk-analysis",
   "/site-audit",
   "/on-page-checker",
-  "/seo-content-template?q=running+shoes&db=US",
-  "/writing-assistant",
   "/optimizer",
   "/optimizer/search-intent",
   "/optimizer/content-quality",

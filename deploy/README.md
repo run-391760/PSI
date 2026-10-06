@@ -43,6 +43,16 @@ gcloud compute instances add-metadata synapseseo --zone asia-south1-b --metadata
 Metadata is readable by project members with Compute access; keep that in mind for API keys. The
 token-encryption secret (`APP_SECRET`) is generated on the VM and never leaves it.
 
+## Which keys power what
+
+**Settings → Integrations → API keys & where they're used** (`/settings?tab=integrations`, also on CX
+Settings → Integrated Apps) lists every key the SEO and CX workspaces read, whether it is set on this
+server, the variables to add to `synapseseo-env`, and each feature it powers. [`.env.example`](../.env.example)
+has every variable, each with its comment on the line above. Copy only the `NAME=value` lines into
+`synapseseo-env`: the VM loads it with `docker run --env-file`, which keeps anything after `=` (an inline
+`# …` comment included) as part of the value. Per-brand tokens (Page tokens, mailboxes, publishing
+accounts) are saved in CX Settings and encrypted with `APP_SECRET`.
+
 ## Google Search Console + GA4 with a service account
 
 ```sh

@@ -14,6 +14,7 @@ import type { ListItem } from "@/lib/keywords/types";
 import { compact } from "@/lib/format";
 import { INTENT_META, IntentBadges, KdBadge, KeywordLink, SerpFeatureIcons, TrendBars, featureLabel } from "@/components/seo/badges";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Dialog, Menu, MenuItem } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
@@ -45,8 +46,12 @@ export function NewListButton({ variant = "primary", label = "New list" }: { var
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const parsed = useMemo(() => parseKeywordInput(text, MAX), [text]);
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const close = () => {
+    setOpen(false);
+    setError(null);
+  };
+  const submit = () => {
+    if (pending || !name.trim()) return;
     setError(null);
     start(async () => {
       const res = await createListAction({ name, db, keywords: parsed.keywords, from: "manual" });
@@ -65,22 +70,24 @@ export function NewListButton({ variant = "primary", label = "New list" }: { var
       </Button>
       <Dialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={close}
         title="Create keyword list"
         description="Lists keep keywords with their metrics so you can cluster them into topics and pages."
+        dismissible={!pending}
+        error={error}
+        onSubmit={submit}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={close} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form="new-list-form" loading={pending} disabled={!name.trim()}>
+            <Button variant="primary" type="submit" loading={pending} disabled={pending || !name.trim()}>
               Create list
             </Button>
           </>
         }
       >
-        <form id="new-list-form" onSubmit={submit} className="space-y-3">
-          {error && <Callout tone="critical">{error}</Callout>}
+        <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-[1.4fr_1fr]">
             <Field label="Name" htmlFor="nl-name">
               <Input id="nl-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Running shoes blog" maxLength={80} autoFocus required />
@@ -92,7 +99,7 @@ export function NewListButton({ variant = "primary", label = "New list" }: { var
           <Field label="Keywords (optional)" htmlFor="nl-kw" hint={`${parsed.keywords.length.toLocaleString()} keywords${parsed.overflow ? ` · ${parsed.overflow} over the ${MAX.toLocaleString()} limit` : ""}. One per line or comma separated.`}>
             <Textarea id="nl-kw" value={text} onChange={(e) => setText(e.target.value)} rows={6} placeholder={"running shoes\ntrail running shoes"} />
           </Field>
-        </form>
+        </div>
       </Dialog>
     </>
   );
@@ -206,12 +213,13 @@ function AddKeywordsDialog({ open, onClose, listId }: { open: boolean; onClose: 
       title="Add keywords"
       description="Metrics are fetched for the list's database when keywords are added."
       size="lg"
+      dismissible={!pending}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
             {result ? "Done" : "Cancel"}
           </Button>
-          <Button variant="primary" type="submit" form="add-kw-form" loading={pending} disabled={!keywords.length}>
+          <Button variant="primary" type="submit" form="add-kw-form" loading={pending} disabled={pending || !keywords.length}>
             Add {keywords.length ? keywords.length.toLocaleString() : ""} keyword{keywords.length === 1 ? "" : "s"}
           </Button>
         </>
@@ -316,54 +324,44 @@ export function ListActions({ listId, name }: { listId: string; name: string }) 
       <AddKeywordsDialog open={adding} onClose={() => setAdding(false)} listId={listId} />
       <Dialog
         open={renaming}
-        onClose={() => setRenaming(false)}
+        onClose={() => (setRenaming(false), setError(null))}
         title="Rename list"
         size="sm"
+        dismissible={!pending}
+        error={error}
+        onSubmit={() => newName.trim() && !pending && run(() => renameListAction(listId, newName), () => setRenaming(false))}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setRenaming(false)}>
+            <Button variant="ghost" onClick={() => (setRenaming(false), setError(null))} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="primary" loading={pending} disabled={!newName.trim()} onClick={() => run(() => renameListAction(listId, newName), () => setRenaming(false))}>
+            <Button type="submit" variant="primary" loading={pending} disabled={pending || !newName.trim()}>
               Save
             </Button>
           </>
         }
       >
-        {error && <Callout tone="critical" className="mb-3">{error}</Callout>}
         <Input value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={80} aria-label="List name" autoFocus />
       </Dialog>
-      <Dialog
+      <ConfirmDialog
         open={deleting}
-        onClose={() => setDeleting(false)}
-        title="Delete this list?"
-        description={`“${name}” and all its keywords will be removed. This cannot be undone.`}
-        size="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setDeleting(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              loading={pending}
-              onClick={() =>
-                start(async () => {
-                  const res = await deleteListAction(listId);
-                  if (!res.ok) return setError(res.error);
-                  setDeleting(false);
-                  router.push("/keyword-strategy");
-                  router.refresh();
-                })
-              }
-            >
-              Delete list
-            </Button>
-          </>
+        onCancel={() => (setDeleting(false), setError(null))}
+        onConfirm={() =>
+          start(async () => {
+            setError(null);
+            const res = await deleteListAction(listId);
+            if (!res.ok) return setError(res.error);
+            setDeleting(false);
+            router.push("/keyword-strategy");
+            router.refresh();
+          })
         }
-      >
-        {error ? <Callout tone="critical">{error}</Callout> : <p className="text-[13px] text-text-2">Keywords you track in Position Tracking are not affected.</p>}
-      </Dialog>
+        title="Delete this list?"
+        description={`“${name}” and all its keywords will be removed. This cannot be undone. Keywords you track in Position Tracking are not affected.`}
+        confirmLabel="Delete list"
+        busy={pending}
+        error={error}
+      />
     </>
   );
 }

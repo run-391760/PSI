@@ -5,7 +5,6 @@ import { useState, useTransition } from "react";
 import { composeFromPromptAction, generateImageAction } from "@/app/(app)/cx/publishing/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Callout } from "@/components/ui/feedback";
 import { Field, Select, Textarea } from "@/components/ui/input";
 import { pubChannel } from "@/lib/cx/publishing/core";
 
@@ -34,36 +33,40 @@ export function AiCompose({ brandId, channel, postType, textAi, imageAi, disable
         onClose={() => setOpen(null)}
         size="lg"
         title={open === "image" ? "Generate an image" : `Write a ${pubChannel(channel)?.name ?? ""} post from a prompt`}
-        description={open === "image" ? "The image is added to the asset library (tagged ai-generated) and attached to this post. Review it before publishing." : "Only facts from your prompt are used; review before scheduling."}
-        footer={
-          <Button
-            variant="primary"
-            disabled={pending || !prompt.trim()}
-            onClick={() =>
-              start(async () => {
-                if (open === "image") {
-                  const r = await generateImageAction(brandId, { prompt, size });
-                  if (!r.ok) return setError(r.error);
-                  if (r.data === null) return setError("No image API key is configured on the server.");
-                  onImage(r.data);
-                } else {
-                  const r = await composeFromPromptAction(brandId, { prompt, channel, postType });
-                  if (!r.ok) return setError(r.error);
-                  if (r.data === null) return setError("No AI key is configured on the server.");
-                  onText(r.data.text, r.data.pollOptions);
-                }
-                setOpen(null);
-                setPrompt("");
-              })
+        description={open === "image" ? "The image is added to the asset library and attached to this post." : "Only facts from your prompt are used; review before scheduling."}
+        error={error}
+        onSubmit={() =>
+          !pending &&
+          prompt.trim() &&
+          start(async () => {
+            setError(null);
+            if (open === "image") {
+              const r = await generateImageAction(brandId, { prompt, size });
+              if (!r.ok) return setError(r.error);
+              if (r.data === null) return setError("No image API key is configured on the server.");
+              onImage(r.data);
+            } else {
+              const r = await composeFromPromptAction(brandId, { prompt, channel, postType });
+              if (!r.ok) return setError(r.error);
+              if (r.data === null) return setError("No AI key is configured on the server.");
+              onText(r.data.text, r.data.pollOptions);
             }
-          >
-            {pending ? (open === "image" ? "Generating…" : "Writing…") : open === "image" ? "Generate" : "Write post"}
-          </Button>
+            setOpen(null);
+            setPrompt("");
+          })
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={pending || !prompt.trim()} loading={pending}>
+              {open === "image" ? "Generate" : "Write post"}
+            </Button>
+          </>
         }
       >
         <div className="grid gap-3">
-          <Field label="Prompt" htmlFor="ai-prompt">
-            <Textarea id="ai-prompt" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={open === "image" ? "A bright flat-lay of autumn products on a wooden table, soft daylight" : "Announce our autumn guide for small businesses; friendly tone; link to the guide"} />
+          <Field label="Prompt" htmlFor="ai-prompt" hint={open === "image" ? "The image is tagged ai-generated. Review it before publishing." : undefined}>
+            <Textarea id="ai-prompt" autoFocus rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={open === "image" ? "A bright flat-lay of autumn products on a wooden table, soft daylight" : "Announce our autumn guide for small businesses; friendly tone; link to the guide"} />
           </Field>
           {open === "image" && (
             <Field label="Size" htmlFor="ai-size">
@@ -74,7 +77,6 @@ export function AiCompose({ brandId, channel, postType, textAi, imageAi, disable
               </Select>
             </Field>
           )}
-          {error && <Callout tone="critical">{error}</Callout>}
         </div>
       </Dialog>
     </>

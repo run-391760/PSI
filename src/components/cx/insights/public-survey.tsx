@@ -131,7 +131,7 @@ export function PublicSurveyForm({ id, kind, question, questions, token, initial
         <Textarea id="sv-comment" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} maxLength={4000} />
       </div>
       {error && <Callout tone="critical">{error}</Callout>}
-      <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={kind !== "custom" && score == null}>
+      <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (kind !== "custom" && score == null)}>
         {rated ? "Update feedback" : "Submit feedback"}
       </Button>
     </form>
