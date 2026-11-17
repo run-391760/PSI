@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AppError } from "@/lib/domain";
-import { CLAUDE_MODEL, llmConfigured, providerLabel, structured as llmStructured, type LlmEffort } from "@/lib/providers/llm";
+import { llmConfigured, providerLabel, structured as llmStructured, type LlmEffort } from "@/lib/providers/llm";
 import { MODULES } from "./features";
 import { isConclusionHeading } from "./parse";
 import type { AiReview, AiTask, Brief, DraftInput, Fix, FixOption, Report, Research } from "./types";
@@ -12,8 +12,6 @@ import type { AiReview, AiTask, Brief, DraftInput, Fix, FixOption, Report, Resea
  * requests fall back server-side to the model Anthropic recommends for the refusal category.
  */
 
-/** Preferred Claude model; the model that actually answered is returned with every result. */
-export const OPT_MODEL = CLAUDE_MODEL;
 export const aiAvailable = () => llmConfigured();
 
 const SYSTEM = `You are a senior SEO editor reviewing articles before publication for a content team.

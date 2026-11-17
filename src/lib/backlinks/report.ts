@@ -75,7 +75,7 @@ export async function getBlIndexedPages(ownerId: string, domain: string): Promis
   return demoOnly(() => demoIndexedPages(domain));
 }
 
-export async function getBlOutbound(ownerId: string, domain: string): Promise<Sourced<{ rows: OutboundRow[]; total: number }>> {
+export async function getBlOutbound(_ownerId: string, domain: string): Promise<Sourced<{ rows: OutboundRow[]; total: number }>> {
   // The DataForSEO Backlinks API has no outbound-domain index; live mode shows an explanation instead.
   if (liveEnabled()) return { data: { rows: [], total: 0 }, source: "dataforseo", fetchedAt: new Date().toISOString(), live: true, note: "Outbound domains are not available from the connected provider." };
   return demoOnly(() => demoOutbound(domain));

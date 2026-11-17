@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  Bot,
   Image as ImageIcon,
   LayoutList,
   Link2,
@@ -106,10 +105,6 @@ export function SerpFeatureIcons({ features, owned = [], max = 5 }: { features: 
       {list.length > max && <span className="text-[11px]">+{list.length - max}</span>}
     </span>
   );
-}
-
-export function AiIcon() {
-  return <Bot className="h-3.5 w-3.5" />;
 }
 
 // ---------------------------------------------------------------- Positions

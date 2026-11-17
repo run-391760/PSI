@@ -157,7 +157,7 @@ export async function slaTick(projectId: string) {
     for (const c of clocks) {
       if (!c.due) continue;
       if (Date.parse(c.due) <= now.getTime()) breachedAt = !breachedAt || c.due < breachedAt ? c.due : breachedAt;
-      const crossed = prebreachTiers(c.start, c.due, tiers, now).filter((x) => Date.parse(c.due!) > now.getTime());
+      const crossed = prebreachTiers(c.start, c.due, tiers, now).filter(() => Date.parse(c.due!) > now.getTime());
       const top = crossed.at(-1);
       if (top != null && !sent.has(`${c.key}:${top}`)) {
         crossed.forEach((x) => newSent.push(`${c.key}:${x}`));

@@ -7,7 +7,6 @@
 import type { AnchorType, BulkRow, BulkTarget, LbProspect } from "./types";
 
 export const dfsAs = (rank?: number | null) => (rank == null ? 0 : Math.round(Math.min(1000, rank) / 10));
-export const dfsDay = (s?: string | null) => (s ? String(s).slice(0, 10) : "");
 const round = (n: number, d = 1) => Math.round(n * 10 ** d) / 10 ** d;
 
 /** Classify an anchor text relative to the target domain (and optional brand terms). */

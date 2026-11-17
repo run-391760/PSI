@@ -14,9 +14,3 @@ export function compareHref(path: string, domains: string[], extra: Record<strin
   return `${path}?${p.toString()}`;
 }
 
-export function toolHref(path: string, params: Record<string, string | undefined>) {
-  const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) p.set(k, v);
-  const s = p.toString();
-  return s ? `${path}?${s}` : path;
-}

@@ -32,7 +32,7 @@ export function MindMap({ root, rootSub, branches, maxLeaves = 6, ariaLabel }: {
   return (
     <div className="scroll-thin overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 760 }} role="img" aria-label={ariaLabel ?? `Mind map of ${root}`} className="text-[12px]">
-        {placed.map(({ b, leaves, leafYs, more, moreY, cy }, i) => (
+        {placed.map(({ leaves, leafYs, more, moreY, cy }, i) => (
           <g key={`l${i}`} fill="none" stroke={series(i)} strokeOpacity={0.45} strokeWidth={1.5}>
             <path d={curve(X0 + 190, rootY, X1 - 8, cy)} />
             {leaves.map((_, j) => (

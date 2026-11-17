@@ -39,11 +39,6 @@ export async function listProfiles(projectId: string): Promise<Profile[]> {
   return rows.map((r) => ({ ...r, color: isHexColor(r.color) ? r.color : colorFor(r.id), handle: profileHandle(r.kind, r.config ?? {}), last_synced_at: iso(r.last_synced_at), created_at: iso(r.created_at)! }));
 }
 
-export async function profileColors(projectId: string): Promise<Record<string, string>> {
-  const rows = await query<{ id: string; color: string | null }>("SELECT ch.id, m.color FROM cx_channels ch LEFT JOIN cx_settings_profiles m ON m.channel_id=ch.id WHERE ch.project_id=$1", [projectId]);
-  return Object.fromEntries(rows.map((r) => [r.id, isHexColor(r.color) ? r.color : colorFor(r.id)]));
-}
-
 /** Record who added a profile (first writer wins) and optionally its color. */
 export async function claimProfile(projectId: string, channelId: string, userId: string, color?: string) {
   const [ch] = await query("SELECT 1 FROM cx_channels WHERE id=$1 AND project_id=$2", [channelId, projectId]);

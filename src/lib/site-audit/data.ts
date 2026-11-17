@@ -42,10 +42,6 @@ export async function latestCompleted(projectId: string) {
   const [row] = await query<CrawlRow>("SELECT * FROM audit_crawls WHERE project_id=$1 AND status IN ('done','stopped') ORDER BY started_at DESC LIMIT 1", [projectId]);
   return row ? (fixDates(row) as CrawlRow) : null;
 }
-export async function latestAny(projectId: string) {
-  const [row] = await query<CrawlRow>("SELECT * FROM audit_crawls WHERE project_id=$1 ORDER BY started_at DESC LIMIT 1", [projectId]);
-  return row ? (fixDates(row) as CrawlRow) : null;
-}
 /** Crawl history (newest first), light columns only. */
 export async function listCrawls(projectId: string, limit = 30): Promise<CrawlBrief[]> {
   const rows = await query<CrawlBrief & { stats: CrawlStats | null }>(

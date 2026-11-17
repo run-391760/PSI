@@ -95,9 +95,3 @@ export async function monthlySpend(ownerId: string) {
   return Number(row?.reserved_micros || 0) / 1e6;
 }
 
-/** Paid call that also returns the task id (needed for task_post endpoints polled later via task_get). */
-export async function dfsTask<T = Record<string, any>>(ownerId: string, endpoint: string, payload: Record<string, unknown>, maxMicros: number) {
-  const reservation = await reserve(ownerId, endpoint, maxMicros);
-  const task = await request<T>(endpoint, [payload], reservation);
-  return { id: task.id, result: task.result ?? [] };
-}

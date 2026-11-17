@@ -1,7 +1,7 @@
 import { query } from "@/lib/db";
 import { getHours } from "./team";
 import { slaTargetMap } from "./sla";
-import { agentBreaches, bucketKey, groupSummaries, replyTats, summarize, tat, ticketTrend, type Basis, type HoursCfg, type Interval } from "./reports-math";
+import { agentBreaches, bucketKey, groupSummaries, replyTats, summarize, tat, type Basis, type HoursCfg, type Interval } from "./reports-math";
 
 /** Stored-record reports for CX Reports (L6–L9, L23–L26). Server-only. */
 export type RTicket = {
@@ -46,11 +46,6 @@ export async function loadReportData(projectId: string, from: Date, to: Date) {
     )
   ).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
   return { tickets, messages, policies: Object.keys(pol).length };
-}
-
-export function trendReport(tickets: RTicket[], from: Date, to: Date, interval: Interval) {
-  const rows = ticketTrend(tickets, from, to, interval);
-  return { rows, created: rows.reduce((s, r) => s + r.created, 0), solved: rows.reduce((s, r) => s + r.solved, 0) };
 }
 
 export function breachReport(tickets: RTicket[], from: Date, now = new Date()) {

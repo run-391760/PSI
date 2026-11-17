@@ -394,7 +394,7 @@ export async function crawlSite(input: {
     return page;
   };
 
-  const redirectRow = (item: QItem, url: string, chain: RedirectStep[], finalUrl: string | null, loop: boolean, error: string | null, ms: number, depth: number | null, source: PageData["source"], foundOn: string | null) =>
+  const redirectRow = (url: string, chain: RedirectStep[], finalUrl: string | null, loop: boolean, error: string | null, ms: number, depth: number | null, source: PageData["source"], foundOn: string | null) =>
     addPage({ url, finalUrl, status: chain[0]?.status ?? null, depth, contentType: null, responseMs: ms, sizeBytes: 0, data: emptyData({ source, foundOn, redirectChain: chain, redirectLoop: loop, error }) });
 
   const processItem = async (item: QItem) => {
@@ -405,7 +405,7 @@ export async function crawlSite(input: {
       // One row for the requested URL plus one per intermediate in-scope hop (they are real URLs too).
       chain.forEach((step, i) => {
         if (i > 0 && byUrl.has(step.url)) return;
-        redirectRow(item, step.url, chain.slice(i), finalUrl, loop, error, hopMs[i] ?? 0, item.depth, i === 0 ? item.source : "redirect", i === 0 ? item.foundOn : item.url);
+        redirectRow(step.url, chain.slice(i), finalUrl, loop, error, hopMs[i] ?? 0, item.depth, i === 0 ? item.source : "redirect", i === 0 ? item.foundOn : item.url);
       });
     };
     for (;;) {

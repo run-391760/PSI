@@ -9,7 +9,6 @@ import { parseRule } from "./sources";
 
 const DAY = 86400000;
 const HOUR = 3600000;
-const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
 
 // ------------------------------------------------------------------ period comparison
 

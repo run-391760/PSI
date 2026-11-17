@@ -1,5 +1,7 @@
 "use client";
 
+import { downloadBlob } from "@/lib/csv";
+
 /**
  * Renders a DOM node (card with a Recharts SVG, KPI or table) to a PNG and downloads it. Works by
  * cloning the node with every computed style inlined into an SVG <foreignObject>, then drawing that
@@ -49,22 +51,12 @@ export async function downloadNodePng(node: HTMLElement, filename: string) {
   ctx.drawImage(img, 0, 0);
   const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, "image/png"));
   if (!blob) throw new Error("Could not create the PNG.");
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  downloadBlob(filename.endsWith(".png") ? filename : `${filename}.png`, blob, 2000);
 }
 
 export const slug = (s: string) => s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "export";
 
 /** Downloads text content as a file (CSV from server actions). */
 export function downloadText(filename: string, text: string, type = "text/csv;charset=utf-8") {
-  const url = URL.createObjectURL(new Blob([type.startsWith("text/csv") ? "﻿" + text : text], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  downloadBlob(filename, new Blob([type.startsWith("text/csv") ? "﻿" + text : text], { type }), 2000);
 }

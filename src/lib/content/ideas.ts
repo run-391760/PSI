@@ -20,8 +20,6 @@ export const IDEA_TYPES: { id: IdeaType; label: string; description: string }[] 
   { id: "technical", label: "Technical issues", description: "Indexability, canonical, structured data and HTML issues" },
   { id: "ux", label: "User experience", description: "Readability, scannability and navigation" },
 ];
-export const typeLabel = (t: IdeaType) => IDEA_TYPES.find((x) => x.id === t)?.label ?? t;
-
 export type IdeaSource = "live" | "serp" | "gsc" | "demo";
 export type Idea = { id: string; type: IdeaType; priority: Priority; title: string; detail: string; items?: string[]; source: IdeaSource };
 

@@ -15,11 +15,11 @@ export function downloadCsv(filename: string, rows: (string | number | null | un
   const blob = new Blob(["﻿" + toCsv(rows)], { type: "text/csv;charset=utf-8" });
   downloadBlob(filename.endsWith(".csv") ? filename : `${filename}.csv`, blob);
 }
-export function downloadBlob(filename: string, blob: Blob) {
+export function downloadBlob(filename: string, blob: Blob, revokeAfterMs = 1000) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => URL.revokeObjectURL(url), revokeAfterMs);
 }

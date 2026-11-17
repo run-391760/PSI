@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { createDraftAction } from "@/app/(app)/optimizer/actions";
 import { Bar10, color10, fmt10, SeverityBadge, tone10 } from "@/components/optimizer/ui";
-import { Badge, type Tone } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { type Column, DataTable } from "@/components/ui/data-table";
@@ -14,10 +14,6 @@ import { timeAgo } from "@/lib/format";
 import { groupFlags, RULES } from "@/lib/optimizer/crawl/rules";
 import type { CrawlListItem, Flag, FlagSeverity, PageResult, Skip } from "@/lib/optimizer/crawl/types";
 import { cn } from "@/lib/utils";
-
-/** Panels around the live stage: progress, live flags, site map, page details, pages table, past crawls. */
-
-export const SEV_TONE: Record<FlagSeverity, Tone> = { critical: "critical", high: "serious", medium: "warning", low: "neutral" };
 
 export const pathOf = (url: string) => {
   try {

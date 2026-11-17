@@ -357,8 +357,6 @@ export const CHECKS: CheckDef[] = [
 
 export const CHECK_MAP: Record<string, CheckDef> = Object.fromEntries(CHECKS.map((x) => [x.id, x]));
 export const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warning: 1, notice: 2 };
-export const SEVERITY_LABEL: Record<Severity, string> = { error: "Errors", warning: "Warnings", notice: "Notices" };
-
 export const THEMES: { key: ThemeKey; label: string; category: Category; description: string }[] = [
   { key: "crawlability", label: "Crawlability", category: "Crawlability", description: "Status codes, redirects, robots.txt, sitemaps and canonicals" },
   { key: "https", label: "HTTPS", category: "HTTPS", description: "Certificate, redirects, mixed content and security headers" },
@@ -368,8 +366,6 @@ export const THEMES: { key: ThemeKey; label: string; category: Category; descrip
   { key: "linking", label: "Internal Linking", category: "Internal linking", description: "Broken links, depth, orphans and link attributes" },
   { key: "markup", label: "Markup", category: "Markup", description: "Structured data, Open Graph, Twitter Cards and HTML basics" },
 ];
-export const themeOf = (category: Category) => THEMES.find((t) => t.category === category)?.key ?? null;
-
 /** Core Web Vitals thresholds (good ≤ a, poor > b). */
 export const CWV_THRESHOLDS = {
   lcp: [2500, 4000],

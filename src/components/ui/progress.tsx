@@ -74,7 +74,7 @@ export function DistributionBar({
   segments,
   className,
   showLegend = true,
-  format = (v: number, share: number) => `${share.toFixed(1)}%`,
+  format = (_value: number, share: number) => `${share.toFixed(1)}%`,
 }: {
   segments: { label: string; value: number; color: string }[];
   className?: string;

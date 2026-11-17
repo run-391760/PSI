@@ -1,4 +1,4 @@
-import { DATABASES, database, domainLabel } from "@/lib/domain";
+import { database, domainLabel } from "@/lib/domain";
 import type { CountryShare, DomainFacts, Intent, MonthlyPoint, RankedKeyword, SerpFeature, SerpResult } from "../types";
 import { bucketVolume, ctrFor, headOf, keywordIntents, keywordMetrics, leaderStrength, segmentLabel, topicById, topicFor, topicUniverse } from "./keywords";
 import { clamp, hash, memo, rng, round, unit } from "./random";

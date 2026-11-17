@@ -51,11 +51,6 @@ function SensorTooltip({ active, payload, label }: { active?: boolean; payload?:
   );
 }
 
-/**
- * Daily volatility columns colored by band, optional personal-score line, and shaded rollout
- * periods of Google updates from the curated reference list.
- */
-export const SENSOR_RANGES = RANGES;
 export function SensorChart({ data, height = 280, defaultRange = "30d", personalLabel, ranges = RANGES }: { data: Point[]; height?: number; defaultRange?: string; personalLabel?: string; ranges?: typeof RANGES }) {
   const [range, setRange] = useState(defaultRange);
   const points = ranges.find((r) => r.id === range)?.points ?? 30;

@@ -18,10 +18,6 @@ export function SeverityIcon({ severity, className }: { severity: Severity; clas
   return <Info className={cn(cls, "text-link")} aria-label="Notice" />;
 }
 
-export function SeverityBadge({ severity }: { severity: Severity }) {
-  return <Badge tone={SEV_TONE[severity]}>{SEV_LABEL[severity]}</Badge>;
-}
-
 /** HTTP status chip: 2xx good, 3xx info, 4xx/5xx critical, 0 = failed, null = blocked. */
 export function HttpStatus({ status, blocked }: { status: number | null | undefined; blocked?: boolean }) {
   if (status == null) return <Badge tone="neutral">{blocked ? "Blocked" : "n/a"}</Badge>;

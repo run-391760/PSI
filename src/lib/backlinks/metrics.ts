@@ -1,5 +1,5 @@
 import { parse } from "tldts";
-import { clamp, domainEntity, domainLinkStats, hash, linkVelocity, memo, rng, round, TOPICS, unit } from "@/lib/seo/engine";
+import { domainEntity, domainLinkStats, hash, linkVelocity, rng, round, TOPICS, unit } from "@/lib/seo/engine";
 import { LINK_PLATFORMS } from "@/lib/seo/engine/vocab";
 
 /**
@@ -13,9 +13,6 @@ export function topicIdOf(domain: string) {
   const e = domainEntity(domain);
   return e.topicId === "*" ? TOPICS[hash(domain) % TOPICS.length].id : e.topicId;
 }
-
-const DAY = 86400000;
-const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 import type { VelocityPoint } from "./types";
 export type { VelocityPoint };

@@ -101,24 +101,3 @@ export function markdownToHtml(md: string) {
   return html.join("\n");
 }
 
-/** Complete standalone HTML document for downloads. */
-export function htmlDocument(title: string, bodyHtml: string, description?: string) {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-${description ? `<meta name="description" content="${escapeHtml(description)}">\n` : ""}<style>
-body{font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#1d2433}
-h1,h2,h3{line-height:1.25}img{max-width:100%}code{background:#f2f4f7;padding:1px 4px;border-radius:4px}
-pre{background:#f2f4f7;padding:12px;overflow:auto}blockquote{border-left:3px solid #d0d5dd;margin:0;padding-left:14px;color:#475467}
-table{border-collapse:collapse}td,th{border:1px solid #e4e7ec;padding:6px 10px;text-align:left}
-</style>
-</head>
-<body>
-${bodyHtml}
-</body>
-</html>
-`;
-}

@@ -72,12 +72,3 @@ export function Grid({ children, cols = 3, className }: { children: ReactNode; c
   return <div className={cn("grid grid-cols-1 gap-4", c, className)}>{children}</div>;
 }
 
-/** Temporary placeholder for tools under construction. */
-export function ToolPlaceholder({ title, description }: { title: string; description: string }) {
-  return (
-    <Page>
-      <PageHeader title={title} description={description} />
-      <div className="rounded-lg border border-dashed border-border-strong bg-surface px-6 py-16 text-center text-text-2">This tool is being built.</div>
-    </Page>
-  );
-}

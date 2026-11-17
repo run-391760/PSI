@@ -204,7 +204,7 @@ export function mobile(ctx: Ctx): Finding {
     ...longParas.slice(0, 5).map((p) => ({ label: `Paragraph of ${p.words} words`, detail: `${quote(p.text, 80)} — over ~6 lines on a phone` })),
     ...wideTables.map((t) => ({ label: `Table with ${t.cols} columns`, detail: "Needs horizontal scrolling on phones; keep to 3–4 columns" })),
     ...unbroken.map((p) => ({ label: "Very long unbroken word", detail: quote(p.text, 60) })),
-    ...nakedUrls.map((p) => ({ label: "Long naked URL in text", detail: "Use a short descriptive link instead" })),
+    ...nakedUrls.map(() => ({ label: "Long naked URL in text", detail: "Use a short descriptive link instead" })),
     ...(wideCode ? [{ label: `${wideCode} wide code lines`, detail: "Wrap or shorten" }] : []),
     ...longHeadings.map((h) => ({ label: `Long heading (${h.text.length} chars)`, detail: quote(h.text, 70) })),
   ];
