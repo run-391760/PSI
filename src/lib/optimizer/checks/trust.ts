@@ -3,7 +3,7 @@ import { STOP, type Ctx } from "../context";
 import { contentTokens, stem } from "../parse";
 import type { Finding, FixOption } from "../types";
 import { detectClaims, sourceQuality } from "./claims";
-import { clamp01, finding, pct, phraseHits, plural, quote } from "./util";
+import { clamp01, finding, phraseHits, plural, quote } from "./util";
 
 /** E-E-A-T & Trust module and the External Link Auditor. */
 

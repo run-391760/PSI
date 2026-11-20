@@ -33,7 +33,6 @@ export function mimeFor(name: string, type: string) {
   const e = name.split(".").pop()?.toLowerCase() ?? "";
   return BY_EXT[e === "jpeg" ? "jpg" : e] ?? null;
 }
-export const ACCEPT = Object.keys(EXT).join(",");
 const fileUrl = (id: string) => `/api/cx/inbox/files/${id}`;
 export type FileRow = { id: string; project_id: string; ticket_id: string | null; filename: string; mime: string; size: number; file: string; public_token: string; created_at: string };
 

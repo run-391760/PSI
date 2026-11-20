@@ -134,11 +134,6 @@ export async function loadConversationsRaw(ctx: ReportCtx, span: Range = ctx.fil
   const [m, t] = await Promise.all([loadMentionRows(ctx, span), loadTicketRows(ctx, span, { dedupe: true })]);
   return [...m, ...t.filter((r) => !r.mentionId)];
 }
-/** Conversations filtered by media type and scope. */
-export async function loadConversations(ctx: ReportCtx, span: Range = ctx.filters.range) {
-  return applyFilters(ctx, await loadConversationsRaw(ctx, span));
-}
-
 /** Media-type filter options: types present in the period (any scope), with counts, in catalogue order. */
 export function mediaOptions(rows: Pick<RRow, "mediaType" | "at">[], range: Range) {
   const c = new Map<string, number>();

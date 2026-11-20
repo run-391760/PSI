@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 
 const ITEMS = [
   { href: "/cx/listening", label: "Mentions" },
+  { href: "/cx/listening/platforms", label: "Platforms" },
   { href: "/cx/listening/dashboards", label: "Dashboards" },
   { href: "/cx/listening/reviews", label: "Reviews" },
   { href: "/cx/listening/ugc", label: "UGC" },

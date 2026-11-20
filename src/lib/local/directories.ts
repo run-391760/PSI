@@ -53,4 +53,3 @@ export const KIND_LABELS: Record<DirectoryKind, string> = {
 export function directoriesFor(country: string) {
   return DIRECTORIES.filter((d) => d.markets === "global" || d.markets.includes(country));
 }
-export const directoryById = (id: string) => DIRECTORIES.find((d) => d.id === id);

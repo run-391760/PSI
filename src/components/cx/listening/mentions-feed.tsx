@@ -13,7 +13,8 @@ import { compact, dateTimeLabel, timeAgo } from "@/lib/format";
 import { INTENTS, SENTIMENTS, languageName } from "@/lib/cx/listening/sources";
 import { cn } from "@/lib/utils";
 import { SourceIcon } from "./source-icon";
-import { KIND_TONE } from "./topics-manager";
+
+const KIND_TONE: Record<string, Tone> = { brand: "brand", competitor: "serious", campaign: "info", industry: "neutral" };
 
 export type FeedMention = {
   id: string;

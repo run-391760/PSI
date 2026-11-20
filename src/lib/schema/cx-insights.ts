@@ -263,4 +263,42 @@ CREATE TABLE IF NOT EXISTS cx_ask_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS cx_ask_log_project ON cx_ask_log(project_id, created_at DESC);
+
+-- AI assistant (Ask tab): private multi-turn sessions per user, answers grounded in platform data,
+-- CX metrics, the knowledge base and the brand's own uploaded material (the "vault").
+CREATE TABLE IF NOT EXISTS cx_assistant_sessions (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title text NOT NULL DEFAULT 'New chat',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_assistant_sessions_user ON cx_assistant_sessions(project_id, user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS cx_assistant_messages (
+  id text PRIMARY KEY,
+  session_id text NOT NULL REFERENCES cx_assistant_sessions(id) ON DELETE CASCADE,
+  role text NOT NULL CHECK (role IN ('user','assistant')),
+  content text NOT NULL,
+  sources jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cx_assistant_messages_session ON cx_assistant_messages(session_id, created_at);
+CREATE TABLE IF NOT EXISTS cx_assistant_docs (
+  id text PRIMARY KEY,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  filename text,
+  chars integer NOT NULL DEFAULT 0,
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cx_assistant_chunks (
+  id text PRIMARY KEY,
+  doc_id text NOT NULL REFERENCES cx_assistant_docs(id) ON DELETE CASCADE,
+  project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  body text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cx_assistant_chunks_project ON cx_assistant_chunks(project_id);
 `;

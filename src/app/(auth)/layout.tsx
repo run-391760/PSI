@@ -1,5 +1,6 @@
 import { BarChart3, Gauge, Link2, Target } from "lucide-react";
 import { Logo } from "@/components/shell/logo";
+import { SiteFooter } from "@/components/site/footer";
 
 const points = [
   { icon: Target, title: "Track rankings daily", text: "Visibility, share of voice and SERP features across devices and locations." },
@@ -11,8 +12,8 @@ const points = [
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen lg:grid-cols-[1fr_1.1fr]">
-      <div className="flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm">
+      <div className="flex flex-col px-6 pt-12 pb-6">
+        <div className="m-auto w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2">
             <Logo size={30} />
             <span className="text-[18px] font-semibold tracking-tight">
@@ -21,6 +22,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </div>
           {children}
         </div>
+        <SiteFooter className="mt-10" />
       </div>
       <div className="relative hidden overflow-hidden bg-nav lg:flex lg:items-center lg:justify-center">
         <div className="absolute -top-40 -right-40 h-[520px] w-[520px] rounded-full bg-[#5b45e8]/30 blur-3xl" aria-hidden />

@@ -1,62 +1,13 @@
 "use client";
 
-import { KeyRound, Send, Sparkles, Trash2 } from "lucide-react";
+import { KeyRound, Sparkles, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { aiSignalAction, askAction, briefNowAction, briefSettingsAction, connectorTokenAction, revokeConnectorAction } from "@/app/(app)/cx/ask/actions";
+import { aiSignalAction, briefNowAction, briefSettingsAction, connectorTokenAction, revokeConnectorAction } from "@/app/(app)/cx/ask/actions";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { Callout } from "@/components/ui/feedback";
 import { Field, Input, Select } from "@/components/ui/input";
-
-const EXAMPLES = ["Which channel has the slowest first response this month?", "Is CSAT improving compared with the previous period?", "Which agents breach SLA most often?", "What are customers contacting us about most?"];
-
-export function AskBox({ brand, days }: { brand: string; days: number }) {
-  const router = useRouter();
-  const [q, setQ] = useState("");
-  const [answer, setAnswer] = useState<{ q: string; a: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const ask = (question: string) =>
-    start(async () => {
-      setError(null);
-      const r = await askAction(brand, question, days);
-      if (!r.ok) return setError(r.error);
-      setAnswer({ q: question, a: r.data.answer });
-      setQ("");
-      router.refresh();
-    });
-  return (
-    <div className="space-y-3">
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (q.trim()) ask(q.trim());
-        }}
-      >
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about volume, speed, SLA, CSAT, agents…" aria-label="Question" maxLength={500} className="min-w-0 flex-1" />
-        <Button type="submit" variant="primary" loading={pending} disabled={pending || !q.trim()}>
-          <Send className="h-4 w-4" /> Ask
-        </Button>
-      </form>
-      <div className="flex flex-wrap gap-1.5">
-        {EXAMPLES.map((x) => (
-          <button key={x} type="button" disabled={pending} onClick={() => ask(x)} className="rounded-full border border-border bg-surface px-2.5 py-1 text-[12px] text-text-2 hover:bg-surface-3 disabled:opacity-60">
-            {x}
-          </button>
-        ))}
-      </div>
-      {error && <Callout tone="critical">{error}</Callout>}
-      {answer && (
-        <div className="rounded-md border border-border bg-surface-2 p-3">
-          <div className="mb-1 text-[12.5px] font-semibold text-text">{answer.q}</div>
-          <p className="text-[13.5px] whitespace-pre-line text-text">{answer.a}</p>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function BriefSettings({ brand, cadence: c0, recipients: r0, ai, mailbox }: { brand: string; cadence: "off" | "weekly" | "monthly"; recipients: string[]; ai: boolean; mailbox: boolean }) {
   const router = useRouter();

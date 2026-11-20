@@ -41,4 +41,3 @@ export function BrandMeta({ switcher, current, children }: { switcher: { id: str
   );
 }
 
-export const SENTIMENT_TONE: Record<string, "good" | "critical" | "neutral"> = { positive: "good", negative: "critical", neutral: "neutral" };

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { cloneElement, isValidElement, useId, useState, type ReactElement, type ReactNode } from "react";
 import { Callout } from "@/components/ui/feedback";
 import { Checkbox, Field as KitField, Input } from "@/components/ui/input";
+import { downloadBlob } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -65,10 +66,7 @@ export function FileButton({ label, accept = ".csv,.tsv,.txt", onText, className
 }
 
 export function downloadText(filename: string, text: string, type = "text/csv") {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(filename, new Blob([text], { type }));
 }
 
 /** Kit Field that ties its label to the single child control (generated id), so labels are clickable and accessible. */

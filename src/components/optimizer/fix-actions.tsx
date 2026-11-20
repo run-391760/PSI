@@ -40,12 +40,6 @@ export async function tryFix(draftId: string, fix: Fix, label: string): Promise<
   return null;
 }
 
-export async function runFix(draftId: string, fix: Fix, label: string) {
-  const error = await tryFix(draftId, fix, label);
-  if (error) flashScore({ title: "Could not apply the fix", detail: error, error: true });
-  return !error;
-}
-
 function Preview({ fix }: { fix: Fix }) {
   const parts = describeFix(fix);
   return (

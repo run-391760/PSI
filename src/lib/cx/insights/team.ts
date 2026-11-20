@@ -5,13 +5,6 @@ import { DEFAULT_HOURS, type DayHours, type Holiday, type Priority } from "./met
 
 /** Brand members, teams, business hours and SLA policies (server-only). */
 export type Role = "admin" | "supervisor" | "agent" | "viewer";
-export const ROLES: { value: Role; label: string; description: string }[] = [
-  { value: "admin", label: "Admin", description: "Manage settings, team and all data" },
-  { value: "supervisor", label: "Supervisor", description: "Assign tickets, review quality, see reports" },
-  { value: "agent", label: "Agent", description: "Handle assigned conversations" },
-  { value: "viewer", label: "Viewer", description: "Read-only access to reports" },
-];
-
 export type Member = { id: string; user_id: string; name: string; email: string; role: Role; team_id: string | null; team_name: string | null; created_at: string; owner: boolean };
 export type Team = { id: string; name: string; description: string; members: number; created_at: string };
 export type SlaPolicy = { priority: Priority; first_response_minutes: number | null; resolution_minutes: number | null; business_hours: boolean };

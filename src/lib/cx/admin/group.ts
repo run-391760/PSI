@@ -86,8 +86,3 @@ export async function saveGroupDetails(projectId: string, actor: { id: string; n
   await audit(projectId, actor, "group.update", name, identityChanged ? "identity changed" : "");
 }
 
-/** Brand logo for other packages (header, reports); "" when none. */
-export async function brandLogo(projectId: string) {
-  const [r] = await query<{ logo: string }>("SELECT logo FROM cx_settings_group WHERE project_id=$1", [projectId]);
-  return r?.logo ?? "";
-}

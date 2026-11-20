@@ -1,11 +1,16 @@
-import { ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpen, Database, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePageUser } from "@/lib/auth";
 import { aiConfigured } from "@/lib/cx/ai";
 import { cxContext } from "@/lib/cx/context";
 import { listShareLinks } from "@/lib/cx/insights/dashboards";
-import { askHistory, getAiSettings, listBriefs, metricsSnapshot } from "@/lib/cx/insights/intelligence";
+import { getAiSettings, listBriefs } from "@/lib/cx/insights/intelligence";
+import { getMessages, listSessions } from "@/lib/cx/insights/assistant";
+import { VAULT_LIMITS, VAULT_TYPES, listVault } from "@/lib/cx/insights/vault";
+import { platformHub, readPeriod } from "@/lib/cx/listening/platforms";
+import { sourceLabel } from "@/lib/cx/listening/sources";
+import { query } from "@/lib/db";
 import { brandMailer } from "@/lib/cx/insights/mailer";
 import { brandSignals } from "@/lib/cx/insights/signals";
 import { dateTimeLabel, num } from "@/lib/format";
@@ -18,7 +23,10 @@ import { Metric, MetricStrip } from "@/components/ui/metric";
 import { MiniTable } from "@/components/ui/mini-table";
 import { TabsNav } from "@/components/ui/tabs";
 import { BrandMeta, NoBrand, cxHref, ticketHref } from "@/components/cx/insights/common";
-import { AiSignalButton, AskBox, BriefSettings, ConnectorTokens } from "@/components/cx/insights/ask-client";
+import { AiSignalButton, BriefSettings, ConnectorTokens } from "@/components/cx/insights/ask-client";
+import { AssistantComposer, SessionMenu, VaultAdd, VaultDelete } from "@/components/cx/insights/assistant-client";
+import { Markdown } from "@/components/cx/insights/markdown";
+import { ButtonLink } from "@/components/ui/button";
 
 export const metadata: Metadata = { title: "Ask AI" };
 const LEVEL: Record<string, Tone> = { high: "critical", medium: "warning", low: "good" };
@@ -26,7 +34,7 @@ const LEVEL: Record<string, Tone> = { high: "critical", medium: "warning", low: 
 function NoAi({ what }: { what: string }) {
   return (
     <Callout className="mb-4" title="Connect an AI key">
-      {what} needs an AI key (Anthropic, OpenAI, Gemini or Sarvam) on the server. The aggregated metrics below are real and are exactly what the model would see.
+      {what} needs an AI key on the server: set ANTHROPIC_API_KEY (or OPENAI_API_KEY, GEMINI_API_KEY or SARVAM_API_KEY). Any one is enough; the others are used as fallbacks.
     </Callout>
   );
 }
@@ -37,7 +45,6 @@ export default async function AskPage({ searchParams }: PageProps<"/cx/ask">) {
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Ask AI" />;
   const tab = typeof sp.tab === "string" ? sp.tab : "ask";
-  const days = [7, 30, 90].includes(Number(sp.days)) ? Number(sp.days) : 30;
   const ai = aiConfigured();
   const h = (t: string, extra: Record<string, string | number> = {}) => cxHref("/cx/ask", brand.id, { tab: t, ...extra });
 
@@ -134,58 +141,128 @@ export default async function AskPage({ searchParams }: PageProps<"/cx/ask">) {
         </Card>
       </Grid>
     );
-  } else {
-    const [snap, history] = await Promise.all([metricsSnapshot(brand.id, days), askHistory(brand.id)]);
-    const t = snap.tickets;
+  } else if (tab === "vault") {
+    const [docs, kb] = await Promise.all([listVault(brand.id), query<{ n: number }>("SELECT count(*)::int n FROM cx_kb_articles WHERE project_id=$1 AND status='published'", [brand.id])]);
     body = (
-      <>
-        {!ai && <NoAi what="Answering questions in plain language" />}
-        {ai && (
-          <Card className="mb-4">
-            <CardHeader title="Ask about your CX metrics" description={`Answers use only the aggregated metrics of the last ${days} days shown below.`} />
-            <CardBody className="pt-1"><AskBox brand={brand.id} days={days} /></CardBody>
-          </Card>
-        )}
-        <div className="mb-3 flex items-center gap-1.5 text-[12px] text-text-3">
-          Period:
-          {[7, 30, 90].map((x) => (
-            <Link key={x} href={h("ask", { days: x })} className={cn("rounded px-2 py-0.5", x === days ? "bg-brand-soft font-medium text-text" : "hover:bg-surface-3")}>{x}d</Link>
-          ))}
-        </div>
-        <Card className="mb-4">
-          <CardHeader title="What the model sees" description="Trust layer: the AI receives this aggregated snapshot, never raw conversations or customer details." actions={<Badge tone="good"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" />Aggregates only</Badge>} />
-          <CardBody className="pt-1">
-            <MetricStrip>
-              <Metric label="Tickets created" value={num(t.created)} delta={t.createdChangePct} upIsGood={false} />
-              <Metric label="Avg first response" value={t.avgFirstResponseHours == null ? "n/a" : `${t.avgFirstResponseHours} h`} />
-              <Metric label="Avg resolution" value={t.avgResolutionHours == null ? "n/a" : `${t.avgResolutionHours} h`} />
-              <Metric label="SLA compliance" value={t.slaCompliancePct == null ? "n/a" : `${t.slaCompliancePct}%`} />
-              <Metric label="CSAT" value={snap.satisfaction.csatPct == null ? "n/a" : `${snap.satisfaction.csatPct}%`} sub={`${snap.satisfaction.csatResponses} responses`} />
-              <Metric label="Mentions" value={num(snap.listening.mentions)} />
-            </MetricStrip>
-            <details className="mt-3">
-              <summary className="cursor-pointer text-[12.5px] font-medium text-text-2">Full snapshot (JSON)</summary>
-              <pre className="scroll-thin mt-2 max-h-80 overflow-auto rounded-md bg-surface-2 p-3 text-[11.5px] text-text">{JSON.stringify(snap, null, 2)}</pre>
-            </details>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <Card className="min-w-0">
+          <CardHeader title={`Knowledge vault (${docs.length})`} description="Your own reference material for the assistant: prospectus, fee and hostel rules, placement reports, FAQs, policies, press releases. Internal only: never shown to customers." />
+          <CardBody className="space-y-4 pt-1">
+            <VaultAdd brand={brand.id} accept={VAULT_TYPES} />
+            {docs.length === 0 ? (
+              <EmptyState icon={<BookOpen className="h-5 w-5" />} title="The vault is empty" description={`Upload ${VAULT_TYPES} files (up to ${VAULT_LIMITS.fileBytes / 1024 / 1024} MB each) or paste text. The assistant cites a document by its title when it uses it.`} />
+            ) : (
+              <MiniTable
+                columns={[{ header: "Document" }, { header: "Size", align: "right" }, { header: "Passages", align: "right" }, { header: "Added" }, { header: "" }]}
+                rows={docs.map((d) => [
+                  <span key="t" className="block min-w-0"><span className="font-medium text-text">{d.title}</span>{d.filename && <span className="block truncate text-[11.5px] text-text-3">{d.filename}</span>}</span>,
+                  d.chars < 1000 ? `${num(d.chars)} chars` : `${num(Math.round(d.chars / 1000))}k chars`,
+                  num(d.chunks),
+                  <span key="a" className="text-[12px] text-text-2">{dateTimeLabel(d.created_at)}{d.author ? ` · ${d.author}` : ""}</span>,
+                  <VaultDelete key="x" brand={brand.id} id={d.id} title={d.title} />,
+                ])}
+              />
+            )}
           </CardBody>
         </Card>
-        {history.length > 0 && (
+        <Card>
+          <CardHeader title="How it is used" />
+          <CardBody className="space-y-2 pt-1 text-[13px] text-text-2">
+            <p>Each question searches the vault and your <Link className="text-link" href={cxHref("/cx/knowledge", brand.id)}>published knowledge base</Link> ({num(kb[0]?.n ?? 0)} articles) and sends only the best matching passages to the AI.</p>
+            <p>Documents are split into passages of about 1,200 characters and ranked by keyword relevance, so clear headings and the words people actually use help.</p>
+            <p>PDF: copy the text and use Paste text, or save it as .docx.</p>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  } else {
+    const sessionId = typeof sp.session === "string" ? sp.session : null;
+    const [sessions, chat, hub, docs] = await Promise.all([
+      listSessions(brand.id, user.id),
+      sessionId ? getMessages(brand.id, user.id, sessionId) : null,
+      platformHub(brand.id, readPeriod({ days: "30" })),
+      listVault(brand.id),
+    ]);
+    const active = hub.filter((c) => c.mentions > 0);
+    body = (
+      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <Card className="h-fit min-w-0">
+          <CardHeader title="Chats" description="Private to you" actions={<ButtonLink href={h("ask")} size="sm" variant="primary"><Plus className="h-3.5 w-3.5" /> New</ButtonLink>} />
+          <CardBody className="pt-0">
+            {sessions.length === 0 ? (
+              <p className="py-3 text-[12.5px] text-text-3">No chats yet. Ask your first question.</p>
+            ) : (
+              <ul className="-mx-2 grid gap-0.5">
+                {sessions.map((s) => {
+                  const on = s.id === chat?.id;
+                  return (
+                    <li key={s.id} className={cn("flex items-center gap-1 rounded-md px-2 py-1.5", on ? "bg-brand-soft" : "hover:bg-surface-3")}>
+                      <Link href={h("ask", { session: s.id })} className="min-w-0 flex-1" aria-current={on ? "page" : undefined}>
+                        <span className="block truncate text-[13px] text-text">{s.title}</span>
+                        <span className="block text-[11px] text-text-3">{num(Math.ceil(s.messages / 2))} {s.messages > 2 ? "questions" : "question"} · {dateTimeLabel(s.updated_at)}</span>
+                      </Link>
+                      <SessionMenu brand={brand.id} id={s.id} title={s.title} active={on} />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
+
+        <div className="min-w-0 space-y-4">
+          {!ai && <NoAi what="The assistant" />}
+          {sessionId && !chat && <Callout tone="warning" title="Chat not found">It may have been deleted. Start a new chat below.</Callout>}
           <Card>
-            <CardHeader title="Recent questions" />
-            <CardBody className="divide-y divide-border pt-0">
-              {history.map((x) => (
-                <div key={x.id} className="py-2.5">
-                  <div className="text-[13px] font-medium text-text">{x.question}</div>
-                  <p className="mt-0.5 text-[13px] whitespace-pre-line text-text-2">{x.answer}</p>
-                  <div className="mt-0.5 text-[11.5px] text-text-3">{x.asker ?? "Someone"} · {dateTimeLabel(x.created_at)}</div>
+            <CardHeader title={chat?.title ?? "New chat"} description="Answers from your platform data, support metrics and knowledge vault" />
+            <CardBody className="space-y-4 pt-1">
+              {chat?.messages.length ? (
+                <div className="space-y-4">
+                  {chat.messages.map((m) =>
+                    m.role === "user" ? (
+                      <div key={m.id} className="ml-auto w-fit max-w-[85%] rounded-lg bg-brand-soft px-3 py-2 text-[13.5px] whitespace-pre-line text-text">{m.content}</div>
+                    ) : (
+                      <div key={m.id} className="max-w-full rounded-lg border border-border bg-surface-2 px-3.5 py-3">
+                        <Markdown text={m.content} />
+                        {m.sources.length > 0 && (
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">
+                            <span className="text-[11px] font-semibold tracking-wide text-text-3 uppercase">Sources</span>
+                            {m.sources.map((s, i) =>
+                              s.url ? (
+                                <Link key={i} href={s.url} className="rounded-full border border-border bg-surface px-2 py-0.5 text-[11.5px] text-link hover:underline">{s.label}</Link>
+                              ) : (
+                                <span key={i} className="flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11.5px] text-text-2">
+                                  {s.kind === "vault" ? <BookOpen className="h-3 w-3" /> : <Database className="h-3 w-3" />}
+                                  {s.label}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  )}
                 </div>
-              ))}
+              ) : (
+                <div className="rounded-lg border border-dashed border-border px-4 py-5">
+                  <div className="flex items-center gap-2 text-[15px] font-semibold text-text"><Sparkles className="h-4 w-4 text-brand" /> Your AI data analyst for {brand.name}</div>
+                  <p className="mt-1 text-[13px] text-text-2">Ask in plain language. I look up the numbers first, then answer, and show which data and documents I used.</p>
+                  <div className="mt-3 flex flex-wrap gap-1.5 text-[12px]">
+                    <Badge tone={active.length ? "brand" : "neutral"}><Database className="mr-1 inline h-3 w-3" />{active.length ? `${num(active.reduce((a, c) => a + c.mentions, 0))} mentions on ${active.map((c) => sourceLabel(c.source)).join(", ")} (30d)` : "No mentions in the last 30 days"}</Badge>
+                    <Badge tone={docs.length ? "brand" : "neutral"}><BookOpen className="mr-1 inline h-3 w-3" />{docs.length ? `${docs.length} vault ${docs.length === 1 ? "document" : "documents"}` : "Vault empty"}</Badge>
+                    <Badge tone="good"><ShieldCheck className="mr-1 inline h-3 w-3" />Support data: aggregates only</Badge>
+                  </div>
+                  {!docs.length && <p className="mt-2 text-[12px] text-text-3">Add your prospectus, policies and FAQs in the <Link className="text-link" href={h("vault")}>Knowledge vault</Link> so I can answer questions about them.</p>}
+                </div>
+              )}
+              <AssistantComposer brand={brand.id} sessionId={chat?.id ?? null} ai={ai} showSuggestions={!chat?.messages.length} />
             </CardBody>
           </Card>
-        )}
-      </>
+        </div>
+      </div>
     );
   }
+
 
   return (
     <Page>
@@ -193,7 +270,7 @@ export default async function AskPage({ searchParams }: PageProps<"/cx/ask">) {
         breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Ask AI" }]}
         title="Ask AI"
         subject={brand.name}
-        description="Plain-language answers, executive briefs and predictive signals from your CX data."
+        description="An AI analyst for your listening data, support metrics and own documents, plus executive briefs and predictive signals."
         meta={
           <BrandMeta switcher={switcher} current={brand.id}>
             <Badge tone={ai ? "good" : "neutral"}><Sparkles className="mr-1 inline h-3.5 w-3.5" />{ai ? "AI connected" : "AI not connected"}</Badge>
@@ -203,7 +280,8 @@ export default async function AskPage({ searchParams }: PageProps<"/cx/ask">) {
       <TabsNav
         className="mb-4"
         items={[
-          { href: h("ask"), label: "Ask" },
+          { href: h("ask"), label: "Assistant" },
+          { href: h("vault"), label: "Knowledge vault" },
           { href: h("briefs"), label: "Executive briefs" },
           { href: h("signals"), label: "Signals" },
           { href: h("connector"), label: "Connector (MCP)" },

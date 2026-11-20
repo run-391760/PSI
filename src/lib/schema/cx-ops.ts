@@ -1,20 +1,4 @@
-/**
- * Tables owned by the CX operational modules (WP-B): profile groups, bookmarks, CRM tasks, post keys for
- * "view all comments on this post", tracked brand handles/posts (Mentions Tracker), A/B tests and per-user
- * notification preferences. Idempotent SQL: every table is CREATE TABLE IF NOT EXISTS and every column is
- * also added with ALTER TABLE … ADD COLUMN IF NOT EXISTS (NOT NULL only when the column has a default).
- */
-type Col = [name: string, def: string];
-
-function table(name: string, pk: Col[], cols: Col[], extra: string[] = []) {
-  const all = [...pk, ...cols];
-  const create = `CREATE TABLE IF NOT EXISTS ${name} (\n  ${all.map(([n, d]) => `${n} ${d}`).join(",\n  ")}\n);`;
-  const alters = cols.map(([n, d]) => {
-    const safe = /DEFAULT/i.test(d) ? d : d.replace(/\s+NOT NULL/i, "");
-    return `ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS ${n} ${safe};`;
-  });
-  return [create, ...alters, ...extra].join("\n");
-}
+import { table, type Col } from "./table";
 
 const PROJECT: Col = ["project_id", "text NOT NULL REFERENCES projects(id) ON DELETE CASCADE"];
 

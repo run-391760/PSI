@@ -14,12 +14,6 @@ export const SERIES = [
 ] as const;
 export const series = (i: number) => SERIES[i % SERIES.length];
 
-/** Sequential single-hue ramp (magnitude), light -> dark. */
-export const SEQ = ["var(--seq-100)", "var(--seq-200)", "var(--seq-300)", "var(--seq-400)", "var(--seq-500)", "var(--seq-600)", "var(--seq-700)"];
-
-/** Status colors — only for meaning (good/warning/serious/critical), always with a label. */
-export const STATUS = { good: "var(--good)", warning: "var(--warning)", serious: "var(--serious)", critical: "var(--critical)" } as const;
-
 export const AXIS = {
   tick: { fill: "var(--chart-text)", fontSize: 11 },
   axisLine: { stroke: "var(--chart-axis)" },

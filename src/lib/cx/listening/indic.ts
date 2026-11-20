@@ -189,8 +189,3 @@ export async function enrichIndic<R extends MentionLike>(rows: R[], budget: Indi
   }
 }
 
-/** The stored English translation of a mention (null when none was made or it expired). */
-export async function mentionTranslation(title: string, body: string): Promise<IndicResult | null> {
-  const key = indicCacheKey(textOf({ title, body }));
-  return (await dbIndicStore("", "").get([key]).catch(() => new Map<string, IndicResult>())).get(key) ?? null;
-}

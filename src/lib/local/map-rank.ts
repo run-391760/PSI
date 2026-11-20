@@ -6,7 +6,7 @@ import { liveEnabled } from "@/lib/providers/source";
 import { enqueue } from "@/lib/jobs/queue";
 import { clamp, round, unit } from "@/lib/seo/engine";
 import type { Project } from "@/lib/projects";
-import { localCompetitors, type LocalBusiness } from "./competitors";
+import type { LocalBusiness } from "./competitors";
 import { offsetKm, type GeoPoint } from "./geo";
 import type { BusinessProfile } from "./profile-schema";
 
@@ -163,11 +163,6 @@ export async function listScans(projectId: string, limit = 30) {
   return rows.map((r) => ({ ...mapScan(r), avgRank: r.avg_rank == null ? null : round(Number(r.avg_rank), 1), solv: r.solv == null ? null : round(Number(r.solv), 1), top3Pct: r.top3_pct == null ? null : round(Number(r.top3_pct), 1) }));
 }
 export type ScanSummary = Awaited<ReturnType<typeof listScans>>[number];
-
-export async function getScan(projectId: string, scanId: string) {
-  const [row] = await query<ScanRow>("SELECT * FROM local_scans WHERE id=$1 AND project_id=$2", [scanId, projectId]);
-  return row ? mapScan(row) : null;
-}
 
 export async function scanResults(scanId: string): Promise<KeywordResult[]> {
   const rows = await query<{ keyword: string; cells: GridCell[]; metrics: ScanMetrics; competitors: CompetitorStat[] }>("SELECT keyword,cells,metrics,competitors FROM local_scan_results WHERE scan_id=$1", [scanId]);

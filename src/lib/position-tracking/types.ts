@@ -9,9 +9,6 @@ export const SOURCE_INFO: Record<CampaignSource, { label: string; short: string 
   dataforseo: { label: "Live Google SERPs (DataForSEO)", short: "DataForSEO" },
   demo: { label: "Demo engine", short: "Demo data" },
 };
-/** Search Console only reports the user's own site: no competitors, SERP features or live SERPs. */
-export const measuresCompetitors = (source: CampaignSource) => source !== "search-console";
-
 /** Job kind of the rank check (registered in jobs.ts). */
 export const CHECK_JOB = "position-tracking.check";
 export const MAX_KEYWORDS = 500;

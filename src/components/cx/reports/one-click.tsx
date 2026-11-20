@@ -13,18 +13,14 @@ import { Callout } from "@/components/ui/feedback";
 import { Field, Select } from "@/components/ui/input";
 import { PERIODS, type Period } from "@/lib/cx/insights/export-defs";
 import { ONE_CLICK_REPORTS, type OneClickChoice } from "@/lib/cx/reports/one-click-model";
+import { downloadBlob } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 import { downloadText } from "@/components/cx/insights/png-export";
 
 type Msg = { tone: "good" | "critical"; text: string } | null;
 
 function saveBase64(name: string, data: string, mime: string) {
-  const url = URL.createObjectURL(new Blob([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], { type: mime }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  downloadBlob(name, new Blob([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], { type: mime }), 2000);
 }
 
 /**

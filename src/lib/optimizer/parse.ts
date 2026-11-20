@@ -40,8 +40,6 @@ const CONCLUSION = /^(conclusion|summary|in summary|final thoughts|key takeaways
 const FAQ_HEADING = /^(faqs?|frequently asked questions|common questions|questions and answers)\b/i;
 
 export const isConclusionHeading = (t: string) => CONCLUSION.test(t.trim()) && !FAQ_HEADING.test(t.trim());
-export const isFaqHeading = (t: string) => FAQ_HEADING.test(t.trim());
-
 function hostOf(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
@@ -245,13 +243,6 @@ export function contentTokens(text: string, stop: Set<string>) {
 
 /** Simple stem so "courses"/"course", "placements"/"placement" match. */
 export const stem = (w: string) => w.replace(/(ies)$/, "y").replace(/(sses)$/, "ss").replace(/([^s])s$/, "$1").replace(/(ing|ed)$/, "");
-
-/** Share of `needle` content tokens present in `hay` (0..1). */
-export function tokenCoverage(needle: string, hayTokens: Set<string>, stop: Set<string>) {
-  const toks = [...new Set(contentTokens(needle, stop).map(stem))];
-  if (!toks.length) return 0;
-  return toks.filter((t) => hayTokens.has(t)).length / toks.length;
-}
 
 export const slugify = (s: string) =>
   s

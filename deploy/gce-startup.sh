@@ -79,6 +79,15 @@ CADDY
 
 # 4. Build, then replace the running containers (the old app keeps serving if the build fails)
 docker network inspect synapse >/dev/null 2>&1 || docker network create synapse
+# Keep the small boot disk from filling up: cap the system journal, and clear Docker's build cache when
+# less than ~4 GB is free (a build needs about that much; a full disk makes it fail mid-way).
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/synapseseo.conf
+systemctl restart systemd-journald || true
+if [ "$(df --output=avail -k / | tail -1)" -lt 4000000 ]; then
+  echo "== low disk space, clearing the Docker build cache"
+  docker builder prune -af >/dev/null 2>&1 || true
+fi
 docker build -t synapseseo:latest "$APP_DIR"
 # Graceful stop first: the embedded database must flush before the container goes (rm -f alone is a hard kill).
 docker stop -t 30 synapseseo >/dev/null 2>&1 || true

@@ -5,13 +5,7 @@ import { LISTEN_SOURCES } from "@/lib/cx/listening/sources";
 import { cleanCluster, colorFor, isHexColor, type ClusterInput } from "@/lib/cx/admin/pure/settings";
 import type { ProfileGroupInput } from "./model";
 
-/**
- * Profile groups = Clusters (Konnect "PU Overall"): named sets of connected profiles (cx_channels),
- * listening topics (cx_topics) and listening sources. Other modules scope their data with:
- *   const ids = await channelIdsForGroup(projectId, groupId)   // channel ids, [] when the group is unknown
- *   const s = await groupScope(projectId, groupId)              // { channelIds, topicIds, sources, name } | null
- *   groupTicketSql(s, p) / groupMentionSql(s, p)                // SQL conditions for tickets (alias t) / mentions (alias m)
- */
+/** Clusters group connected profiles, listening topics and sources; groupScope resolves their filters. */
 export type ProfileGroup = {
   id: string;
   name: string;
@@ -57,22 +51,6 @@ export async function groupScope(projectId: string, groupId: string | null | und
   if (!r) return null;
   const g = toGroup(r);
   return { id: g.id, name: g.name, channelIds: g.channelIds, topicIds: g.topicIds, sources: g.sources };
-}
-
-/** Channel (profile) ids of a group; [] when the group doesn't exist in this brand. */
-export async function channelIdsForGroup(projectId: string, groupId: string) {
-  return (await groupScope(projectId, groupId))?.channelIds ?? [];
-}
-
-/** Listening topic ids of a group; [] when the group doesn't exist in this brand. */
-export async function topicIdsForGroup(projectId: string, groupId: string) {
-  return (await groupScope(projectId, groupId))?.topicIds ?? [];
-}
-
-/** The brand's default group id (used when the inbox opens without ?group=), or null. */
-export async function defaultGroupId(projectId: string) {
-  const [r] = await query<{ id: string }>("SELECT id FROM cx_ops_profile_groups WHERE project_id=$1 AND is_default LIMIT 1", [projectId]);
-  return r?.id ?? null;
 }
 
 /** Create or update a cluster. Accepts the old profile-group input (no topics) as well. */
@@ -129,10 +107,3 @@ export function groupTicketSql(scope: { channelIds: string[]; sources: string[];
   return parts.length ? `(${parts.join(" OR ")})` : "false";
 }
 
-/** SQL condition limiting listening mentions (alias m) to a group: its topics or its listening sources. */
-export function groupMentionSql(scope: { sources: string[]; topicIds?: string[] }, p: (v: unknown) => string) {
-  const parts: string[] = [];
-  if (scope.topicIds?.length) parts.push(`m.topic_id = ANY(${p(scope.topicIds)}::text[])`);
-  if (scope.sources.length) parts.push(`m.source = ANY(${p(scope.sources)}::text[])`);
-  return parts.length ? `(${parts.join(" OR ")})` : "false";
-}

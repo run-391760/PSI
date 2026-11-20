@@ -6,10 +6,6 @@ export { SOURCE_LABELS, type DataSource, type Sourced } from "./labels";
 export function demo<T>(data: T, note?: string): Sourced<T> {
   return { data, source: "demo", fetchedAt: new Date().toISOString(), live: false, note };
 }
-export function sourced<T>(data: T, source: DataSource, note?: string): Sourced<T> {
-  return { data, source, fetchedAt: new Date().toISOString(), live: source !== "demo", note };
-}
-
 /** DataForSEO credentials present → paid live data is available. */
 export function liveEnabled() {
   return Boolean(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);

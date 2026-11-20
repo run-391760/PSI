@@ -9,17 +9,6 @@ import { complete as llmComplete, llmConfigured } from "@/lib/providers/llm";
  * before scoring where it matters (listening/indic.ts, inbox translate).
  */
 export type Intent = "complaint" | "query" | "feedback" | "praise" | "purchase" | "cancellation" | "spam" | "other";
-export const INTENT_LABELS: Record<Intent, string> = {
-  complaint: "Complaint",
-  query: "Query",
-  feedback: "Feedback",
-  praise: "Praise",
-  purchase: "Purchase intent",
-  cancellation: "Cancellation / churn risk",
-  spam: "Spam",
-  other: "Other",
-};
-
 export function sentimentOf(text: string): { label: Sentiment; score: number } {
   const r = analyzeSentiment(text);
   return { label: r.label, score: r.score };

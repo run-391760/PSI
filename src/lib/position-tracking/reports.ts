@@ -345,7 +345,6 @@ export async function pages(ctx: Ctx, domain: string) {
 // ------------------------------------------------------------------------------------ Cannibalization
 
 export async function cannibalization(ctx: Ctx) {
-  const own = ctx.project.domain;
   if (!ctx.startDay) return { rows: [], score: 100, ranking: 0, affectedPages: 0, switches: 0, days: ctx.days };
   const ids = new Set(ctx.selected.map((k) => k.id));
   const data = await query<{ keyword_id: string; day: string; own_urls: { url: string; position: number }[] }>(

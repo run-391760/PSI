@@ -97,7 +97,7 @@ export default async function ProjectPage({ params, searchParams }: PageProps<"/
         ]}
       />
 
-      {tab === "overview" && <Overview project={project} summaries={summaries} jobs={jobs} schedules={schedules} doLink={doLink} />}
+      {tab === "overview" && <Overview project={project} summaries={summaries} jobs={jobs} schedules={schedules} />}
 
       {tab === "schedules" && (
         <div className="space-y-4">
@@ -126,13 +126,11 @@ async function Overview({
   summaries,
   jobs,
   schedules,
-  doLink,
 }: {
   project: NonNullable<Awaited<ReturnType<typeof findProject>>>;
   summaries: Awaited<ReturnType<typeof projectSummaries>>;
   jobs: Awaited<ReturnType<typeof listJobRows>>;
   schedules: Awaited<ReturnType<typeof projectSchedules>>;
-  doLink: string;
 }) {
   const db = database(project.country).code;
   const [google, linked] = await Promise.all([projectGoogle(project), linkedGoogleProjects(project.owner_id)]);

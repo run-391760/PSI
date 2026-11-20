@@ -91,7 +91,6 @@ export class SpiderEngine {
   private requested: number | null = null;
   private played = 0;
   private phase: Phase = { name: "idle" };
-  private ended = false;
   private raf = 0;
   private last = 0;
   private body: Vec = { x: 160, y: 160 };
@@ -159,7 +158,6 @@ export class SpiderEngine {
     this.requested = null;
     this.played = 0;
     this.phase = { name: "idle" };
-    this.ended = false;
     this.fast = false;
     this.liveCursor = null;
     this.mode = "live";
@@ -189,7 +187,6 @@ export class SpiderEngine {
     this.dirty = true;
   }
   end() {
-    this.ended = true;
     this.dirty = true;
   }
   /** Apply everything at once and jump to the newest page. */

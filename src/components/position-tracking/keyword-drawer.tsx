@@ -1,7 +1,6 @@
 "use client";
 
 import { ExternalLink, Search, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { deleteKeywordsAction, tagKeywordsAction } from "@/app/(app)/position-tracking/actions";

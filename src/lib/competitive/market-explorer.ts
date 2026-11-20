@@ -1,5 +1,5 @@
 import { domainCompetitors, domainEntity, domainFacts, keywordMetrics, memo, round, TOPICS, topicPool, topicUniverse, trafficFacts, type TrafficChannel } from "@/lib/seo/engine";
-import { database, domainLabel } from "@/lib/domain";
+import { database } from "@/lib/domain";
 import { demo as demoData, type Sourced } from "@/lib/providers/source";
 import { demoAllowed } from "@/lib/data-mode";
 import { AppError } from "@/lib/domain";
@@ -194,8 +194,6 @@ export async function getMarketByTopic(topicId: string, dbInput: string): Promis
   const db = database(dbInput).code;
   return demo(buildMarket("topic", null, topicId, db), NOTE);
 }
-
-export const marketLabel = (r: MarketReport) => (r.seed ? `${domainLabel(r.seed)} market` : r.topicName);
 
 /** Demo data only in local development (DEMO_DATA=true). */
 function demo<T>(data: T, note?: string): Sourced<T> {
