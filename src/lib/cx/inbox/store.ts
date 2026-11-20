@@ -39,7 +39,7 @@ export type TicketListRow = {
   /** Card view (WP-K2): attachments of the latest and first message, the listening mention URL. */
   last_attachments: Attachment[]; first_attachments: Attachment[]; mention_url: string | null;
 };
-export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null; external_id?: string | null; moderation?: string | null };
+export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null; external_id?: string | null; moderation?: string | null; edited_at?: string | null };
 
 const DONE = "('solved','closed')";
 /** Effective CRM status in SQL (mirrors model.effectiveStatus). Needs aliases t (ticket) and tm (meta). */
@@ -623,10 +623,10 @@ export async function getTicket(projectId: string, id: string) {
   if (!t) return null;
   const ticket = normTicket(t);
   const messages = (await query<MessageRow>(
-    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,m.external_id,mm.reply_to,mm.moderation,COALESCE(mm.mentions,'[]') AS mentions
+    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,m.external_id,mm.reply_to,mm.moderation,mm.edited_at,COALESCE(mm.mentions,'[]') AS mentions
        FROM cx_messages m LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id WHERE m.ticket_id=$1 ORDER BY m.created_at, m.id`,
     [id],
-  )).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
+  )).map((m) => ({ ...m, created_at: iso(m.created_at)!, edited_at: iso(m.edited_at ?? null) }));
   const events = (await query<{ id: string; actor: string; kind: string; detail: string; created_at: string }>("SELECT id,actor,kind,detail,created_at FROM cx_inbox_events WHERE ticket_id=$1 ORDER BY created_at", [id])).map((e) => ({ ...e, created_at: iso(e.created_at)! }));
   const related = t.contact_id
     ? (await query<{ id: string; number: number; subject: string; status: string; channel_kind: string; created_at: string }>("SELECT id,number,subject,status,channel_kind,created_at FROM cx_tickets WHERE project_id=$1 AND contact_id=$2 AND id<>$3 ORDER BY created_at DESC LIMIT 8", [projectId, t.contact_id, id])).map((r) => ({ ...r, created_at: iso(r.created_at)! }))

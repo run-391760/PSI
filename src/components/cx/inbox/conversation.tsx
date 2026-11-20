@@ -8,14 +8,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { runQuickActionAction } from "@/app/(app)/cx/settings/automation/admin-actions";
-import { mergeAction, moderateCommentAction, summarizeAction, translateMessageAction, unlinkParentAction, updateTicketsAction } from "@/app/(app)/cx/inbox/actions";
+import { manageReplyAction, mergeAction, moderateCommentAction, summarizeAction, translateMessageAction, unlinkParentAction, updateTicketsAction } from "@/app/(app)/cx/inbox/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { Dialog, Menu } from "@/components/ui/dialog";
 import { Callout } from "@/components/ui/feedback";
-import { Checkbox, Input, Select } from "@/components/ui/input";
-import { crmLabel, linkSegments, SETTABLE_STATUSES, type CrmStatus } from "@/lib/cx/inbox/model";
+import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
+import { crmLabel, linkSegments, sentReplyActions, SETTABLE_STATUSES, type CrmStatus } from "@/lib/cx/inbox/model";
 import type { Attachment, MessageRow, TicketDetail } from "@/lib/cx/inbox/store";
 import { slaStatus } from "@/lib/cx/inbox/sla";
 import { dateTimeLabel } from "@/lib/format";
@@ -89,6 +89,15 @@ export function Conversation(props: Props) {
     const r = await moderateCommentAction(brand.id, t.id, m.id, action);
     if (!r.ok) setError(r.error);
     else router.refresh();
+  };
+  // The team's own public replies on Facebook / Instagram: edit (Facebook only) or delete them on the platform too.
+  const net = t.channel_kind === "instagram" ? "Instagram" : "Facebook";
+  const manageReply = async (m: MessageRow, action: "edit" | "delete", text?: string) => {
+    if (action === "delete" && !(await confirm({ title: `Delete this reply on ${net}?`, description: `It is removed from ${net} for everyone. It stays in this conversation marked as deleted. This can't be undone.` }))) return false;
+    const r = await manageReplyAction(brand.id, t.id, m.id, action, text);
+    if (!r.ok) { setError(r.error); return false; }
+    router.refresh();
+    return true;
   };
   const collapsedMode = isEmail && prefs.emailCollapsed;
   const readOnly = props.role === "viewer";
@@ -238,6 +247,7 @@ export function Conversation(props: Props) {
                 mentionNames={(m.mentions ?? []).map(agentName).filter(Boolean)}
                 onReply={m.direction === "in" && !disabled && (isEmail || (socialThread && !!m.external_id && !m.external_id.startsWith("tag:"))) ? () => setReplyTo(m) : undefined}
                 onModerate={moderatable && m.direction === "in" && !m.from_ticket && m.external_id && m.moderation !== "deleted" ? (a) => moderate(m, a) : undefined}
+                manage={!readOnlyRole && !m.from_ticket ? { ...sentReplyActions(m, t.channel_kind, threadKey), net, run: (a, text) => manageReply(m, a, text) } : undefined}
                 bookmarked={bm.messages.includes(m.id)} onBookmark={m.from_ticket ? undefined : () => toggleBm(m.id)}
               />
             ))}
@@ -452,8 +462,19 @@ function Body({ text }: { text: string }) {
   return <>{linkSegments(text).map((s, i) => (s.href ? <a key={i} href={s.href} target="_blank" rel="noreferrer noopener" className="text-link underline">{s.text}</a> : <span key={i}>{s.text}</span>))}</>;
 }
 
-function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply, bookmarked, onBookmark, onModerate }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void; bookmarked?: boolean; onBookmark?: () => void; onModerate?: (action: "hide" | "unhide" | "delete") => void }) {
+type ManageReply = { edit: boolean; delete: boolean; net: string; run: (action: "edit" | "delete", text?: string) => Promise<boolean> };
+
+function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo, mentionNames, onReply, bookmarked, onBookmark, onModerate, manage }: { m: Item; align: "split" | "left"; brand: string; ai: boolean; lang: string; collapsible: boolean; defaultOpen: boolean; replyTo: MessageRow | null; mentionNames: string[]; onReply?: () => void; bookmarked?: boolean; onBookmark?: () => void; onModerate?: (action: "hide" | "unhide" | "delete") => void; manage?: ManageReply }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveEdit = async () => {
+    if (!manage || editing === null || saving) return;
+    setSaving(true);
+    const ok = await manage.run("edit", editing);
+    setSaving(false);
+    if (ok) setEditing(null);
+  };
   const [tr, setTr] = useState<string | null>(null);
   const [trBusy, setTrBusy] = useState(false);
   const out = m.direction === "out", note = m.direction === "note";
@@ -482,6 +503,9 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
           {m.moderation === "deleted" && <span className="rounded bg-critical-soft px-1 text-critical-ink">Deleted on the platform</span>}
           {onModerate && <button type="button" onClick={() => onModerate(m.moderation === "hidden" ? "unhide" : "hide")} className="text-link hover:underline" title="Hide or show this comment for everyone except its author and their friends">{m.moderation === "hidden" ? "Unhide" : "Hide"}</button>}
           {onModerate && <button type="button" onClick={() => onModerate("delete")} className="text-critical-ink hover:underline">Delete</button>}
+          {m.edited_at && m.moderation !== "deleted" && <span title={`Edited ${dateTimeLabel(m.edited_at)}`}>Edited</span>}
+          {manage?.edit && editing === null && <button type="button" onClick={() => setEditing(m.body)} className="inline-flex items-center gap-0.5 text-link hover:underline" title={`Change this reply on ${manage.net}`}><Pencil className="h-3 w-3" />Edit</button>}
+          {manage?.delete && editing === null && <button type="button" onClick={() => manage.run("delete")} className="text-critical-ink hover:underline" title={`Remove this reply from ${manage.net}`}>Delete</button>}
           {ai && m.direction === "in" && (
             <button type="button" disabled={trBusy} onClick={async () => { if (tr) return setTr(null); setTrBusy(true); const r = await translateMessageAction(brand, m.id, lang); setTrBusy(false); setTr(r.ok ? r.data ?? "No translation returned." : r.error); }} className="inline-flex items-center gap-0.5 text-link hover:underline">
               <Languages className="h-3 w-3" />{trBusy ? "Translating…" : tr ? "Hide translation" : `Translate`}
@@ -489,7 +513,19 @@ function Message({ m, align, brand, ai, lang, collapsible, defaultOpen, replyTo,
           )}
         </div>
         {replyTo && <div className="mb-1 border-l-2 border-border-strong pl-2 text-[12px] text-text-3">↪ {replyTo.author_name}: {replyTo.body.slice(0, 100)}</div>}
-        <div className="text-[13.5px] break-words whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{m.body ? <Body text={m.body} /> : <span className="text-text-3 italic">(no text)</span>}</div>
+        {editing !== null ? (
+          <div className="mt-1 space-y-1.5">
+            <Textarea value={editing} onChange={(e) => setEditing(e.target.value)} rows={3} autoFocus aria-label="Edit reply" className="min-w-[260px] text-[13.5px]"
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void saveEdit(); } if (e.key === "Escape") setEditing(null); }} />
+            <div className="flex items-center justify-end gap-2">
+              <span className="mr-auto text-[11.5px] text-text-3">Updates the reply on {manage?.net} too.</span>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
+              <Button size="sm" variant="primary" onClick={saveEdit} loading={saving} disabled={!editing.trim() || editing.trim() === m.body.trim()}>Save</Button>
+            </div>
+          </div>
+        ) : (
+          <div className={cn("text-[13.5px] break-words whitespace-pre-wrap text-text [overflow-wrap:anywhere]", m.moderation === "deleted" && m.direction === "out" && "text-text-3 line-through")}>{m.body ? <Body text={m.body} /> : <span className="text-text-3 italic">(no text)</span>}</div>
+        )}
         {tr && <div className="mt-1.5 border-t border-border pt-1.5 text-[13px] whitespace-pre-wrap text-text-2"><span className="text-[11px] text-text-3 uppercase">{lang}</span><br />{tr}</div>}
         {mentionNames.length > 0 && <div className="mt-1 text-[11.5px] text-text-3">Notified: {mentionNames.join(", ")}</div>}
         {(m.attachments ?? []).length > 0 && <Attachments list={m.attachments} />}
