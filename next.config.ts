@@ -13,7 +13,8 @@ const config: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // Microphone allowed for this site only (inbox dictation); camera and location stay off.
+          { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" },
           // Ignored by browsers on plain-HTTP (local) origins; enforces HTTPS in production.
           { key: "Strict-Transport-Security", value: "max-age=31536000" },
         ],

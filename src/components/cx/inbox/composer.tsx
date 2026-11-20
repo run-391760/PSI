@@ -21,7 +21,18 @@ import { AttachButton, PendingFiles, useUploads } from "./ticket-dialogs";
 import { channelLabel } from "./ui";
 
 const SENDS = new Set(["email", "livechat", "webform"]);
-type Speech = { lang: string; continuous: boolean; interimResults: boolean; start: () => void; stop: () => void; onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null; onend: (() => void) | null; onerror: (() => void) | null };
+type Speech = { lang: string; continuous: boolean; interimResults: boolean; start: () => void; stop: () => void; onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null; onend: (() => void) | null; onerror: ((e: { error?: string }) => void) | null };
+
+/** A clear message for a browser speech-recognition error code (null when the user just stopped). */
+function dictationError(code?: string): string | null {
+  if (code === "aborted") return null;
+  if (code === "not-allowed" || code === "service-not-allowed") return "Microphone access is blocked. Click the padlock (or settings icon) left of the address bar, allow the microphone for this site, then try again.";
+  if (code === "no-speech") return "No speech was heard. Click Dictate and start speaking straight away.";
+  if (code === "audio-capture") return "No microphone was found. Connect or enable one and try again.";
+  if (code === "network") return "Dictation needs an internet connection (the browser sends the audio to its speech service).";
+  if (code === "language-not-supported") return "Dictation doesn't support your browser's language. Change the browser language to English and try again.";
+  return "Dictation stopped. Try again.";
+}
 
 export type ComposerProps = {
   brand: { id: string; name: string };
@@ -123,7 +134,7 @@ export function Composer(p: ComposerProps) {
     if (listening) { recRef.current?.stop(); return; }
     const W = window as unknown as { SpeechRecognition?: new () => Speech; webkitSpeechRecognition?: new () => Speech };
     const R = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-    if (!R) return;
+    if (!R) return setError("Dictation isn't supported in this browser. Use Chrome or Edge (or Safari on a Mac).");
     const rec = new R();
     rec.lang = navigator.language || "en-US"; rec.continuous = true; rec.interimResults = false;
     rec.onresult = (e) => {
@@ -132,7 +143,7 @@ export function Composer(p: ComposerProps) {
       if (s) setText((x) => (x && !/\s$/.test(x) ? `${x} ` : x) + s.trim());
     };
     rec.onend = () => setListening(false);
-    rec.onerror = () => { setListening(false); setError("Dictation stopped (microphone permission or no speech detected)."); };
+    rec.onerror = (e) => { setListening(false); const m = dictationError(e?.error); if (m) setError(m); };
     recRef.current = rec;
     rec.start(); setListening(true);
   };
