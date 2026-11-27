@@ -170,10 +170,10 @@ export function Sidebar({ mobileOpen, onClose, available }: { mobileOpen: boolea
         aria-label="Main navigation"
       >
         <div className={cn("flex h-12 shrink-0 items-center gap-2 border-b border-white/5 px-5", railCenter)}>
-          <Link href="/dashboard" className="flex min-w-0 items-center gap-2" aria-label="SynapseSEO home">
+          <Link href="/dashboard" className="flex min-w-0 items-center gap-2" aria-label="Nerve Signal home">
             <Logo size={24} />
             <span className={cn("text-[13.5px] font-semibold tracking-wide text-white uppercase", railHide)}>
-              Synapse<span className="text-nav-accent">SEO</span>
+              Nerve <span className="text-nav-accent">Signal</span>
             </span>
           </Link>
           <button ref={closeRef} type="button" className="-mr-2 ml-auto rounded p-1.5 text-nav-muted hover:text-white lg:hidden" onClick={onClose} aria-label="Close navigation">

@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS cx_crisis_mentions (
   PRIMARY KEY (event_id, mention_id)
 );
 
+-- Tickets from connected social channels (Facebook, Instagram, LinkedIn, X comments and messages) in a spike.
+CREATE TABLE IF NOT EXISTS cx_crisis_tickets (
+  event_id text NOT NULL REFERENCES cx_crisis_events(id) ON DELETE CASCADE,
+  ticket_id text NOT NULL REFERENCES cx_tickets(id) ON DELETE CASCADE,
+  PRIMARY KEY (event_id, ticket_id)
+);
+
 CREATE TABLE IF NOT EXISTS cx_crisis_notes (
   id text PRIMARY KEY,
   event_id text NOT NULL REFERENCES cx_crisis_events(id) ON DELETE CASCADE,
@@ -73,6 +80,7 @@ CREATE INDEX IF NOT EXISTS cx_crisis_notes_event ON cx_crisis_notes(event_id, cr
 
 -- WP3: crisis v2, reviews, trending, UGC, command centre, social analytics
 ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS auto_ticket boolean NOT NULL DEFAULT false;
+ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS playbooks_seeded boolean NOT NULL DEFAULT false;
 ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS auto_ticket_all boolean NOT NULL DEFAULT false;
 ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS rating_drop real NOT NULL DEFAULT 0.5;
 ALTER TABLE cx_listening_settings ADD COLUMN IF NOT EXISTS rating_alert_at timestamptz;

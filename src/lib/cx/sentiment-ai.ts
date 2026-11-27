@@ -47,6 +47,12 @@ function take(want: number) {
   return n;
 }
 
+/** Texts still allowed today (shared by new items and the re-score job). */
+export function sentimentBudgetLeft() {
+  const today = new Date().toISOString().slice(0, 10);
+  return Math.max(0, dailyLimit() - (today === day ? used : 0));
+}
+
 export const aiSentimentEnabled = () => dailyLimit() > 0 && llmProviders().some((p) => SENTIMENT_PROVIDERS.includes(p));
 
 /** Map the model's results back to the inputs (pure): unknown or missing items are null, scores clamped to -1..1. */

@@ -41,7 +41,7 @@ import type { NavGroup, NavItem } from "./nav";
 
 /**
  * Navigation of the CX workspace (/cx), laid out like Konnect: four top tabs, a left sidebar per tab,
- * a hamburger menu of secondary modules, and secondary panels (SETTINGS, REPORTS, TOPICS) rendered by
+ * secondary panels (SETTINGS, REPORTS, TOPICS) rendered by
  * <SectionPanel> (./section-panel) next to an icon rail.
  *
  * Item hrefs may carry a query (`/cx/tasks?view=mine`). Active state: the item whose path (or one of
@@ -98,6 +98,8 @@ export const CX_NAV: CxNavGroup[] = [
     label: "Listening",
     items: [
       { href: "/cx/listening/platforms", label: "Social Listening", icon: Ear, description: "Mentions per platform: volume, sentiment, authors and the feed." },
+      { href: "/cx/crisis", label: "Crisis", icon: Siren, description: "Spike detection, crisis rooms, escalations and playbooks." },
+      { href: "/cx/command/streams", label: "Streams", icon: Columns3, description: "Boards of filtered live stream columns." },
     ],
   },
   {
@@ -129,13 +131,11 @@ export const CX_NAV: CxNavGroup[] = [
     ],
   },
   {
-    // Hamburger modules: not in the sidebar by default; "Customize menu" can show them here.
+    // Extra modules: not in the sidebar by default; "Customize menu" can show them, and search finds them.
     tab: "monitor",
     id: "monitor-more",
     label: "More",
     items: [
-      { href: "/cx/crisis", label: "Crisis", icon: Siren, description: "Spike detection, crisis rooms and escalations.", defaultHidden: true },
-      { href: "/cx/command/streams", label: "Streams", icon: Columns3, description: "Boards of filtered live stream columns.", defaultHidden: true },
       { href: "/cx/command", label: "Command Center", icon: MonitorPlay, description: "Full-screen live wall of mentions and KPIs.", defaultHidden: true },
       { href: "/cx/contacts", label: "Contacts", icon: Contact, description: "Unified customer profiles and history.", defaultHidden: true },
       { href: "/cx/knowledge", label: "Knowledge base", icon: BookOpen, description: "Articles for agents and AI answers.", defaultHidden: true },
@@ -192,40 +192,6 @@ export const CX_NAV: CxNavGroup[] = [
 ];
 
 export const cxTabGroups = (tab: CxTab) => CX_NAV.filter((g) => g.tab === tab);
-
-/** Hamburger slide-in menu (spec §1): Konnect's own modules, our extra modules grouped, overview. */
-export type CxMenuSection = { id: string; label: string; items: { href: string; label: string; icon: LucideIcon; exact?: boolean }[] };
-export const CX_MENU: CxMenuSection[] = [
-  {
-    id: "konnect",
-    label: "",
-    items: [
-      { href: "/cx/settings/alerts", label: "Configure Alerts", icon: BellRing },
-      { href: "/cx/compose", label: "Compose Message", icon: PenSquare },
-      { href: "/cx/profile", label: "My Profile", icon: UserCog },
-      { href: "/cx/plan", label: "My Plan", icon: Gauge },
-      { href: "/cx/command", label: "Command Center", icon: MonitorPlay },
-    ],
-  },
-  {
-    id: "listening",
-    label: "Listening",
-    items: [
-      { href: "/cx/listening/platforms", label: "Social Listening", icon: Ear },
-      { href: "/cx/crisis", label: "Crisis", icon: Siren },
-      { href: "/cx/command/streams", label: "Streams", icon: Columns3 },
-    ],
-  },
-  {
-    id: "customers",
-    label: "Customers",
-    items: [
-      { href: "/cx/contacts", label: "Contacts", icon: Contact },
-      { href: "/cx/knowledge", label: "Knowledge base", icon: BookOpen },
-      { href: "/cx/ask", label: "Ask AI", icon: Bot },
-    ],
-  },
-];
 
 // ------------------------------------------------------------------ secondary panels
 
@@ -318,7 +284,7 @@ export function matchScore(pathname: string, search: URLSearchParams, item: Matc
   return score;
 }
 
-/** Href of the best-matching item, or undefined (hamburger-only modules highlight nothing). */
+/** Href of the best-matching item, or undefined (pages outside the list highlight nothing). */
 export function pickActive<T extends Matchable>(pathname: string, search: URLSearchParams, items: T[]): string | undefined {
   let best: T | undefined;
   let bestScore = -1;
@@ -399,10 +365,9 @@ export const CX_SETTINGS: SettingsSection[] = [
 
 const TAB_LABEL: Record<CxTab, string> = { monitor: "Monitor", analytics: "Social analytics", publish: "Publish", dashboard: "Dashboard" };
 
-/** Everything searchable in the CX workspace: sidebar items (incl. hidden), hamburger modules, panels, settings. */
+/** Everything searchable in the CX workspace: sidebar items (incl. hidden), panels, settings. */
 export const CX_SEARCH: { href: string; label: string; description: string; group: string }[] = [
   ...CX_NAV.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: i.description, group: g.id === "monitor-more" ? "CX" : `${TAB_LABEL[g.tab]} · ${g.label}` }))),
-  ...CX_MENU.flatMap((s) => s.items.map((i) => ({ href: i.href, label: i.label, description: s.label ? `${s.label} module` : "CX module", group: s.label || "CX" }))),
   ...CX_REPORTS_PANEL.groups.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: `${g.label} report`, group: "Reports" }))),
   ...CX_SETTINGS_PANEL.groups.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: "Settings", group: "Settings" }))),
   ...CX_SETTINGS.flatMap((s) => s.items.filter((i) => !i.pending).map((i) => ({ href: i.href, label: i.label, description: i.description, group: "Settings" }))),

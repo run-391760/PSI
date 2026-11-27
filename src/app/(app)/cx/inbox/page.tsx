@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { requirePageUser } from "@/lib/auth";
 import { aiConfigured } from "@/lib/cx/ai";
 import { cxContext } from "@/lib/cx/context";
+import { ensureCrisisSchedules } from "@/lib/cx/listening/crisis";
 import { getClassificationTree, getFieldDefs } from "@/lib/cx/admin/fields";
 import { query } from "@/lib/db";
 import { listQuickActions } from "@/lib/cx/admin/quick-actions";
@@ -33,6 +34,8 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
   const { brand, switcher } = await cxContext(user.id, sp);
   const crumbs = [{ label: "CX" }, { label: "Inbox & tickets" }];
   if (!brand) return <NoBrand title="Inbox & tickets" breadcrumbs={crumbs} redirect="/cx/inbox" />;
+  // Hourly listening fetch, crisis detection and AI sentiment re-score (created once; paused ones stay paused).
+  if (brand.role !== "viewer") await ensureCrisisSchedules(brand.id).catch(() => {});
   const s = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
   const view = (VIEWS.some((v) => v.id === s("view")) ? s("view") : "open") as View;
   const filters = {

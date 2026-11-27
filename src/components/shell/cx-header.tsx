@@ -11,7 +11,8 @@ import { Logo } from "./logo";
 import { AccountMenu, AlertsBell, DisplayMenu, FocusToggle, GlobalSearch, iconBtn, WorkspaceSwitch } from "./topbar";
 
 /**
- * CX workspace header (Konnect layout): dark brand-blue bar with the hamburger, logo + product name,
+ * CX workspace header (Konnect layout): dark brand-blue bar with the logo + product name (and, below 1024px, a
+ * button that opens the sidebar in a drawer),
  * the SEO | CX switch, top tabs MONITOR | SOCIAL ANALYTICS | PUBLISH | DASHBOARD (active tab from the
  * route, see cxTabFor), global search, focus/display controls, alerts bell and avatar menu.
  * Below 1024px the tabs move to a second, horizontally scrolling row; below 768px search is an icon.
@@ -47,13 +48,14 @@ export function CxHeader({ user, unread, onMenu, logoutAction }: { user: { name:
   return (
     <header className="no-print sticky top-0 z-30 bg-[var(--cx-header)] text-white border-b border-white/5">
       <div className="flex h-12 items-center gap-1.5 px-2 sm:gap-2 sm:px-3">
-        <button type="button" onClick={onMenu} className={iconBtn("brand")} aria-label="Open menu" title="Menu">
+        {/* Phones and tablets only: the sidebar is hidden below 1024px, so this opens it in a drawer. */}
+        <button type="button" onClick={onMenu} className={cn(iconBtn("brand"), "lg:hidden")} aria-label="Open navigation" title="Navigation">
           <MenuIcon className="h-5 w-5" />
         </button>
-        <Link href={keepParams("/cx", params)} className="flex shrink-0 items-center gap-2" aria-label="SynapseCX home">
+        <Link href={keepParams("/cx", params)} className="flex shrink-0 items-center gap-2 lg:ml-1" aria-label="Nerve Signal home">
           <Logo size={24} />
           <span className="hidden text-[13.5px] font-semibold tracking-wide uppercase sm:inline">
-            Synapse<span className="text-[#a99dff]">CX</span>
+            Nerve <span className="text-[#a99dff]">Signal</span>
           </span>
         </Link>
         <div className="ml-1 shrink-0">

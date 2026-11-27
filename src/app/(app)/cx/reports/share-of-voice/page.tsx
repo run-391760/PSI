@@ -97,7 +97,7 @@ export default async function ShareOfVoicePage({ searchParams }: { searchParams:
               title="Share of Voice Top Posts"
               info="Most engaged conversations first (likes, comments, shares and points where the source reports them), then the strongest sentiment."
               actions={<ParamSelect param="posts" value={v.posts.entity} options={entOptions(scopeAll)} label="Top posts for" />}
-              table={{ columns: ["Date", "Author", "Sentiment", "Text"], rows: v.posts.items.map((p) => [dmy(p.at), p.author, SENTIMENT_LABEL[p.sentiment], p.title || p.text]) }}
+              table={{ columns: ["Date", "Author", "Sentiment", "Text", "Link"], rows: v.posts.items.map((p) => [dmy(p.at), p.author, SENTIMENT_LABEL[p.sentiment], p.title || p.text, p.url ?? ""]) }}
             >
               <PostListK posts={v.posts.items} drill={{ ...base, entity: v.posts.entity || undefined }} />
             </Widget>

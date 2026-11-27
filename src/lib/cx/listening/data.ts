@@ -305,7 +305,7 @@ export async function bulkUpdate(projectId: string, input: z.input<typeof bulkIn
 export async function updateMentionLabels(projectId: string, id: string, patch: { sentiment?: string; intent?: string }) {
   if (patch.sentiment && !(SENTIMENTS as readonly string[]).includes(patch.sentiment)) throw new AppError("Invalid sentiment.");
   if (patch.intent && !/^[a-z_]{2,20}$/.test(patch.intent)) throw new AppError("Invalid intent.");
-  await query("UPDATE cx_mentions SET sentiment=COALESCE($3,sentiment), intent=COALESCE($4,intent), status=CASE WHEN status='new' THEN 'read' ELSE status END WHERE id=$1 AND project_id=$2", [
+  await query("UPDATE cx_mentions SET sentiment=COALESCE($3,sentiment), sentiment_source=CASE WHEN $3::text IS NULL THEN sentiment_source ELSE 'manual' END, intent=COALESCE($4,intent), status=CASE WHEN status='new' THEN 'read' ELSE status END WHERE id=$1 AND project_id=$2", [
     id, projectId, patch.sentiment ?? null, patch.intent ?? null,
   ]);
 }

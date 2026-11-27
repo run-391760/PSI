@@ -8,6 +8,7 @@ import { brandMailer } from "./mailer";
 import { hoursCfg } from "./reports";
 import { hms, replyTats, tat, type Basis } from "./reports-math";
 import { EXPORT_COLUMNS, periodRange, toCsv, type ExportColumn, type ExportSource, type Period } from "./export-defs";
+import { ticketLink } from "@/lib/cx/inbox/links";
 
 /** Download centre: export templates, ticket/message dumps with HH:MM:SS TAT, scheduled email exports (L29, L30, J6). */
 export type Template = { id: string; name: string; source: ExportSource; columns: ExportColumn[]; basis: Basis; created_at: string; builtin?: boolean };
@@ -34,7 +35,7 @@ export const QUICK_REPORT: Template = {
   basis: "calendar",
   builtin: true,
   created_at: new Date(0).toISOString(),
-  columns: ["number", "subject", "status", "priority", "channel", "agent", "contact", "created_at", "first_response_at", "resolved_at", "frt", "resolution_tat", "fr_breached", "res_breached", "csat"].map((key) => ({
+  columns: ["number", "subject", "link", "status", "priority", "channel", "agent", "contact", "created_at", "first_response_at", "resolved_at", "frt", "resolution_tat", "fr_breached", "res_breached", "csat"].map((key) => ({
     key,
     label: EXPORT_COLUMNS.tickets.find((c) => c.key === key)!.label,
   })),
@@ -69,7 +70,14 @@ type TicketRow = {
   id: string; number: number; subject: string; status: string; priority: string; channel_kind: string; agent: string | null; team: string | null; contact: string | null; contact_email: string | null;
   tags: string[]; sentiment: string | null; intent: string | null; language: string | null; created_at: string; first_response_at: string | null; resolved_at: string | null;
   first_response_due: string | null; resolution_due: string | null; csat: number | null; messages: number; updated_at: string;
+  external_thread_id: string | null; mention_url: string | null; first_body: string | null;
 };
+/** Thread key, listening mention URL and first customer message: what the Link column is built from. */
+const LINK_SQL = `t.external_thread_id,
+  (SELECT mm.url FROM cx_mentions mm WHERE mm.ticket_id=t.id AND mm.url IS NOT NULL LIMIT 1) AS mention_url,
+  (SELECT fm.body FROM cx_messages fm WHERE fm.ticket_id=t.id AND fm.direction='in' ORDER BY fm.created_at, fm.id LIMIT 1) AS first_body`;
+/** Every ticket and message export carries a Link column (older saved templates get it appended). */
+const withLink = (cols: Template["columns"]): Template["columns"] => (cols.some((c) => c.key === "link") ? cols : [...cols, { key: "link", label: "Link" }]);
 const iso = (v: unknown) => (v == null ? "" : new Date(v as string).toISOString().replace("T", " ").slice(0, 19));
 const breached = (due: string | null, done: string | null, now: number) => (!due ? "" : done ? (new Date(done) > new Date(due) ? "yes" : "no") : now > new Date(due).getTime() ? "yes" : "pending");
 
@@ -77,12 +85,13 @@ const breached = (due: string | null, done: string | null, now: number) => (!due
 export async function buildExport(projectId: string, tpl: Pick<Template, "source" | "columns" | "basis">, from: Date, to: Date, limit = 50000) {
   const cfg = tpl.basis === "business" ? await hoursCfg(projectId) : null;
   const now = Date.now();
+  tpl = { ...tpl, columns: withLink(tpl.columns) };
   const header = tpl.columns.map((c) => c.label);
   if (tpl.source === "tickets") {
     const rows = await query<TicketRow>(
       `SELECT t.id,t.number,t.subject,t.status,t.priority,t.channel_kind,COALESCE(NULLIF(u.name,''),u.email) AS agent,t.team,COALESCE(NULLIF(c.name,''),c.email) AS contact,c.email AS contact_email,
               t.tags,t.sentiment,t.intent,t.language,t.created_at,t.first_response_at,t.resolved_at,t.first_response_due,t.resolution_due,t.csat,t.updated_at,
-              (SELECT count(*)::int FROM cx_messages m WHERE m.ticket_id=t.id AND m.direction<>'note') AS messages
+              (SELECT count(*)::int FROM cx_messages m WHERE m.ticket_id=t.id AND m.direction<>'note') AS messages, ${LINK_SQL}
        FROM cx_tickets t LEFT JOIN users u ON u.id=t.assignee_id LEFT JOIN cx_contacts c ON c.id=t.contact_id
        WHERE t.project_id=$1 AND t.created_at >= $2 AND t.created_at < $3 ORDER BY t.created_at LIMIT $4`,
       [projectId, from, to, limit],
@@ -121,13 +130,15 @@ export async function buildExport(projectId: string, tpl: Pick<Template, "source
         case "res_breached": return breached(r.resolution_due, r.resolved_at, now);
         case "csat": return r.csat ?? "";
         case "messages": return r.messages;
+        case "link": return ticketLink({ threadKey: r.external_thread_id, mentionUrl: r.mention_url, firstBody: r.first_body, ticketId: r.id, brand: projectId });
         default: return "";
       }
     };
     return { header, rows: rows.map((r) => tpl.columns.map((c) => val(r, c.key))) };
   }
-  const msgs = await query<{ id: string; ticket_id: string; number: number; subject: string; channel_kind: string; direction: "in" | "out" | "note"; author: string | null; author_user_id: string | null; body: string; created_at: string; delivery: string }>(
-    `SELECT m.id,m.ticket_id,t.number,t.subject,t.channel_kind,m.direction,COALESCE(NULLIF(u.name,''),u.email,NULLIF(m.author_name,'')) AS author,m.author_user_id,m.body,m.created_at,m.delivery
+  const msgs = await query<{ id: string; ticket_id: string; number: number; subject: string; channel_kind: string; direction: "in" | "out" | "note"; author: string | null; author_user_id: string | null; body: string; created_at: string; delivery: string; external_id: string | null; external_thread_id: string | null; mention_url: string | null; first_body: string | null }>(
+    `SELECT m.id,m.ticket_id,t.number,t.subject,t.channel_kind,m.direction,COALESCE(NULLIF(u.name,''),u.email,NULLIF(m.author_name,'')) AS author,m.author_user_id,m.body,m.created_at,m.delivery,
+            m.external_id, ${LINK_SQL}
      FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id LEFT JOIN users u ON u.id=m.author_user_id
      WHERE t.project_id=$1 AND m.created_at >= $2 AND m.created_at < $3 ORDER BY t.number, m.created_at LIMIT $4`,
     [projectId, from, to, limit],
@@ -146,6 +157,8 @@ export async function buildExport(projectId: string, tpl: Pick<Template, "source
       case "created_at": return iso(m.created_at);
       case "delivery": return m.delivery;
       case "reply_tat": return hms(replyAt.get(m.id));
+      // Facebook comments and replies open at that comment; other messages at their thread or ticket.
+      case "link": return ticketLink({ threadKey: m.external_thread_id, mentionUrl: m.mention_url, firstBody: m.first_body, commentId: m.direction !== "note" && m.external_thread_id?.startsWith("fbc:") ? m.external_id : null, ticketId: m.ticket_id, brand: projectId });
       default: return "";
     }
   };

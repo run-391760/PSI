@@ -4,6 +4,7 @@ import { toCsv } from "@/lib/csv";
 import { getCxBrand } from "@/lib/cx/context";
 import { exportMentions, readFilters } from "@/lib/cx/listening/data";
 import { sourceLabel } from "@/lib/cx/listening/sources";
+import { appTicketLink } from "@/lib/cx/inbox/links";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
     const project = await getCxBrand(user.id, sp.brand ?? "", { write: false });
     const rows = await exportMentions(project.id, readFilters(sp));
     const csv = toCsv([
-      ["Published", "Topic", "Topic type", "Source", "Author", "Handle", "Followers", "Title", "Text", "URL", "Language", "Sentiment", "Sentiment score", "Intent", "Status", "Tags", "Engagement"],
+      ["Published", "Topic", "Topic type", "Source", "Author", "Handle", "Followers", "Title", "Text", "Link", "Language", "Sentiment", "Sentiment score", "Intent", "Status", "Tags", "Engagement"],
       ...rows.map((m) => [
         m.published_at ? new Date(m.published_at).toISOString() : "",
         m.topic_name ?? "",
@@ -27,7 +28,8 @@ export async function GET(req: Request) {
         m.author_followers ?? "",
         m.title,
         m.body,
-        m.url ?? "",
+        // The post itself; without one, the ticket it became (if any).
+        m.url ?? (m.ticket_id ? appTicketLink(m.ticket_id, project.id) : ""),
         m.language ?? "",
         m.sentiment ?? "",
         m.sentiment_score ?? "",

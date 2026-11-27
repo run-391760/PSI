@@ -47,14 +47,15 @@ export async function storeMentions(projectId: string, topicId: string | null, s
   const ids: string[] = [];
   for (const r of rows) {
     const res = await query(
-      `INSERT INTO cx_mentions(id,project_id,topic_id,source,external_id,url,author,author_handle,author_followers,title,body,language,country,published_at,sentiment,sentiment_score,intent,engagement,translation)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19)
+      `INSERT INTO cx_mentions(id,project_id,topic_id,source,external_id,url,author,author_handle,author_followers,title,body,language,country,published_at,sentiment,sentiment_score,intent,engagement,translation,sentiment_source)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
        ON CONFLICT(project_id,source,external_id) DO UPDATE SET engagement=excluded.engagement, author_followers=COALESCE(excluded.author_followers, cx_mentions.author_followers), topic_id=COALESCE(cx_mentions.topic_id, excluded.topic_id)
        RETURNING id, (xmax = 0) inserted`,
       [
         randomUUID(), projectId, topicId, source, r.externalId.slice(0, 500), r.url, r.author.slice(0, 200), r.authorHandle, r.authorFollowers,
         r.title.slice(0, 500), r.body.slice(0, 8000), r.language, r.country, r.publishedAt, r.sentiment, r.sentimentScore, r.intent, JSON.stringify(r.engagement),
         ((r as { translation?: string }).translation ?? "").slice(0, 8000) || null,
+        (r as { sentimentSource?: string }).sentimentSource ?? (r.engagement.rating != null ? "rating" : null),
       ],
     );
     const row = res[0] as { id?: string; inserted?: boolean } | undefined;
@@ -80,7 +81,7 @@ async function scoreNewWithAi(projectId: string, source: string, rows: ReturnTyp
     const scores = await aiSentiments(todo.map((r) => (r as { translation?: string }).translation || `${r.title} ${r.body}`.trim()));
     todo.forEach((r, i) => {
       const s = scores[i];
-      if (s) { r.sentiment = s.sentiment; r.sentimentScore = s.score; }
+      if (s) { r.sentiment = s.sentiment; r.sentimentScore = s.score; (r as { sentimentSource?: string }).sentimentSource = "ai"; }
     });
   } catch (e) {
     console.warn(`[listening] AI sentiment skipped: ${e instanceof Error ? e.message : String(e)}`);

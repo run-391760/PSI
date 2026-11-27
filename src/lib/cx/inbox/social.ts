@@ -212,6 +212,23 @@ export async function moderateComment(projectId: string, ticketId: string, messa
 }
 
 /**
+ * Delete a comment ticket's comment on Facebook / Instagram (Reports drill-down): the thread's root comment,
+ * else its first inbound comment. Same rules and log entry as deleting it from the conversation.
+ */
+export async function deleteTicketComment(projectId: string, ticketId: string, actor: string) {
+  const { AppError } = await import("@/lib/domain");
+  const [m] = await query<{ id: string; moderation: string | null }>(
+    `SELECT m.id, mm.moderation FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id
+      WHERE t.project_id=$1 AND m.ticket_id=$2 AND m.direction='in' AND m.external_id IS NOT NULL AND t.external_thread_id ~ '^(fbc|igc):'
+      ORDER BY (m.external_id = split_part(t.external_thread_id, ':', 2)) DESC, m.created_at, m.id LIMIT 1`,
+    [projectId, ticketId],
+  );
+  if (!m) throw new AppError("This ticket isn't a Facebook or Instagram comment on your own post, so it can't be deleted from here.");
+  if (m.moderation === "deleted") throw new AppError("This comment was already deleted on the platform.");
+  return moderateComment(projectId, ticketId, m.id, "delete", actor);
+}
+
+/**
  * Edit or delete a public reply the team already posted on Facebook / Instagram, on the platform itself.
  * Facebook comments can be edited and deleted; Instagram comments can only be deleted (Instagram has no
  * comment editing). The message stays in the ticket history: an edit replaces its text and marks it edited,

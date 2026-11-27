@@ -16,6 +16,15 @@ export const jobs: Record<string, JobHandler> = {
     await enqueue({ kind: "cx.listening.detect", ownerId: project.owner_id, projectId: project.id, dedupeKey: `cx.listening.detect:${job.id}` });
     return report;
   },
+  /** Re-score word-list sentiment of existing tickets and mentions with Gemini (hourly, budget-limited). */
+  "cx.listening.rescore": async (job, ctx) => {
+    if (!job.project_id) throw new Error("Brand not found.");
+    await ctx.progress(0, 1, "Re-scoring sentiment with AI");
+    const { rescoreSentiment } = await import("@/lib/cx/sentiment-rescore");
+    const r = await rescoreSentiment(job.project_id);
+    await ctx.progress(1, 1, r.reason ?? `${r.tickets} tickets and ${r.mentions} mentions re-scored; ${r.left ?? 0} left`);
+    return r;
+  },
   /** Volume / negative-sentiment spike detection → crisis events + alerts. */
   "cx.listening.detect": async (job, ctx) => {
     const project = await findCxBrand(job.owner_id ?? "", job.project_id ?? "");

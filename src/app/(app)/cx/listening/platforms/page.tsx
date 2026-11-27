@@ -20,6 +20,7 @@ import { MiniTable } from "@/components/ui/mini-table";
 import { DistributionBar } from "@/components/ui/progress";
 import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
+import { ensureCrisisSchedules } from "@/lib/cx/listening/crisis";
 import { getSettings, sourceStatuses } from "@/lib/cx/listening/data";
 import { PERIOD_DAYS, platformDashboard, platformHub, readPeriod, readPlatformFilters, type AuthorStat, type PlatformPeriod } from "@/lib/cx/listening/platforms";
 import { isListenSource, sourceLabel, type ListenSource } from "@/lib/cx/listening/sources";
@@ -71,6 +72,8 @@ export default async function PlatformsPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Platforms" />;
+  // Hourly fetch and detection keep these dashboards (and Crisis) current.
+  if (brand.role !== "viewer") await ensureCrisisSchedules(brand.id);
   const period = readPeriod(sp);
   const source = typeof sp.source === "string" && isListenSource(sp.source) ? sp.source : null;
   const [settings, job] = await Promise.all([getSettings(brand.id), latestJob(brand.id, "cx.listening.fetch")]);

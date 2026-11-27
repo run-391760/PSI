@@ -100,6 +100,19 @@ export async function drillItemsAction(projectId: string, spec: DrillSpec, page 
   }
 }
 
+/** Delete a drill-down ticket's Facebook / Instagram comment on the platform (the ticket stays, marked deleted). */
+export async function drillDeleteCommentAction(projectId: string, ticketId: string): Promise<ActionResult<null>> {
+  try {
+    const user = await brand(projectId);
+    const { deleteTicketComment } = await import("@/lib/cx/inbox/social");
+    await deleteTicketComment(projectId, ticketId, user.name || user.email);
+    revalidatePath("/cx/inbox");
+    return { ok: true, data: null };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
 /** Every item of a slice as CSV or XLSX (base64). */
 export async function drillExportAction(projectId: string, spec: DrillSpec, format: "csv" | "xlsx", refine?: Refine): Promise<ActionResult<{ name: string; rows: number; data: string; mime: string }>> {
   try {

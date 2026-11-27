@@ -239,7 +239,7 @@ export async function NetworkReport({ network: NET, searchParams }: { network: N
               id={id("posts")}
               title={`Top ${net.label} posts`}
               info="Most engaged conversations first (where the source reports engagement), then the strongest sentiment, then the newest."
-              table={{ columns: ["Date", "Author", "Sentiment", "Text"], rows: v.posts.map((x) => [dmy(x.at), x.author, SENTIMENT_LABEL[x.sentiment], x.title || x.text]) }}
+              table={{ columns: ["Date", "Author", "Sentiment", "Text", "Link"], rows: v.posts.map((x) => [dmy(x.at), x.author, SENTIMENT_LABEL[x.sentiment], x.title || x.text, x.url ?? ""]) }}
             >
               <PostListK posts={v.posts} drill={base} />
             </Widget>

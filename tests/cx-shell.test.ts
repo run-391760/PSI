@@ -26,14 +26,14 @@ test("MONITOR sidebar matches the Konnect groups and routes, all visible by defa
     monitorItems.map((i) => `${i.label}=${i.href}`),
     [
       "Tickets=/cx/inbox", "Queued Tickets=/cx/inbox/queued", "Bookmarks=/cx/bookmarks",
-      "Social Listening=/cx/listening/platforms",
+      "Social Listening=/cx/listening/platforms", "Crisis=/cx/crisis", "Streams=/cx/command/streams",
       "Settings=/cx/settings", "A/B Testing=/cx/ab-testing",
       "Reports=/cx/reports",
       "My Tasks=/cx/tasks?view=mine", "All Tasks=/cx/tasks?view=all",
     ],
   );
   // Removed from CX (duplicates or not needed): nowhere in the sidebar, the hamburger menu or search.
-  const everywhere = [...n.CX_NAV.flatMap((g) => g.items), ...n.CX_MENU.flatMap((m) => m.items), ...n.CX_SEARCH].map((i) => i.href.split("?")[0]);
+  const everywhere = [...n.CX_NAV.flatMap((g) => g.items), ...n.CX_SEARCH].map((i) => i.href.split("?")[0]);
   for (const gone of ["/cx/messages", "/cx/search", "/cx/listening/topics", "/cx", "/cx/listening", "/cx/listening/dashboards", "/cx/listening/reviews", "/cx/listening/ugc", "/cx/mentions-tracker", "/cx/quality", "/cx/surveys"])
     assert.ok(!everywhere.includes(gone), `${gone} is still linked`);
   assert.ok(monitorItems.every((i) => !i.defaultHidden));
@@ -59,10 +59,10 @@ test("pickActive: longest prefix, query params, defaults, aliases; hamburger-onl
   assert.equal(n.pickActive("/cx/tasks", q("brand=b"), monitorItems), "/cx/tasks?view=mine");
   assert.equal(n.pickActive("/cx/tasks", q("view=all&brand=b"), monitorItems), "/cx/tasks?view=all");
   assert.equal(n.pickActive("/cx/tasks", q("view=overdue"), monitorItems), undefined);
-  assert.equal(n.pickActive("/cx/crisis", q(), monitorItems), undefined);
-  const menu = n.CX_MENU.flatMap((s) => s.items);
-  assert.equal(n.pickActive("/cx/inbox", q(), menu), undefined);
-  assert.equal(n.pickActive("/cx/command/streams", q(), menu), "/cx/command/streams");
+  // Crisis and Streams are in the Listening group (the hamburger menu was removed).
+  assert.equal(n.pickActive("/cx/crisis/playbooks", q(), monitorItems), "/cx/crisis");
+  assert.equal(n.pickActive("/cx/command/streams", q(), monitorItems), "/cx/command/streams");
+  assert.equal(n.pickActive("/cx/command", q(), monitorItems), undefined);
 });
 
 test("secondary panels: spec routes, admin pages highlight Admin, report query items", () => {
@@ -91,8 +91,9 @@ test("keepParams carries ?brand= into CX links only", () => {
   assert.equal(n.keepParams("/cx/reports/sentiment", q("brand=b&scope=c.1&page=2"), ["brand", "scope"]), "/cx/reports/sentiment?brand=b&scope=c.1");
 });
 
-test("every hamburger module and sidebar item is searchable", () => {
+test("every sidebar item and the modules the old hamburger menu held are searchable", () => {
   const hrefs = new Set(n.CX_SEARCH.map((s) => s.href));
-  for (const i of [...n.CX_NAV.flatMap((g) => g.items), ...n.CX_MENU.flatMap((s) => s.items)]) assert.ok(hrefs.has(i.href), i.href);
+  for (const i of n.CX_NAV.flatMap((g) => g.items)) assert.ok(hrefs.has(i.href), i.href);
+  for (const h of ["/cx/settings/alerts", "/cx/compose", "/cx/profile", "/cx/plan", "/cx/command", "/cx/crisis", "/cx/command/streams", "/cx/contacts", "/cx/knowledge", "/cx/ask"]) assert.ok(hrefs.has(h), h);
   assert.equal(hrefs.size, n.CX_SEARCH.length);
 });

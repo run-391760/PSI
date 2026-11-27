@@ -391,8 +391,8 @@ export function hms(ms: number | null | undefined) {
   return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
 /** Plain-text conversation history (public messages, private notes and activity). */
-export function transcriptText(t: { number: number; subject: string; channel: string; contact: string; status: string }, messages: { direction: string; author_name: string; body: string; created_at: string; attachments?: { name?: string }[] }[], events: { actor: string; detail: string; created_at: string }[] = []) {
-  const lines = [`Ticket #${t.number}: ${t.subject}`, `Channel: ${t.channel} · Customer: ${t.contact} · Status: ${t.status}`, `Exported: ${new Date().toISOString()}`, "".padEnd(60, "=")];
+export function transcriptText(t: { number: number; subject: string; channel: string; contact: string; status: string; link?: string }, messages: { direction: string; author_name: string; body: string; created_at: string; attachments?: { name?: string }[] }[], events: { actor: string; detail: string; created_at: string }[] = []) {
+  const lines = [`Ticket #${t.number}: ${t.subject}`, `Channel: ${t.channel} · Customer: ${t.contact} · Status: ${t.status}`, ...(t.link ? [`Link: ${t.link}`] : []), `Exported: ${new Date().toISOString()}`, "".padEnd(60, "=")];
   for (const m of messages) {
     const who = m.direction === "in" ? `${m.author_name || "Customer"} (customer)` : m.direction === "note" ? `${m.author_name} (private note)` : `${m.author_name} (agent)`;
     lines.push("", `[${m.created_at}] ${who}`, toPlainText(m.body));

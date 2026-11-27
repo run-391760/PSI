@@ -6,9 +6,13 @@ import { dailyTrend, days, shareOfVoice, summary, type MentionRow } from "./anal
 import { listEvents } from "./crisis";
 import { listTopics } from "./data";
 import { LISTEN_SOURCES } from "./sources";
+import { publicLink } from "@/lib/cx/inbox/links";
 import { trendingFor } from "./monitor";
 
-/** Command Centre (wall KPIs) and Streams boards (columns of live mentions filtered per stream). */
+/**
+ * Command Centre (wall KPIs) and Streams boards: columns of live listening mentions and tickets from connected
+ * channels (Facebook, Instagram, LinkedIn, X, WhatsApp, email, chat, web forms), filtered per stream.
+ */
 
 export const WALL_THEMES = ["midnight", "daylight", "contrast", "ocean"] as const;
 export type WallTheme = (typeof WALL_THEMES)[number];
@@ -69,15 +73,40 @@ export async function wallData(projectId: string) {
 export type StreamDef = { id: string; name: string; topic?: string; source?: string; sentiment?: string; q?: string };
 export type Board = { id: string; name: string; streams: StreamDef[]; created_at: string };
 
+/** Inbox channels a stream can show (tickets created by webhooks, mailboxes and widgets). */
+export const STREAM_CHANNELS = ["facebook", "instagram", "linkedin", "x", "whatsapp", "email", "livechat", "webform"] as const;
+const STREAM_SOURCES = [...LISTEN_SOURCES, ...STREAM_CHANNELS] as const;
+
 const streamSchema = z.object({
   id: z.string().max(40).optional(),
   name: z.string().trim().min(1).max(40),
   topic: z.string().max(64).optional(),
-  source: z.enum(LISTEN_SOURCES).optional(),
+  source: z.enum(STREAM_SOURCES).optional(),
   sentiment: z.enum(["positive", "neutral", "negative"]).optional(),
   q: z.string().trim().max(80).optional(),
 });
 export const boardInput = z.object({ name: z.string().trim().min(1, "Name the board.").max(60), streams: z.array(streamSchema).min(1, "Add a stream.").max(8) });
+
+/**
+ * A brand's first visit to Streams gets a starter board instead of an empty page: all activity, negative,
+ * one column per connected social channel and per topic (up to 8 columns). Edit or delete it like any board.
+ */
+export async function ensureDefaultBoard(projectId: string) {
+  const [{ n }] = await query<{ n: number }>("SELECT count(*)::int n FROM cx_command_boards WHERE project_id=$1", [projectId]);
+  if (n > 0) return;
+  const [kinds, topics] = await Promise.all([
+    query<{ kind: string }>("SELECT DISTINCT kind FROM cx_channels WHERE project_id=$1 AND kind = ANY($2)", [projectId, ["facebook", "instagram", "linkedin", "x", "whatsapp"]]),
+    listTopics(projectId),
+  ]);
+  const label: Record<string, string> = { facebook: "Facebook", instagram: "Instagram", linkedin: "LinkedIn", x: "X", whatsapp: "WhatsApp" };
+  const streams: z.input<typeof streamSchema>[] = [
+    { name: "All activity" },
+    { name: "Negative", sentiment: "negative" as const },
+    ...kinds.map((k) => ({ name: label[k.kind] ?? k.kind, source: k.kind as (typeof STREAM_CHANNELS)[number] })),
+    ...topics.filter((t) => t.active).map((t) => ({ name: t.name.slice(0, 40), topic: t.id })),
+  ].slice(0, 8);
+  await saveBoard(projectId, { name: "War room", streams });
+}
 
 export async function listBoards(projectId: string) {
   return query<Board>("SELECT id, name, streams, created_at FROM cx_command_boards WHERE project_id=$1 ORDER BY created_at", [projectId]);
@@ -104,7 +133,46 @@ export async function deleteBoard(projectId: string, id: string) {
 
 export type StreamItem = { id: string; source: string; url: string | null; author: string; author_handle: string | null; title: string; body: string; published_at: string | null; sentiment: string | null; topic_name: string | null; media: { preview: string | null; url: string; type: string }[] | null; ticket_id: string | null };
 
+/**
+ * A stream's items, newest first: listening mentions and/or tickets. No source = both; a listening source =
+ * mentions; an inbox channel = that channel's tickets. Topics only exist on mentions. Tickets made from a
+ * mention are shown once, as the mention.
+ */
 export async function streamItems(projectId: string, s: StreamDef, limit = 30) {
+  const channel = (STREAM_CHANNELS as readonly string[]).includes(s.source ?? "");
+  const [mentions, tickets] = await Promise.all([
+    channel ? Promise.resolve([]) : mentionItems(projectId, s, limit),
+    s.topic || (s.source && !channel) ? Promise.resolve([]) : ticketItems(projectId, s, limit),
+  ]);
+  return [...mentions, ...tickets].sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? "")).slice(0, limit);
+}
+
+const like = (q: string) => `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+
+async function ticketItems(projectId: string, s: StreamDef, limit: number): Promise<StreamItem[]> {
+  const params: unknown[] = [projectId];
+  const conds = ["t.project_id=$1", "NOT EXISTS (SELECT 1 FROM cx_mentions x WHERE x.ticket_id=t.id)"];
+  const add = (sql: string, v: unknown) => { params.push(v); conds.push(sql.replaceAll("?", () => `$${params.length}`)); };
+  if (s.source) add("t.channel_kind=?", s.source);
+  if (s.sentiment) add("t.sentiment=?", s.sentiment);
+  if (s.q) add("(t.subject ILIKE ? OR fm.body ILIKE ?)", like(s.q));
+  const rows = await query<{ id: string; source: string; thread: string | null; author: string | null; handle: string | null; body: string | null; subject: string; at: string; sentiment: string | null }>(
+    `SELECT t.id, t.channel_kind source, t.external_thread_id thread, COALESCE(NULLIF(c.name,''), c.email, fm.author_name) author,
+            (SELECT value FROM jsonb_each_text(COALESCE(c.handles,'{}'::jsonb)) LIMIT 1) handle, fm.body, t.subject, t.created_at at, t.sentiment
+       FROM cx_tickets t LEFT JOIN cx_contacts c ON c.id=t.contact_id
+       LEFT JOIN LATERAL (SELECT m.body, m.author_name FROM cx_messages m WHERE m.ticket_id=t.id AND m.direction='in' ORDER BY m.created_at, m.id LIMIT 1) fm ON true
+      WHERE ${conds.join(" AND ")} ORDER BY t.created_at DESC LIMIT ${limit}`,
+    params,
+  );
+  return rows.map((r) => ({
+    id: `t:${r.id}`, source: r.source, url: publicLink({ threadKey: r.thread, firstBody: r.body }), author: r.author || "Unknown", author_handle: r.handle,
+    // The first message without the "Comment on your post: <link>" footer.
+    title: "", body: (r.body ?? r.subject).replace(/\n\n[^\n]{3,80}:\s+https?:\/\/\S+\s*$/, "").slice(0, 600),
+    published_at: new Date(r.at).toISOString(), sentiment: r.sentiment, topic_name: null, media: null, ticket_id: r.id,
+  }));
+}
+
+async function mentionItems(projectId: string, s: StreamDef, limit: number): Promise<StreamItem[]> {
   const params: unknown[] = [projectId];
   const conds = ["m.project_id=$1", "m.status<>'ignored'"];
   const add = (sql: string, v: unknown) => {

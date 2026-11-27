@@ -1,11 +1,12 @@
 "use client";
 
-import { Download, ExternalLink, FileText, Filter, Loader2, Ticket, X } from "lucide-react";
+import { Download, ExternalLink, FileText, Filter, Loader2, Ticket, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { drillExportAction, drillItemsAction } from "@/app/(app)/cx/reports/actions";
+import { drillDeleteCommentAction, drillExportAction, drillItemsAction } from "@/app/(app)/cx/reports/actions";
 import { createTicketFromMentionAction } from "@/app/(app)/cx/ticket/actions";
 import { Badge } from "@/components/ui/badge";
+import { useConfirm } from "@/components/ui/confirm";
 import { Menu, MenuItem } from "@/components/ui/dialog";
 import { Input, Select } from "@/components/ui/input";
 import { downloadBlob } from "@/lib/csv";
@@ -36,6 +37,8 @@ export function DrillDrawer({ brand, spec, onClose }: { brand: string; spec: Dri
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [, start] = useTransition();
+  const { confirm, confirmDialog } = useConfirm();
+  const [deleted, setDeleted] = useState<Set<string>>(() => new Set());
   const sentinel = useRef<HTMLDivElement>(null);
   const reqId = useRef(0);
   const open = !!spec;
@@ -116,6 +119,20 @@ export function DrillDrawer({ brand, spec, onClose }: { brand: string; spec: Dri
       setBusy(null);
       if (!r.ok) return setError(r.error);
       router.push(ticketHref(brand, r.data.id));
+    });
+
+  /** Delete a Facebook / Instagram comment ticket's comment on the platform; the ticket stays in the inbox. */
+  const deleteComment = (i: DrillItem) =>
+    start(async () => {
+      if (!i.ticketId) return;
+      const net = i.network === "instagram" ? "Instagram" : "Facebook";
+      const ok = await confirm({ title: `Delete this comment on ${net}?`, description: `The comment by ${i.author} is removed from ${net} for everyone. Ticket #${i.ticketNumber ?? ""} stays in the inbox, marked deleted. This can't be undone.`, tone: "danger" });
+      if (!ok) return;
+      setBusy(i.key);
+      const r = await drillDeleteCommentAction(brand, i.ticketId);
+      setBusy(null);
+      if (!r.ok) return setError(r.error);
+      setDeleted((d) => new Set(d).add(i.key));
     });
 
   const win = spec ? drillWindow(spec) : null;
@@ -223,6 +240,13 @@ export function DrillDrawer({ brand, spec, onClose }: { brand: string; spec: Dri
                                   <FileText className="h-3.5 w-3.5 opacity-50" />
                                 </span>
                               )}
+                              {i.deletable && !deleted.has(i.key) && (
+                                <button type="button" onClick={(e) => (e.stopPropagation(), deleteComment(i))} disabled={busy === i.key}
+                                  className="rounded p-1 text-text-3 hover:bg-critical-soft hover:text-critical-ink disabled:opacity-60" title={`Delete this comment on ${i.network === "instagram" ? "Instagram" : "Facebook"}`}>
+                                  {busy === i.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                  <span className="sr-only">Delete comment</span>
+                                </button>
+                              )}
                               {i.url ? (
                                 <a href={i.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[12.5px] text-link hover:underline" title="Open original">
                                   {dmy(i.at)}
@@ -239,6 +263,7 @@ export function DrillDrawer({ brand, spec, onClose }: { brand: string; spec: Dri
                             <span className="text-[11.5px] text-text-3">{mediaLabel(i.mediaType)}</span>
                             {i.ticketNumber != null && <Badge>Ticket #{i.ticketNumber}</Badge>}
                             {i.badge && i.kind === "ticket" && <Badge tone="info">{crmLabel(i.badge)}</Badge>}
+                            {deleted.has(i.key) && <Badge tone="critical">Deleted on the platform</Badge>}
                             {i.badge && i.kind !== "ticket" && <Badge>{i.badge.replace(/_/g, " ")}</Badge>}
                             {!i.ticketId && i.mentionId && (
                               <button
@@ -273,6 +298,7 @@ export function DrillDrawer({ brand, spec, onClose }: { brand: string; spec: Dri
           </>
         )}
       </aside>
+      {confirmDialog}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { getFieldDefs, getTicketFields } from "@/lib/cx/admin/fields";
 import type { EmailConfig } from "./channels";
 import { sendEmail } from "./email";
 import { asAttachment, claimFiles, getFiles, readFileBytes } from "./files";
+import { ticketLink as exportLink } from "./links";
 import {
   blockedRecipients, composeSubject, crmLabel, findMentions, hms, lockState, parseAddresses, reminderError, toEmailHtml, toPlainText, transcriptText,
 } from "./model";
@@ -379,7 +380,7 @@ export async function summarizeTicket(projectId: string, ticketId: string) {
 export async function exportTicketRows(projectId: string, userId: string, f: TicketFilters, ids?: string[]) {
   const defs = (await getFieldDefs(projectId).catch(() => [])).filter((d) => d.scope === "ticket" && !d.hidden && !d.encrypted);
   const rows = await listTickets(projectId, userId, f, 5000, { ids, fieldKeys: defs.map((d) => d.key) });
-  const header = ["Ticket #", "Subject", "Status", "Priority", "Severity", "Channel", "Profile", "Customer", "Email", "Assignee", "Team", "Tags", "Sentiment", "Intent", "Language",
+  const header = ["Ticket #", "Subject", "Link", "Status", "Priority", "Severity", "Channel", "Profile", "Customer", "Email", "Assignee", "Team", "Tags", "Sentiment", "Intent", "Language",
     "Created", "First response", "FRT (HH:MM:SS)", "Resolved", "Resolution time (HH:MM:SS)", "SLA", "CSAT", "Messages", "Attachments", "Parent", "Child tickets", "Escalated", "Emails sent", ...defs.map((d) => d.label)];
   const out: (string | number | null)[][] = [header];
   const parents = new Map((await query<{ id: string; number: number }>("SELECT id,number FROM cx_tickets WHERE project_id=$1 AND id = ANY($2)", [projectId, rows.map((r) => r.parent_id).filter(Boolean)])).map((r) => [r.id, r.number]));
@@ -387,7 +388,7 @@ export async function exportTicketRows(projectId: string, userId: string, f: Tic
     const sla = slaStatus(r);
     const values = defs.length ? (await getTicketFields(r.id).catch(() => ({ values: {} as Record<string, unknown> }))).values : {};
     out.push([
-      r.number, r.subject, crmLabel(r.crm_status), r.priority, r.severity ?? "", r.channel_kind, r.channel_name ?? "", r.contact_name ?? "", r.contact_email ?? "", r.assignee_name ?? "", r.team ?? "", r.tags.join(", "),
+      r.number, r.subject, exportLink({ threadKey: r.external_thread_id, mentionUrl: r.mention_url, postUrl: r.post_url, firstBody: r.first_body, ticketId: r.id, brand: projectId }), crmLabel(r.crm_status), r.priority, r.severity ?? "", r.channel_kind, r.channel_name ?? "", r.contact_name ?? "", r.contact_email ?? "", r.assignee_name ?? "", r.team ?? "", r.tags.join(", "),
       r.sentiment ?? "", r.intent ?? "", r.language ?? "", r.created_at, r.first_response_at ?? "", hms(r.first_response_at ? new Date(r.first_response_at).getTime() - new Date(r.created_at).getTime() : null),
       r.resolved_at ?? "", hms(r.resolved_at ? new Date(r.resolved_at).getTime() - new Date(r.created_at).getTime() : null),
       sla.breached.length ? `Breached (${sla.breached.join(", ").replace(/_/g, " ")})` : "OK", r.csat ?? "", r.messages, r.has_attachment ? "Yes" : "No",
@@ -398,15 +399,21 @@ export async function exportTicketRows(projectId: string, userId: string, f: Tic
   return out;
 }
 export async function ticketTranscript(projectId: string, ticketId: string) {
-  const [t] = await query<{ id: string; number: number; subject: string; channel_kind: string; contact: string | null; crm: string }>(
-    `SELECT t.id,t.number,t.subject,t.channel_kind,COALESCE(c.name,c.email) AS contact,${CRM_SQL} AS crm FROM cx_tickets t LEFT JOIN cx_inbox_ticket_meta tm ON tm.ticket_id=t.id LEFT JOIN cx_contacts c ON c.id=t.contact_id WHERE t.id=$1 AND t.project_id=$2`,
+  const [t] = await query<{ id: string; number: number; subject: string; channel_kind: string; contact: string | null; crm: string; external_thread_id: string | null; mention_url: string | null }>(
+    `SELECT t.id,t.number,t.subject,t.channel_kind,COALESCE(c.name,c.email) AS contact,${CRM_SQL} AS crm,t.external_thread_id,
+            (SELECT mm.url FROM cx_mentions mm WHERE mm.ticket_id=t.id AND mm.url IS NOT NULL LIMIT 1) AS mention_url FROM cx_tickets t LEFT JOIN cx_inbox_ticket_meta tm ON tm.ticket_id=t.id LEFT JOIN cx_contacts c ON c.id=t.contact_id WHERE t.id=$1 AND t.project_id=$2`,
     [ticketId, projectId],
   );
   if (!t) throw new AppError("Ticket not found.", 404);
-  const messages = (await query<{ direction: string; author_name: string; body: string; created_at: string; attachments: { name?: string }[] }>("SELECT direction,author_name,body,created_at,attachments FROM cx_messages WHERE ticket_id=$1 ORDER BY created_at,id", [ticketId])).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
+  const messages = (await query<{ direction: string; author_name: string; body: string; created_at: string; attachments: { name?: string }[]; external_id: string | null }>("SELECT direction,author_name,body,created_at,attachments,external_id FROM cx_messages WHERE ticket_id=$1 ORDER BY created_at,id", [ticketId])).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
   const events = (await query<{ actor: string; detail: string; created_at: string }>("SELECT actor,detail,created_at FROM cx_inbox_events WHERE ticket_id=$1 ORDER BY created_at", [ticketId])).map((e) => ({ ...e, created_at: iso(e.created_at)! }));
-  const text = transcriptText({ number: t.number, subject: t.subject, channel: t.channel_kind, contact: t.contact ?? "Unknown", status: crmLabel(t.crm) }, messages, events);
-  const rows: (string | number)[][] = [["Time", "Type", "Author", "Message", "Attachments"], ...messages.map((m) => [m.created_at, m.direction === "in" ? "Customer" : m.direction === "note" ? "Private note" : "Agent reply", m.author_name, toPlainText(m.body), (m.attachments ?? []).map((a) => a.name).join(", ")])];
+  const firstBody = messages.find((m) => m.direction === "in")?.body ?? null;
+  const link = exportLink({ threadKey: t.external_thread_id, mentionUrl: t.mention_url, firstBody, ticketId: t.id, brand: projectId });
+  // Facebook comments and replies link to that exact comment; everything else to the thread or ticket.
+  const linkOf = (m: { direction: string; external_id: string | null }) =>
+    m.direction !== "note" && m.external_id && t.external_thread_id?.startsWith("fbc:") ? exportLink({ threadKey: t.external_thread_id, mentionUrl: t.mention_url, firstBody, commentId: m.external_id, ticketId: t.id, brand: projectId }) : link;
+  const text = transcriptText({ number: t.number, subject: t.subject, channel: t.channel_kind, contact: t.contact ?? "Unknown", status: crmLabel(t.crm), link }, messages, events);
+  const rows: (string | number)[][] = [["Time", "Type", "Author", "Message", "Attachments", "Link"], ...messages.map((m) => [m.created_at, m.direction === "in" ? "Customer" : m.direction === "note" ? "Private note" : "Agent reply", m.author_name, toPlainText(m.body), (m.attachments ?? []).map((a) => a.name).join(", "), linkOf(m)])];
   const activity: (string | number)[][] = [["Time", "Who", "Activity"], ...events.map((e) => [e.created_at, e.actor, e.detail])];
   return { number: t.number, text, rows, activity };
 }
