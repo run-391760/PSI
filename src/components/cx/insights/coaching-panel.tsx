@@ -3,7 +3,7 @@
 import { CheckCircle2, GraduationCap, Sparkles, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { assignCoachingAction, bulkAiScoreAction, coachingFlagAction } from "@/app/(app)/cx/quality/actions";
+import { assignCoachingAction, bulkAiScoreAction, coachingFlagAction } from "@/app/(app)/cx/settings/quality/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";

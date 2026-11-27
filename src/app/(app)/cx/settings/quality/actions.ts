@@ -33,7 +33,7 @@ async function brand(projectId: string) {
   await getCxBrand(user.id, projectId);
   return user;
 }
-const done = () => revalidatePath("/cx/quality", "layout");
+const done = () => revalidatePath("/cx/settings/quality", "layout");
 
 export async function saveScorecardAction(projectId: string, input: z.input<typeof scorecardInput>, id?: string): Promise<ActionResult<{ id: string }>> {
   try {

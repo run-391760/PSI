@@ -137,20 +137,8 @@ test("abWinner: minimum clicks, binomial z-test, lift", () => {
 });
 
 // ---------------------------------------------------------------- Mentions Tracker
-test("trackerMatches finds @handles and links to tracked posts; responseState", () => {
-  const tracked = [
-    { id: "1", kind: "handle" as const, platform: "x", value: "@ParulUniversity", label: "" },
-    { id: "2", kind: "post" as const, platform: "reddit", value: "https://www.reddit.com/r/gujarat/comments/abc1/admissions/", label: "" },
-  ];
-  assert.deepEqual(m.trackerMatches({ body: "Thanks @paruluniversity for the help!" }, tracked).map((t) => t.id), ["1"]);
-  assert.deepEqual(m.trackerMatches({ body: "@paruluniversityfans is a different account" }, tracked), []);
-  assert.deepEqual(m.trackerMatches({ url: "https://old.reddit.com/r/gujarat/comments/abc1/admissions/xyz9/" }, tracked).map((t) => t.id), ["2"]);
+test("normHandle strips URLs, @ and case", () => {
   assert.equal(m.normHandle("https://x.com/@Acme/"), "acme");
-  assert.equal(m.responseState({ status: "new" }), "pending");
-  assert.equal(m.responseState({ status: "ignored", ticket_id: "t" }), "ignored");
-  assert.equal(m.responseState({ status: "actioned", ticket_id: "t", ticket_first_response_at: null, ticket_status: "open" }), "in_progress");
-  assert.equal(m.responseState({ status: "actioned", ticket_id: "t", ticket_first_response_at: "2026-10-01T00:00:00Z" }), "responded");
-  assert.equal(m.responseState({ status: "actioned" }), "responded");
 });
 
 // ---------------------------------------------------------------- compose, search, prefs, plan
@@ -159,13 +147,9 @@ test("composeCap: only email can start conversations here", () => {
   for (const k of ["whatsapp", "facebook", "instagram", "x", "livechat", "webform", "telegram"]) assert.equal(m.composeCap(k).canStart, false, k);
   assert.equal(m.composeCap("unknown").canStart, false);
 });
-test("quick search: field terms routed per entity, snippets", () => {
-  const { terms, text } = inbox.parseSearch('refund email:riya@x.com sentiment:negative status:open -tag:spam');
+test("search text and snippets", () => {
+  const { text } = inbox.parseSearch('refund email:riya@x.com sentiment:negative status:open -tag:spam');
   assert.equal(text, "refund");
-  const s = m.searchScopes(terms);
-  assert.deepEqual(s.contacts.map((t) => t.field), ["email"]);
-  assert.deepEqual(s.mentions.map((t) => t.field), ["sentiment"]);
-  assert.deepEqual(s.tasks.map((t) => t.field), ["status"]);
   assert.equal(m.snippet("The quick brown fox jumps over the lazy dog", "fox", 15), "…brown fox jumps…");
   assert.equal(m.snippet("short", "zzz"), "short");
 });
@@ -190,6 +174,5 @@ test("inbox prefs: card view mode and filter panel state are sanitized", () => {
   assert.equal(inbox.normPrefs({ panel: false }).panel, false);
 });
 
-// Sub-module fixture suites (A/B testing, Mentions Tracker) run with this file.
+// Sub-module fixture suite (A/B testing) runs with this file.
 await import("./cx-ops-ab.test");
-await import("./cx-ops-tracker.test");

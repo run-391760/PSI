@@ -3,7 +3,7 @@
 import { Download, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { saveSurveySettingsAction } from "@/app/(app)/cx/surveys/actions";
+import { saveSurveySettingsAction } from "@/app/(app)/cx/settings/surveys/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";

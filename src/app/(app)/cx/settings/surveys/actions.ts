@@ -25,7 +25,7 @@ export async function saveSurveyAction(projectId: string, input: z.input<typeof 
     await brand(projectId);
     const sid = await saveSurvey(projectId, input, id);
     await syncSchedule(projectId);
-    revalidatePath("/cx/surveys");
+    revalidatePath("/cx/settings/surveys");
     return { ok: true, data: { id: sid } };
   } catch (e) {
     return actionError(e);
@@ -39,7 +39,7 @@ export async function updateSurveyFlagsAction(projectId: string, id: string, pat
     await saveSurvey(projectId, { ...s, status: patch.status ?? s.status, auto_send: patch.auto_send ?? s.auto_send }, id);
     await syncSchedule(projectId);
     if (patch.auto_send) await dispatchSurveys(projectId);
-    revalidatePath("/cx/surveys");
+    revalidatePath("/cx/settings/surveys");
     return { ok: true, data: null };
   } catch (e) {
     return actionError(e);
@@ -51,7 +51,7 @@ export async function deleteSurveyAction(projectId: string, id: string): Promise
     await brand(projectId);
     await deleteSurvey(projectId, id);
     await syncSchedule(projectId);
-    revalidatePath("/cx/surveys");
+    revalidatePath("/cx/settings/surveys");
     return { ok: true, data: null };
   } catch (e) {
     return actionError(e);
@@ -66,7 +66,7 @@ export async function ticketLinkAction(projectId: string, surveyId: string, tick
     const [t] = await query<{ id: string }>("SELECT id FROM cx_tickets WHERE project_id=$1 AND number=$2", [projectId, ticketNumber]);
     if (!t) throw new AppError(`Ticket #${ticketNumber} was not found in this brand.`, 404);
     const token = await inviteForTicket(projectId, surveyId, t.id, "manual");
-    revalidatePath(`/cx/surveys/${surveyId}`);
+    revalidatePath(`/cx/settings/surveys/${surveyId}`);
     return { ok: true, data: { path: `/s/${surveyId}?t=${token}` } };
   } catch (e) {
     return actionError(e);
@@ -78,7 +78,7 @@ export async function saveSurveySettingsAction(projectId: string, id: string, se
   try {
     await brand(projectId);
     await saveSurveySettings(projectId, id, settings);
-    revalidatePath(`/cx/surveys/${id}`);
+    revalidatePath(`/cx/settings/surveys/${id}`);
     return { ok: true, data: null };
   } catch (e) {
     return actionError(e);

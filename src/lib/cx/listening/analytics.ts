@@ -84,18 +84,6 @@ export function shareOfVoice(rows: MentionRow[], topics: TopicRef[]) {
     .sort((a, b) => b.mentions - a.mentions);
 }
 
-/** Per-topic daily volume for the SOV trend. */
-export function topicTrend(rows: MentionRow[], topics: TopicRef[], dayList: string[]) {
-  const idx = new Map(dayList.map((d, i) => [d, i]));
-  const out: Record<string, number | string>[] = dayList.map((d) => ({ date: d, ...Object.fromEntries(topics.map((t) => [t.id, 0])) }));
-  for (const r of rows) {
-    const i = r.published_at ? idx.get(r.published_at.slice(0, 10)) : undefined;
-    if (i == null || !r.topic_id || !(r.topic_id in out[i])) continue;
-    (out[i][r.topic_id] as number)++;
-  }
-  return out;
-}
-
 export function topAuthors(rows: MentionRow[], limit = 10) {
   const m = new Map<string, { author: string; handle: string | null; source: string; mentions: number; followers: number | null; negative: number }>();
   for (const r of rows) {

@@ -98,7 +98,7 @@ export function ReportEmpty({ brand, what, kind = "listening" }: { brand: string
     ) : kind === "tasks" ? (
       <ButtonLink href={cx("/cx/tasks", brand)} variant="primary">Open tasks</ButtonLink>
     ) : (
-      <ButtonLink href={cx("/cx/surveys", brand)} variant="primary">Set up a survey</ButtonLink>
+      <ButtonLink href={cx("/cx/settings/surveys", brand)} variant="primary">Set up a survey</ButtonLink>
     );
   return (
     <Card>

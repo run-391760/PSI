@@ -1,13 +1,9 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
+// Topics are edited in Settings → Topics.
 const ITEMS = [
-  { href: "/cx/listening", label: "Mentions" },
   { href: "/cx/listening/platforms", label: "Platforms" },
-  { href: "/cx/listening/dashboards", label: "Dashboards" },
-  { href: "/cx/listening/reviews", label: "Reviews" },
-  { href: "/cx/listening/ugc", label: "UGC" },
-  { href: "/cx/listening/topics", label: "Topics & sources" },
   { href: "/cx/crisis", label: "Crisis" },
   { href: "/cx/crisis/playbooks", label: "Playbooks" },
 ];

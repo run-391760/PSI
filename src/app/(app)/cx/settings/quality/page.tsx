@@ -26,7 +26,7 @@ import { ScorecardsPanel } from "@/components/cx/insights/scorecard-editor";
 export const metadata: Metadata = { title: "Quality assessment" };
 const ser = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
-export default async function QualityPage({ searchParams }: PageProps<"/cx/quality">) {
+export default async function QualityPage({ searchParams }: PageProps<"/cx/settings/quality">) {
   const user = await requirePageUser();
   const sp = await searchParams;
   const { brand, switcher } = await cxContext(user.id, sp);
@@ -43,7 +43,7 @@ export default async function QualityPage({ searchParams }: PageProps<"/cx/quali
   const active = scorecards.filter((s) => s.active && s.form_type !== "coaching").map((s) => ({ id: s.id, name: s.name }));
   const passDefault = scorecards.find((s) => s.form_type !== "coaching" && s.active)?.pass_score ?? 80;
   const warned = stats.agents.map((a) => ({ a, w: earlyWarnings(stats.trendAll.map((r) => r[a.id ?? "none"] as number | null), passDefault) })).filter((x) => x.w.flags.length);
-  const h = (t: string) => cxHref("/cx/quality", brand.id, { tab: t });
+  const h = (t: string) => cxHref("/cx/settings/quality", brand.id, { tab: t });
 
   let body: React.ReactNode;
   if (tab === "scorecards") {
@@ -137,7 +137,7 @@ export default async function QualityPage({ searchParams }: PageProps<"/cx/quali
   return (
     <Page>
       <PageHeader
-        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Quality assessment" }]}
+        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Settings", href: cxHref("/cx/settings", brand.id) }, { label: "Quality assessment" }]}
         title="Quality assessment"
         subject={brand.name}
         description="Score agent conversations with weighted scorecards, coach, and handle disputes."

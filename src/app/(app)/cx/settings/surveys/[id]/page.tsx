@@ -23,7 +23,7 @@ import { SurveyResponsesTable, SurveySharePanel } from "@/components/cx/insights
 
 export const metadata: Metadata = { title: "Survey" };
 
-export default async function SurveyPage({ params, searchParams }: PageProps<"/cx/surveys/[id]">) {
+export default async function SurveyPage({ params, searchParams }: PageProps<"/cx/settings/surveys/[id]">) {
   const user = await requirePageUser();
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   const { brand, switcher } = await cxContext(user.id, sp);
@@ -53,7 +53,7 @@ export default async function SurveyPage({ params, searchParams }: PageProps<"/c
   return (
     <Page>
       <PageHeader
-        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Surveys", href: cxHref("/cx/surveys", brand.id) }, { label: survey.name }]}
+        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Settings", href: cxHref("/cx/settings", brand.id) }, { label: "Surveys", href: cxHref("/cx/settings/surveys", brand.id) }, { label: survey.name }]}
         title={survey.name}
         subject={KIND_META[survey.kind].label}
         description={survey.question || undefined}

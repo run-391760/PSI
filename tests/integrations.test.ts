@@ -185,7 +185,7 @@ test("registry: Pre-Publish Optimizer and CX AI are mapped to the right keys", a
   const powers = (id: string) => credential(id)!.powers.map((p) => p.href);
   for (const id of ["anthropic", "openai", "gemini", "dataforseo", "google", "pagespeed"]) assert.ok(powers(id).includes("/optimizer"), `${id} powers the optimizer`);
   assert.ok(!powers("perplexity").includes("/optimizer"));
-  for (const id of ["anthropic", "openai", "gemini"]) for (const h of ["/cx/inbox", "/cx/ask", "/cx/quality", "/cx/crisis", "/cx/publishing"]) assert.ok(powers(id).includes(h), `${id} powers ${h}`);
+  for (const id of ["anthropic", "openai", "gemini"]) for (const h of ["/cx/inbox", "/cx/ask", "/cx/settings/quality", "/cx/crisis", "/cx/publishing"]) assert.ok(powers(id).includes(h), `${id} powers ${h}`);
   assert.ok(powers("openai").includes("/cx/publishing/assets"), "image generation needs OpenAI");
   assert.ok(!powers("pagespeed").includes("/on-page-checker"), "PageSpeed is not read by the On Page SEO Checker");
   for (const id of ["meta", "whatsapp", "linkedin", "x", "youtube", "reddit", "bluesky"]) assert.ok(powers(id).some((h) => h.startsWith("/cx")), `${id} is a CX channel`);

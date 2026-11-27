@@ -3,7 +3,7 @@
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { saveSurveyAction } from "@/app/(app)/cx/surveys/actions";
+import { saveSurveyAction } from "@/app/(app)/cx/settings/surveys/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
@@ -42,7 +42,7 @@ export function SurveyEditor({ brand, survey }: { brand: string; survey?: Survey
       if (!r.ok) return setError(r.error);
       setOpen(false);
       if (survey) router.refresh();
-      else router.push(`/cx/surveys/${r.data.id}?brand=${brand}`);
+      else router.push(`/cx/settings/surveys/${r.data.id}?brand=${brand}`);
     });
 
   return (

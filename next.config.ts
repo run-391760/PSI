@@ -21,5 +21,19 @@ const config: NextConfig = {
       },
     ];
   },
+  // CX pages that were removed or moved: old links and bookmarks land on their replacement (query kept).
+  async redirects() {
+    const to = (source: string, destination: string) => ({ source, destination, permanent: false });
+    return [
+      to("/cx/messages", "/cx/inbox"),
+      to("/cx/search", "/cx/inbox"),
+      to("/cx/mentions-tracker", "/cx/listening/platforms"),
+      to("/cx/listening/dashboards", "/cx/listening/platforms"),
+      to("/cx/listening/reviews", "/cx/listening/platforms"),
+      to("/cx/listening/ugc", "/cx/listening/platforms"),
+      to("/cx/quality/:path*", "/cx/settings/quality/:path*"),
+      to("/cx/surveys/:path*", "/cx/settings/surveys/:path*"),
+    ];
+  },
 };
 export default config;

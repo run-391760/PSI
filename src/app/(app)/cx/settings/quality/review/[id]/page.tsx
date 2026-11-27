@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Review conversation" };
 
-export default async function ReviewPage({ params, searchParams }: PageProps<"/cx/quality/review/[id]">) {
+export default async function ReviewPage({ params, searchParams }: PageProps<"/cx/settings/quality/review/[id]">) {
   const user = await requirePageUser();
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   const { brand, switcher } = await cxContext(user.id, sp);
@@ -36,7 +36,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps<"/c
   return (
     <Page wide>
       <PageHeader
-        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Quality assessment", href: cxHref("/cx/quality", brand.id, { tab: "queue" }) }, { label: `Ticket #${ticket.number}` }]}
+        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Settings", href: cxHref("/cx/settings", brand.id) }, { label: "Quality assessment", href: cxHref("/cx/settings/quality", brand.id, { tab: "queue" }) }, { label: `Ticket #${ticket.number}` }]}
         title={`Review ticket #${ticket.number}`}
         subject={card?.name}
         description={ticket.subject || undefined}

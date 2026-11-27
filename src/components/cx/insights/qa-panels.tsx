@@ -4,7 +4,7 @@ import { Shuffle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { openReviewAction, sampleAction } from "@/app/(app)/cx/quality/actions";
+import { openReviewAction, sampleAction } from "@/app/(app)/cx/settings/quality/actions";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -106,7 +106,7 @@ export function ReviewableTickets({ brand, tickets, scorecards }: { brand: strin
             const res = await openReviewAction(brand, r.id, card);
             setBusy(null);
             if (!res.ok) return setError(res.error);
-            router.push(`/cx/quality/review/${res.data.id}?brand=${brand}`);
+            router.push(`/cx/settings/quality/review/${res.data.id}?brand=${brand}`);
           }}
         >
           Review
@@ -139,7 +139,7 @@ export function ReviewableTickets({ brand, tickets, scorecards }: { brand: strin
 type ReviewRow = { id: string; ticket_number: number; subject: string; scorecard: string | null; agent: string | null; reviewer: string | null; status: string; score: number | null; fatal: boolean; updated_at: string; dispute_reason: string | null };
 export function ReviewsTable({ brand, rows, title, empty }: { brand: string; rows: ReviewRow[]; title: string; empty: string }) {
   const columns: Column<ReviewRow>[] = [
-    { key: "ticket", header: "Ticket", sortable: true, sortValue: (r) => r.ticket_number, render: (r) => <Link className="font-medium text-link hover:underline" href={`/cx/quality/review/${r.id}?brand=${brand}`}>#{r.ticket_number}</Link>, csv: (r) => r.ticket_number },
+    { key: "ticket", header: "Ticket", sortable: true, sortValue: (r) => r.ticket_number, render: (r) => <Link className="font-medium text-link hover:underline" href={`/cx/settings/quality/review/${r.id}?brand=${brand}`}>#{r.ticket_number}</Link>, csv: (r) => r.ticket_number },
     { key: "subject", header: "Subject", render: (r) => <span className="line-clamp-1 max-w-xs text-text">{r.subject || "(no subject)"}</span>, csv: (r) => r.subject, hideOnMobile: true },
     { key: "agent", header: "Agent", sortable: true, sortValue: (r) => r.agent ?? "", render: (r) => <span className="text-text-2">{r.agent ?? "Unassigned"}</span>, csv: (r) => r.agent ?? "" },
     { key: "scorecard", header: "Scorecard", render: (r) => <span className="text-text-2">{r.scorecard ?? "—"}</span>, csv: (r) => r.scorecard ?? "", hideOnMobile: true },

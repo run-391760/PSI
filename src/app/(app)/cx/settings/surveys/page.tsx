@@ -17,7 +17,7 @@ import { SurveyEditor } from "@/components/cx/insights/survey-editor";
 
 export const metadata: Metadata = { title: "Surveys" };
 
-export default async function SurveysPage({ searchParams }: PageProps<"/cx/surveys">) {
+export default async function SurveysPage({ searchParams }: PageProps<"/cx/settings/surveys">) {
   const user = await requirePageUser();
   const sp = await searchParams;
   const { brand, switcher } = await cxContext(user.id, sp);
@@ -31,7 +31,7 @@ export default async function SurveysPage({ searchParams }: PageProps<"/cx/surve
   return (
     <Page>
       <PageHeader
-        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Surveys" }]}
+        breadcrumbs={[{ label: "CX", href: cxHref("/cx", brand.id) }, { label: "Settings", href: cxHref("/cx/settings", brand.id) }, { label: "Surveys" }]}
         title="Surveys"
         subject={brand.name}
         description="CSAT, NPS and custom feedback surveys with public links, per-ticket links and automatic sending after tickets are solved."
@@ -59,7 +59,7 @@ export default async function SurveysPage({ searchParams }: PageProps<"/cx/surve
               {surveys.map((s) => {
                 const score = s.kind === "nps" ? nps(s.scores).score : s.kind === "csat" ? csat(s.scores).score : null;
                 return (
-                  <Link key={s.id} href={cxHref(`/cx/surveys/${s.id}`, brand.id)} className="-mx-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-2 py-3 hover:bg-surface-2">
+                  <Link key={s.id} href={cxHref(`/cx/settings/surveys/${s.id}`, brand.id)} className="-mx-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-2 py-3 hover:bg-surface-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium text-text">{s.name}</span>
