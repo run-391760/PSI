@@ -48,16 +48,36 @@ export async function graph(path: string, token: string, post?: Record<string, s
  * Store inbound WhatsApp / Messenger / Instagram messages: the channel is the cx_channels row whose
  * config.accountId equals the phone number id / page id / IG account id. One open ticket per sender.
  */
+const permalinks = new Map<string, string>();
+/** The public link of an Instagram post or reel (cached per process; null when the token can't read it). */
+async function instagramPermalink(ch: { project_id: string; config: Obj | null; secret_enc: string | null }, mediaId: string): Promise<string | null> {
+  const hit = permalinks.get(mediaId);
+  if (hit) return hit;
+  try {
+    const token = await metaToken(ch, "instagram");
+    if (!token) return null;
+    const link = (await graph(`${encodeURIComponent(mediaId)}?fields=permalink`, token)).permalink;
+    if (typeof link !== "string" || !link.startsWith("https://")) return null;
+    if (permalinks.size > 2000) permalinks.clear();
+    permalinks.set(mediaId, link);
+    return link;
+  } catch {
+    return null; // the comment is still stored, just without the post link
+  }
+}
+
 export async function storeSocial(items: InboundSocial[]) {
   let stored = 0;
   for (const m of items) {
-    const [ch] = await query<{ id: string; project_id: string }>("SELECT id,project_id FROM cx_channels WHERE kind=$1 AND config->>'accountId'=$2 AND status<>'paused' LIMIT 1", [m.platform, m.accountId]);
+    const [ch] = await query<{ id: string; project_id: string; config: Obj | null; secret_enc: string | null }>("SELECT id,project_id,config,secret_enc FROM cx_channels WHERE kind=$1 AND config->>'accountId'=$2 AND status<>'paused' LIMIT 1", [m.platform, m.accountId]);
     if (!ch) continue;
     if (m.messageId) {
       const [dupe] = await query("SELECT 1 FROM cx_messages mm JOIN cx_tickets t ON t.id=mm.ticket_id WHERE t.project_id=$1 AND mm.external_id=$2", [ch.project_id, m.messageId]);
       if (dupe) continue;
     }
     if (m.thread) {
+      // Instagram comment events carry only the media id: look up the post's link so staff can open it.
+      if (m.platform === "instagram" && !m.thread.link && m.thread.mediaId) m.thread.link = await instagramPermalink(ch, m.thread.mediaId);
       await storeThreaded(ch, { ...m, thread: m.thread });
       stored++;
       continue;
