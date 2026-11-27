@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { query, transaction, type Query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { analyzeText } from "@/lib/cx/ai";
+import { aiSentiments } from "@/lib/cx/sentiment-ai";
 import { getTicketFields } from "@/lib/cx/admin/fields";
 import { evaluateRules, type Rule } from "./rules";
 import { agentsOf, listTeams as insightsTeams } from "@/lib/cx/insights/team";
@@ -489,6 +490,10 @@ async function loadRules(q: Query, projectId: string) {
 export async function createTicket(input: InboundInput) {
   const text = `${input.subject}\n${input.body}`;
   const a = analyzeText(text);
+  // Gemini sentiment (Sarvam fallback) before rules run, so "negative" routing uses it; the lexicon score stays
+  // when AI is off, over its daily cap or slow (short timeout: webhooks must answer quickly).
+  const [ai] = await aiSentiments([text], { timeoutMs: 12_000 });
+  if (ai) { a.sentiment = ai.sentiment; a.sentimentScore = ai.score; }
   // Rules and SLA are resolved before the transaction (PGlite runs one connection; no queries outside `q` inside it).
   const rules = await loadRules(query, input.projectId);
   const { actions, matched } = evaluateRules(rules, { channel: input.channelKind, subject: input.subject, body: input.body, intent: a.intent, sentiment: a.sentiment, language: a.language, email: input.contact.email ?? null });
@@ -507,7 +512,7 @@ export async function createTicket(input: InboundInput) {
     await q(
       `INSERT INTO cx_tickets(id,project_id,number,subject,status,priority,channel_kind,channel_id,contact_id,assignee_id,team,tags,sentiment,intent,language,external_thread_id,first_response_due,resolution_due,created_at,updated_at)
        VALUES($1,$2,$3,$4,'new',$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$18)`,
-      [id, input.projectId, n, input.subject.slice(0, 300) || "(no subject)", priority, input.channelKind, input.channelId ?? null, contactId, assignee, actions.team, JSON.stringify(actions.tags), a.sentiment, a.intent, a.language, input.externalThreadId ?? null, due.firstResponseDue, due.resolutionDue, createdAt],
+      [id, input.projectId, n, input.subject.slice(0, 300) || "(no subject)", priority, input.channelKind, input.channelId ?? null, contactId, assignee, actions.team, JSON.stringify(ai?.abusive && !actions.tags.includes("abusive") ? [...actions.tags, "abusive"] : actions.tags), a.sentiment, a.intent, a.language, input.externalThreadId ?? null, due.firstResponseDue, due.resolutionDue, createdAt],
     );
     await insertMessage(q, id, { direction: "in", authorName: input.authorName ?? input.contact.name ?? "", body: input.body, html: input.html, attachments: input.attachments, externalId: input.externalId, createdAt: input.createdAt });
     if (input.parentId) await q("INSERT INTO cx_inbox_ticket_meta(ticket_id,parent_id) VALUES($1,$2) ON CONFLICT(ticket_id) DO UPDATE SET parent_id=$2", [id, input.parentId]);
