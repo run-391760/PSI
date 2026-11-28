@@ -380,7 +380,7 @@ function InboxInner(props: InboxProps) {
             </div>
           )}
         </div>
-        {staticPanel && <div data-focus-hide className="sticky top-4 hidden max-h-[calc(100dvh-6rem)] w-[300px] shrink-0 lg:flex xl:w-[330px]">{panelEl(() => setPrefs({ panel: false }), "h-full w-full")}</div>}
+        {staticPanel && <div data-focus-hide className="sticky top-12 hidden max-h-[calc(100dvh-4rem)] w-[300px] shrink-0 lg:flex xl:w-[330px]">{panelEl(() => setPrefs({ panel: false }), "h-full w-full")}</div>}
       </div>
       {drawer && (
         <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={(e) => e.target === e.currentTarget && setDrawer(false)} role="dialog" aria-label="Filter">

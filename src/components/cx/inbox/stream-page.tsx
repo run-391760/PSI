@@ -105,7 +105,7 @@ function CardStreamInner({ cards, facets, variant, scopeOptions, more, total, pa
           </nav>
         )}
       </div>
-      <div className="sticky top-4 hidden max-h-[calc(100dvh-6rem)] w-[300px] shrink-0 lg:flex xl:w-[330px]" data-focus-hide>{panel()}</div>
+      <div className="sticky top-12 hidden max-h-[calc(100dvh-4rem)] w-[300px] shrink-0 lg:flex xl:w-[330px]" data-focus-hide>{panel()}</div>
       {drawer && (
         <div className="fixed inset-0 z-40 flex justify-end bg-black/30 lg:hidden" onClick={(e) => e.target === e.currentTarget && setDrawer(false)} role="dialog" aria-label="Filter">
           <div className="h-full w-[340px] max-w-[92vw] overflow-hidden border-l border-border bg-bg p-3 shadow-pop">{panel(() => setDrawer(false))}</div>
