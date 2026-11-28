@@ -13,7 +13,7 @@ import type { InboxPrefs, InboxSettings } from "@/lib/cx/inbox/model";
 import { saveInboxSettings, savePrefs } from "@/lib/cx/inbox/settings";
 import { createTicket, getTicket, mergeTickets, updateTickets, type TicketPatch } from "@/lib/cx/inbox/store";
 import {
-  aiRewrite, assignWithNote, createChildTicket, deleteReminder, linkParent, saveReminder, saveSignature, sendTicketEmail, summarizeTicket, translateMessage, unlinkParent, type EmailInput,
+  aiRewrite, assignWithNote, coachingNote, createChildTicket, deleteReminder, linkParent, saveReminder, saveSignature, sendTicketEmail, summarizeTicket, translateMessage, unlinkParent, type EmailInput,
 } from "@/lib/cx/inbox/workspace";
 
 async function run<T>(brand: string, fn: (u: { id: string; name: string; email: string }, role: string) => Promise<T>, opts: { write?: boolean; revalidate?: boolean } = {}): Promise<ActionResult<T>> {
@@ -118,6 +118,14 @@ export const unlinkParentAction = async (brand: string, childId: string) => run(
 
 export const assignAction = async (brand: string, ticketId: string, input: { assigneeId: string | null; note: string; attachmentIds: string[] }) =>
   run(brand, async (u) => { await assignWithNote(brand, ticketId, u, input); return null; });
+
+/** Admin/supervisor: leave a private coaching note for the agent who handled the ticket. Notifies that
+ *  agent (alerts, optionally tasks); does not change ticket status or send anything to the customer. */
+export const coachingNoteAction = async (brand: string, ticketId: string, input: { note: string; alsoTask?: boolean }) =>
+  run(brand, async (u, role) => {
+    if (!["owner", "admin", "supervisor"].includes(role)) throw new AppError("Only admins and supervisors can leave a coaching note.", 403);
+    return coachingNote(brand, ticketId, u, input);
+  });
 
 export const sendEmailAction = async (brand: string, ticketId: string, input: EmailInput) => run(brand, (u) => sendTicketEmail(brand, ticketId, u, input));
 

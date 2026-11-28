@@ -2,7 +2,7 @@
 
 import {
   AlarmClock, AlertTriangle, Zap, ArrowLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, CornerDownRight, Download, ExternalLink, Eye, FileText, Forward, GitBranch, GitMerge,
-  Languages, Lock, Mail, Maximize2, MoreHorizontal, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X, Bookmark, BookmarkCheck, ClipboardList, MessagesSquare,
+  Languages, Lock, Mail, Maximize2, MoreHorizontal, NotebookPen, Paperclip, Pencil, Plus, Send, Sparkles, Unlink, UserPlus, X, Bookmark, BookmarkCheck, ClipboardList, MessagesSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -29,7 +29,7 @@ import { Composer } from "./composer";
 import { ticketHref } from "@/lib/cx/inbox/stream";
 import type { InboxProps } from "./inbox-client";
 import { playAlert, usePrefs } from "./prefs";
-import { AssignDialog, ChildDialog, EmailDialog, FieldsPanel, fmtSize, ParentDialog, ReminderDialog, type EmailKind } from "./ticket-dialogs";
+import { AssignDialog, ChildDialog, CoachDialog, EmailDialog, FieldsPanel, fmtSize, ParentDialog, ReminderDialog, type EmailKind } from "./ticket-dialogs";
 import { Ago, SlaClockRow, useNow } from "./time";
 import { Avatar, ChannelIcon, channelLabel, KeyValue, SentimentBadge, statusLabel, StatusBadge } from "./ui";
 
@@ -38,7 +38,7 @@ export type ConversationProps = Pick<InboxProps, "brand" | "me" | "agents" | "te
 type Props = ConversationProps & { detail: TicketDetail; backHref: string; fullPage?: boolean };
 const INTENTS: Record<string, string> = { complaint: "Complaint", query: "Query", feedback: "Feedback", praise: "Praise", purchase: "Purchase intent", cancellation: "Cancellation / churn risk", spam: "Spam", other: "Other" };
 type Live = { viewers: { name: string; typing: boolean }[]; lockedBy: { id: string; name: string } | null; visitorOnline: boolean | null; visitorTyping: boolean };
-type DialogState = null | { kind: "reminder"; existing?: TicketDetail["reminders"][number] } | { kind: EmailKind } | { kind: "assign" | "child" | "parent" | "merge" } | { kind: "task"; existing?: Task };
+type DialogState = null | { kind: "reminder"; existing?: TicketDetail["reminders"][number] } | { kind: EmailKind } | { kind: "assign" | "child" | "parent" | "merge" | "coach" } | { kind: "task"; existing?: Task };
 const initialDialog = (act: string | null, readOnly: boolean): DialogState => (readOnly ? null : act === "compose" ? { kind: "compose" } : act === "child" ? { kind: "child" } : act === "task" ? { kind: "task" } : null);
 type Item = MessageRow & { from_ticket?: number | null };
 
@@ -127,6 +127,8 @@ export function Conversation(props: Props) {
   const done = ["solved", "closed", "ignored"].includes(t.crm_status);
   const disabled = readOnly ? "Viewers can't reply." : detail.locked ? `Locked: resolved more than ${settings.lockDays} days ago, so it can't be edited or reopened.` : live.lockedBy ? `${live.lockedBy.name} is working on this ticket. Press Continue to take over.` : null;
   const editDisabled = readOnly || detail.locked || !!live.lockedBy;
+  // Admins/supervisors (and the owner) can leave a private coaching note for the handling agent.
+  const isAdmin = props.role === "owner" || props.role === "admin" || props.role === "supervisor";
 
   const items: Item[] = useMemo(() => {
     const all: Item[] = [...(detail.messages ?? []), ...(detail.familyNotes ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -184,6 +186,7 @@ export function Conversation(props: Props) {
                   <MI icon={<ClipboardList className="h-3.5 w-3.5" />} label="Create task" off={readOnly} onClick={go({ kind: "task" })} />
                   {listRow?.post_key && <MI icon={<MessagesSquare className="h-3.5 w-3.5" />} label={`View all comments on this post${listRow.post_tickets > 1 ? ` (${listRow.post_tickets})` : ""}`} href={`/cx/inbox?brand=${brand.id}&view=all&post=${encodeURIComponent(listRow.post_key)}`} />}
                   <MI icon={<UserPlus className="h-3.5 w-3.5" />} label="Assign with note / media" off={editDisabled} onClick={go({ kind: "assign" })} />
+                  {isAdmin && <MI icon={<NotebookPen className="h-3.5 w-3.5" />} label="Leave a note for the agent" onClick={go({ kind: "coach" })} />}
                   <div className="my-1 border-t border-border" />
                   <MI icon={<ArrowUpRight className="h-3.5 w-3.5" />} label="Escalate via email" off={readOnly} onClick={go({ kind: "escalate" })} />
                   <MI icon={<Forward className="h-3.5 w-3.5" />} label="Forward" off={readOnly} onClick={go({ kind: "forward" })} />
@@ -437,6 +440,7 @@ export function Conversation(props: Props) {
       {dialog?.kind === "reminder" && <ReminderDialog brand={brand.id} ticketId={t.id} agents={agents} me={me} existing={dialog.existing} onClose={() => setDialog(null)} />}
       {dialog && (dialog.kind === "escalate" || dialog.kind === "forward" || dialog.kind === "compose") && <EmailDialog brand={brand.id} kind={dialog.kind} detail={detail} suggestions={props.emailSuggestions} settings={settings} hasEmail={props.hasEmail} hasSignature={props.hasSignature} onClose={() => setDialog(null)} />}
       {dialog?.kind === "assign" && <AssignDialog brand={brand.id} detail={detail} agents={agents} me={me} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "coach" && <CoachDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} />}
       {dialog?.kind === "child" && <ChildDialog brand={brand.id} detail={detail} agents={agents} onClose={() => setDialog(null)} onCreated={(id) => { setDialog(null); router.push(openTicket(id)); }} />}
       {dialog?.kind === "parent" && <ParentDialog brand={brand.id} detail={detail} onClose={() => setDialog(null)} />}
       {dialog?.kind === "task" && <TaskDialog brand={brand.id} agents={agents} tree={props.tree} me={me} ticket={dialog.existing ? null : { id: t.id, number: t.number, subject: t.subject }} existing={dialog.existing ?? null} onClose={() => setDialog(null)} />}

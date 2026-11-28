@@ -4,7 +4,7 @@ import { FileText, ImageIcon, Loader2, Paperclip, Trash, X } from "lucide-react"
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import {
-  assignAction, classifyAction, createChildAction, deleteReminderAction, linkParentAction, saveReminderAction, saveSettingsAction, saveSignatureAction, sendEmailAction,
+  assignAction, classifyAction, coachingNoteAction, createChildAction, deleteReminderAction, linkParentAction, saveReminderAction, saveSettingsAction, saveSignatureAction, sendEmailAction,
 } from "@/app/(app)/cx/inbox/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -137,6 +137,36 @@ export function ReminderDialog({ brand, ticketId, agents, me, existing, onClose 
             ))}
           </div>
         </div>
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------- admin coaching note
+
+/**
+ * Admin/supervisor-only: leave a private coaching note for the agent who handled this ticket. It is
+ * recorded as an internal note and sent to that agent's alerts (optionally their tasks). It does NOT
+ * change the ticket status and is never shown to the customer.
+ */
+export function CoachDialog({ brand, detail, onClose }: { brand: string; detail: TicketDetail; onClose: () => void }) {
+  const t = detail.ticket;
+  const [note, setNote] = useState("");
+  const [alsoTask, setAlsoTask] = useState(false);
+  const s = useSubmit(onClose);
+  return (
+    <Dialog open onClose={onClose} title={`Leave a note for the agent · #${t.number}`}
+      description="Sent privately to the agent who handled this ticket (last responder, else the assignee) and added to their alerts. Does not change the ticket status and is never shown to the customer."
+      error={s.error}
+      footer={<Footer onClose={onClose} busy={s.busy} label="Send note" disabled={!note.trim()} onSubmit={() => s.submit(coachingNoteAction(brand, t.id, { note: note.trim(), alsoTask }))} />}>
+      <div className="space-y-3">
+        <Field label="Note" htmlFor="coach-note" hint="Only the agent sees this — use it to coach or follow up.">
+          <Textarea id="coach-note" rows={4} value={note} maxLength={5000} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Good resolution — next time confirm the order number before closing." autoFocus />
+        </Field>
+        <label className="flex items-center gap-2 text-[13px] text-text-2">
+          <Checkbox checked={alsoTask} onChange={(e) => setAlsoTask(e.target.checked)} />
+          Also add it as a task for them
+        </label>
       </div>
     </Dialog>
   );

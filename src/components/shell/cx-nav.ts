@@ -150,7 +150,6 @@ export const CX_NAV: CxNavGroup[] = [
       { href: "/cx/listening/dashboards", label: "Listening dashboards", icon: BarChart3, description: "Buzz, sentiment, share of voice, sources, authors.", defaultHidden: true },
       { href: "/cx/listening/reviews", label: "Reviews", icon: Star, description: "Rating trend, star distribution and low-rating reviews.", defaultHidden: true },
       { href: "/cx/listening/ugc", label: "UGC board", icon: Images, description: "User-generated media with consent tracking.", defaultHidden: true },
-      { href: "/cx/crisis", label: "Crisis", icon: Siren, description: "Spike detection, crisis rooms and escalations.", defaultHidden: true },
       { href: "/cx/command/streams", label: "Streams", icon: Columns3, description: "Boards of filtered live stream columns.", defaultHidden: true },
       { href: "/cx/command", label: "Command Center", icon: MonitorPlay, description: "Full-screen live wall of mentions and KPIs.", defaultHidden: true },
       { href: "/cx/mentions-tracker", label: "Mentions Tracker", icon: Radar, description: "Track specific posts, profiles and keywords over time.", defaultHidden: true },

@@ -302,6 +302,44 @@ export async function assignWithNote(projectId: string, ticketId: string, user: 
     await notifyUser({ ownerId: input.assigneeId, projectId, title: `${user.name} assigned you #${t.number}`, body: `${t.subject}${input.note.trim() ? `\n${input.note.trim()}` : ""}`.slice(0, 300), link: ticketLink(projectId, ticketId), pref: "ticketAssigned" });
 }
 
+// ---------------------------------------------------------------- admin coaching note
+
+/**
+ * An admin/supervisor leaves a private note for the agent who handled a ticket (the respondee), after it
+ * has been responded to or closed. It records a `direction:"note"` message — never sent to the customer,
+ * never changes status/`resolved_at` — and notifies that agent so the note reaches their alerts (and,
+ * optionally, their tasks). A coaching channel that leaves the conversation and the ticket state untouched.
+ */
+export async function coachingNote(projectId: string, ticketId: string, user: { id: string; name: string }, input: { note: string; alsoTask?: boolean }) {
+  const body = input.note.trim();
+  if (!body) throw new AppError("Write a note first.");
+  if (body.length > 5000) throw new AppError("Note is too long.");
+  const t = await head(projectId, ticketId);
+  // The respondee = whoever last replied to the customer, else the ticket's current assignee.
+  const [out] = await query<{ author_user_id: string | null }>(
+    "SELECT author_user_id FROM cx_messages WHERE ticket_id=$1 AND direction='out' AND author_user_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+    [ticketId],
+  );
+  const respondee = out?.author_user_id ?? t.assignee_id ?? null;
+  const agents = await listAgents(projectId);
+  const who = respondee ? agents.find((a) => a.id === respondee) : undefined;
+  // Record the note on the ticket. insertMessage with direction "note" bumps updated_at only — status,
+  // resolved_at and the customer-facing thread are not touched.
+  await transaction(async (q) => {
+    await insertMessage(q, ticketId, { direction: "note", authorName: user.name, authorUserId: user.id, body: `Coaching note${who ? ` for ${who.name}` : ""}: ${body}` });
+    await logEvent(q, ticketId, user.name, "coaching", `left a coaching note${who ? ` for ${who.name}` : ""}`);
+  });
+  // Notify the respondee — forced delivery (no `pref`) so a coaching note always reaches them.
+  if (respondee && respondee !== user.id) {
+    await notifyUser({ ownerId: respondee, projectId, title: `${user.name} left you a note on #${t.number}`, body: body.slice(0, 300), link: ticketLink(projectId, ticketId), severity: "info" });
+    if (input.alsoTask) {
+      const { createTask } = await import("@/lib/cx/ops/tasks");
+      await createTask(projectId, user, { title: `Coaching note on #${t.number}`, description: body.slice(0, 10_000), assigneeId: respondee, ticketId }).catch(() => {});
+    }
+  }
+  return { notified: respondee && respondee !== user.id ? (who?.name ?? "the agent") : null };
+}
+
 // ---------------------------------------------------------------- AI helpers (null when no key)
 
 /** Function words common in English and rare in other Latin-script languages. */
