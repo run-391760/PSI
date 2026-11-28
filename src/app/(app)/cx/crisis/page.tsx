@@ -20,8 +20,10 @@ import { MiniTable } from "@/components/ui/mini-table";
 import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
 import { aiConfigured } from "@/lib/cx/ai";
-import { eventTimeline, getEvent, listEvents, type CrisisEvent, type ScopeResult } from "@/lib/cx/listening/crisis";
-import { eventChecklists, eventRecovery, getExtraSettings, listPlaybooks } from "@/lib/cx/listening/crisis2";
+import { CRISIS_CHANNELS, ensureCrisisSchedules, eventTimeline, getEvent, listEvents, type CrisisEvent, type ScopeResult } from "@/lib/cx/listening/crisis";
+import { publicLink } from "@/lib/cx/inbox/links";
+import { query } from "@/lib/db";
+import { ensureStarterPlaybooks, eventChecklists, eventRecovery, getExtraSettings, listPlaybooks } from "@/lib/cx/listening/crisis2";
 import type { Risk } from "@/lib/cx/listening/crisis-math";
 import { getSettings, listTopics } from "@/lib/cx/listening/data";
 import { dateTimeLabel, num, pct, timeAgo } from "@/lib/format";
@@ -51,6 +53,9 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
   if (!brand) return <NoBrand title="Crisis management" />;
   const eventId = typeof sp.event === "string" ? sp.event : null;
   const statusFilter = typeof sp.status === "string" && ["open", "monitoring", "resolved"].includes(sp.status) ? sp.status : undefined;
+  // Detection runs hourly (mentions and social-channel tickets) without anyone pressing a button.
+  if (brand.role !== "viewer") await Promise.all([ensureCrisisSchedules(brand.id), ensureStarterPlaybooks(brand.id)]);
+  const [[{ social }]] = await Promise.all([query<{ social: number }>("SELECT count(*)::int social FROM cx_channels WHERE project_id=$1 AND kind = ANY($2)", [brand.id, CRISIS_CHANNELS])]);
   const [settings, events, topics, job, extra] = await Promise.all([getSettings(brand.id), listEvents(brand.id), listTopics(brand.id), latestJob(brand.id, "cx.listening.detect"), getExtraSettings(brand.id)]);
   const running = job && ["queued", "running"].includes(job.status) ? job.id : null;
   const counts = { open: events.filter((e) => e.status === "open").length, monitoring: events.filter((e) => e.status === "monitoring").length, resolved: events.filter((e) => e.status === "resolved").length };
@@ -61,11 +66,11 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
         breadcrumbs={[{ label: "CX" }, { label: "Listening", href: `/cx/listening?brand=${brand.id}` }, { label: "Crisis management" }]}
         title="Crisis management"
         subject={brand.name}
-        description="Automatic spike detection on mention volume and negative sentiment, with crisis events, escalation owners and a shared timeline."
+        description="Automatic spike detection on mention volume and negative sentiment (listening topics and comments and messages from connected Facebook, Instagram, LinkedIn and X), with crisis events, escalation owners and a shared timeline."
         actions={
           <>
             <BrandSwitcher brands={switcher} current={brand.id} />
-            {topics.length > 0 && <JobButton brandId={brand.id} kind="detect" initialJobId={running} variant="secondary" />}
+            {(topics.length > 0 || social > 0) && <JobButton brandId={brand.id} kind="detect" initialJobId={running} variant="secondary" />}
           </>
         }
       />
@@ -84,7 +89,7 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
           </Card>
         </Page>
       );
-    const { event: e, notes, mentions } = data;
+    const { event: e, notes, mentions, tickets: linkedTickets } = data;
     const [buckets, recovery, checklists, playbooks] = await Promise.all([eventTimeline(brand, e), eventRecovery(brand.id, e, settings.baselineDays), eventChecklists(e.id), listPlaybooks(brand.id)]);
     const untickedNegative = mentions.filter((x) => x.sentiment === "negative" && !x.ticket_id && x.status !== "ignored").length;
     const hourly = settings.windowHours < 24;
@@ -176,6 +181,27 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
                   <EmptyState title="No linked mentions" description="Mentions in the spike window are linked when the event is detected." />
                 </Card>
               )}
+              {linkedTickets.length > 0 && (
+                <Card className="mt-4">
+                  <CardHeader title={`Linked social tickets (${num(e.tickets)})`} description="Comments and messages from connected channels in the spike window" />
+                  <div className="px-4 pb-3">
+                    <MiniTable
+                      columns={[{ header: "Ticket" }, { header: "Channel" }, { header: "From" }, { header: "Message" }, { header: "Sentiment" }, { header: "Received", align: "right" }]}
+                      rows={linkedTickets.slice(0, 50).map((t) => {
+                        const link = publicLink({ threadKey: t.external_thread_id, firstBody: t.first_body });
+                        return [
+                          <Link key="n" href={`/cx/ticket/${t.id}?brand=${brand.id}`} className="text-link hover:underline">#{t.number}</Link>,
+                          t.channel_kind,
+                          t.contact ?? "Unknown",
+                          <span key="b" className="line-clamp-2 max-w-md">{(t.first_body ?? t.subject).replace(/\n\n[^\n]{3,80}:\s+https?:\/\/\S+\s*$/, "")}{link && <> · <a href={link} target="_blank" rel="noreferrer" className="text-link hover:underline">open</a></>}</span>,
+                          t.sentiment ?? "n/a",
+                          timeAgo(t.created_at),
+                        ];
+                      })}
+                    />
+                  </div>
+                </Card>
+              )}
             </div>
           </div>
           <div className="grid content-start gap-5">
@@ -219,13 +245,13 @@ export default async function CrisisPage({ searchParams }: { searchParams: Promi
   return (
     <Page>
       {header}
-      {topics.length === 0 ? (
+      {topics.length === 0 && social === 0 ? (
         <Card>
           <EmptyState
             icon={<Siren className="h-5 w-5" />}
-            title="Add topics to enable crisis detection"
-            description="Spike detection runs after every hourly fetch and compares each window with a trailing baseline."
-            action={<ButtonLink href={`/cx/listening/topics?brand=${brand.id}`} variant="primary">Add a topic</ButtonLink>}
+            title="Add a topic or connect a social channel to enable crisis detection"
+            description="Spike detection runs every hour over listening mentions and comments and messages from connected Facebook, Instagram, LinkedIn and X, comparing each window with a trailing baseline."
+            action={<ButtonLink href={`/cx/settings/topics?brand=${brand.id}`} variant="primary">Add a topic</ButtonLink>}
           />
         </Card>
       ) : (
@@ -314,7 +340,7 @@ function EventRow({ e, brandId }: { e: CrisisEvent; brandId: string }) {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13.5px] font-medium text-text">{e.title}</div>
           <div className="text-[12px] text-text-3">
-            {dateTimeLabel(e.detected_at)} · {num(e.mentions)} mentions, {num(e.negative)} negative · peak z {z(e.peak_z)}
+            {dateTimeLabel(e.detected_at)} · {num(e.mentions)} mentions{e.tickets ? `, ${num(e.tickets)} social tickets` : ""}, {num(e.negative)} negative · peak z {z(e.peak_z)}
             {e.owner ? ` · owner ${e.owner}` : ""}
           </div>
         </div>

@@ -248,6 +248,22 @@ export function toPlainText(text: string, signature?: string | null): string {
   const body = linkSegments(text).map((s) => (s.href && s.text !== s.href ? `${s.text} (${s.href})` : s.text)).join("");
   return signature?.trim() ? `${body}\n\n-- \n${toPlainText(signature)}` : body;
 }
+/**
+ * What staff can do with a reply they already posted in a public Facebook / Instagram thread (pure; the
+ * server checks the same rule). Only public comment replies that reached the platform qualify, not private
+ * replies (those are DMs, which Meta can't edit or delete). Instagram has no comment editing, only delete.
+ */
+export function sentReplyActions(
+  m: { direction: string; delivery: string; delivery_error?: string | null; external_id?: string | null; moderation?: string | null },
+  channelKind: string, threadKey: string,
+): { edit: boolean; delete: boolean } {
+  const none = { edit: false, delete: false };
+  if (m.direction !== "out" || m.delivery !== "sent" || !m.external_id || m.moderation === "deleted") return none;
+  if (m.delivery_error?.startsWith("Sent as a private message")) return none;
+  if (channelKind === "facebook" && /^(fbc|fbp|fbr):/.test(threadKey)) return { edit: true, delete: true };
+  if (channelKind === "instagram" && /^igc:/.test(threadKey)) return { edit: false, delete: true };
+  return none;
+}
 /** Quote a message for reply-on-reply emails. */
 export function quoteMessage(m: { author_name: string; created_at: string; body: string }) {
   const when = new Date(m.created_at).toUTCString();
@@ -375,8 +391,8 @@ export function hms(ms: number | null | undefined) {
   return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
 /** Plain-text conversation history (public messages, private notes and activity). */
-export function transcriptText(t: { number: number; subject: string; channel: string; contact: string; status: string }, messages: { direction: string; author_name: string; body: string; created_at: string; attachments?: { name?: string }[] }[], events: { actor: string; detail: string; created_at: string }[] = []) {
-  const lines = [`Ticket #${t.number}: ${t.subject}`, `Channel: ${t.channel} · Customer: ${t.contact} · Status: ${t.status}`, `Exported: ${new Date().toISOString()}`, "".padEnd(60, "=")];
+export function transcriptText(t: { number: number; subject: string; channel: string; contact: string; status: string; link?: string }, messages: { direction: string; author_name: string; body: string; created_at: string; attachments?: { name?: string }[] }[], events: { actor: string; detail: string; created_at: string }[] = []) {
+  const lines = [`Ticket #${t.number}: ${t.subject}`, `Channel: ${t.channel} · Customer: ${t.contact} · Status: ${t.status}`, ...(t.link ? [`Link: ${t.link}`] : []), `Exported: ${new Date().toISOString()}`, "".padEnd(60, "=")];
   for (const m of messages) {
     const who = m.direction === "in" ? `${m.author_name || "Customer"} (customer)` : m.direction === "note" ? `${m.author_name} (private note)` : `${m.author_name} (agent)`;
     lines.push("", `[${m.created_at}] ${who}`, toPlainText(m.body));

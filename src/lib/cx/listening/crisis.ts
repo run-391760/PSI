@@ -7,7 +7,12 @@ import { getSettings, listTopics, type Mention } from "./data";
 import { riskScore, type Risk } from "./crisis-math";
 import { bucketize, detectSpike, type Bucket, type SpikeResult } from "./spikes";
 
-/** Crisis management: spike detection over stored mentions, crisis events, timeline and notes. */
+/**
+ * Crisis management: spike detection over stored mentions and tickets from connected social channels,
+ * crisis events, timeline and notes.
+ */
+/** Inbox channels whose tickets count as public signal for crisis detection (comments, mentions, messages). */
+export const CRISIS_CHANNELS = ["facebook", "instagram", "linkedin", "x"];
 
 export type CrisisEvent = {
   id: string;
@@ -29,12 +34,25 @@ export type CrisisEvent = {
   resolved_at: string | null;
   mentions: number;
   negative: number;
+  /** Linked tickets from connected social channels. */
+  tickets: number;
   risk: Risk | Record<string, never>;
 };
 export type CrisisNote = { id: string; author_name: string; kind: "note" | "status" | "system"; body: string; created_at: string };
 export type ScopeResult = { key: string; name: string; topicId: string | null; result: SpikeResult; risk?: Risk };
 
-type Row = { id: string; topic_id: string | null; published_at: string | null; sentiment: string | null; author_followers?: number | null };
+type Row = { id: string; topic_id: string | null; published_at: string | null; sentiment: string | null; author_followers?: number | null; kind?: "mention" | "ticket" };
+
+/** Social-channel tickets in a time range (tickets made from a listening mention are counted as the mention). */
+async function ticketRows(projectId: string, from: string, to: string): Promise<Row[]> {
+  const rows = await query<Row>(
+    `SELECT t.id, NULL AS topic_id, t.created_at AS published_at, t.sentiment FROM cx_tickets t
+      WHERE t.project_id=$1 AND t.channel_kind = ANY($2) AND t.created_at > $3 AND t.created_at <= $4
+        AND NOT EXISTS (SELECT 1 FROM cx_mentions x WHERE x.ticket_id=t.id)`,
+    [projectId, CRISIS_CHANNELS, from, to],
+  );
+  return rows.map((r) => ({ ...r, kind: "ticket" as const }));
+}
 
 /**
  * Coverage start per topic: sources return only their latest N results, so history before a source's
@@ -61,16 +79,24 @@ export async function runDetection(project: Project) {
   const baselineWindows = Math.round((s.baselineDays * 24) / s.windowHours);
   const now = new Date();
   const since = new Date(now.getTime() - (baselineWindows + 1) * s.windowHours * 3600_000);
+  const tickets = await ticketRows(project.id, since.toISOString(), now.toISOString());
+  const [ticketStart] = await query<{ t: string | null }>("SELECT min(created_at) t FROM cx_tickets WHERE project_id=$1 AND channel_kind = ANY($2)", [project.id, CRISIS_CHANNELS]);
   const rows = await query<Row>("SELECT id, topic_id, published_at, sentiment, author_followers FROM cx_mentions WHERE project_id=$1 AND published_at > $2 AND published_at <= now() AND status <> 'ignored'", [project.id, since.toISOString()]);
   const since_ = await coverage(project.id);
-  const scopes: { key: string; name: string; topicId: string | null; rows: Row[] }[] = topics.map((t) => ({ key: `topic:${t.id}`, name: t.name, topicId: t.id, rows: rows.filter((r) => r.topic_id === t.id) }));
-  if (topics.length > 1) scopes.unshift({ key: "all", name: "All topics", topicId: null, rows });
+  type Scope = { key: string; name: string; topicId: string | null; rows: Row[]; coverage: Date | null };
+  const mentionStart = (ids: string[]) => since_(ids);
+  const later = (...ds: (Date | null)[]) => { const ts = ds.filter((d): d is Date => !!d).map((d) => d.getTime()); return ts.length ? new Date(Math.max(...ts)) : null; };
+  const scopes: Scope[] = topics.map((t) => ({ key: `topic:${t.id}`, name: t.name, topicId: t.id, rows: rows.filter((r) => r.topic_id === t.id), coverage: mentionStart([t.id]) }));
+  const tStart = ticketStart?.t ? new Date(ticketStart.t) : null;
+  // Everything (all topics + social-channel tickets) is always a scope; social tickets also get their own.
+  if (topics.length || tickets.length) scopes.unshift({ key: "all", name: topics.length ? "All topics and social channels" : "Social channels", topicId: null, rows: [...rows, ...tickets], coverage: topics.length ? later(mentionStart(topics.map((t) => t.id)), tickets.length ? tStart : null) : tStart });
+  if (topics.length && tickets.length) scopes.push({ key: "social", name: "Social channels (comments and messages)", topicId: null, rows: tickets, coverage: tStart });
 
   const results: ScopeResult[] = [];
   const opened: string[] = [];
   const touched: { id: string; severity: "warning" | "critical"; opened: boolean }[] = [];
   for (const sc of scopes) {
-    const buckets = bucketize(sc.rows, now, s.windowHours, baselineWindows, since_(sc.topicId ? [sc.topicId] : topics.map((t) => t.id)));
+    const buckets = bucketize(sc.rows, now, s.windowHours, baselineWindows, sc.coverage);
     const result = detectSpike(buckets, s);
     const winStart = new Date(result.window.start).getTime();
     const inWindow = sc.rows.filter((r) => r.published_at && new Date(r.published_at).getTime() > winStart);
@@ -106,7 +132,8 @@ export async function runDetection(project: Project) {
       if (s.notify)
         await notify({ ownerId: project.owner_id, projectId: project.id, tool: "cx-crisis", severity: result.severity === "critical" ? "critical" : "warning", title, body: detail, link: `/cx/crisis?brand=${project.id}&event=${id}` });
     }
-    for (const r of link.slice(0, 1000)) await query("INSERT INTO cx_crisis_mentions(event_id,mention_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [id, r.id]);
+    for (const r of link.slice(0, 1000))
+      await query(r.kind === "ticket" ? "INSERT INTO cx_crisis_tickets(event_id,ticket_id) VALUES($1,$2) ON CONFLICT DO NOTHING" : "INSERT INTO cx_crisis_mentions(event_id,mention_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [id, r.id]);
     touched.push({ id: id!, severity: existing && existing.severity === "critical" ? "critical" : result.severity, opened: !existing });
   }
   const summary = { at: now.toISOString(), scopes: results, opened: opened.length };
@@ -122,7 +149,9 @@ export async function listEvents(projectId: string, status?: string) {
   return query<CrisisEvent>(
     `SELECT e.*, t.name topic_name,
        (SELECT count(*)::int FROM cx_crisis_mentions cm WHERE cm.event_id=e.id) mentions,
-       (SELECT count(*)::int FROM cx_crisis_mentions cm JOIN cx_mentions m ON m.id=cm.mention_id WHERE cm.event_id=e.id AND m.sentiment='negative') negative
+       (SELECT count(*)::int FROM cx_crisis_mentions cm JOIN cx_mentions m ON m.id=cm.mention_id WHERE cm.event_id=e.id AND m.sentiment='negative')
+       + (SELECT count(*)::int FROM cx_crisis_tickets ct JOIN cx_tickets k ON k.id=ct.ticket_id WHERE ct.event_id=e.id AND k.sentiment='negative') negative,
+       (SELECT count(*)::int FROM cx_crisis_tickets ct WHERE ct.event_id=e.id) tickets
      FROM cx_crisis_events e LEFT JOIN cx_topics t ON t.id=e.topic_id
      WHERE e.project_id=$1 AND ($2::text IS NULL OR e.status=$2) ORDER BY (e.status='resolved'), e.detected_at DESC LIMIT 200`,
     [projectId, status ?? null],
@@ -138,7 +167,39 @@ export async function getEvent(projectId: string, id: string) {
      LEFT JOIN cx_topics t ON t.id=m.topic_id LEFT JOIN cx_tickets k ON k.id=m.ticket_id WHERE cm.event_id=$1 ORDER BY m.published_at DESC NULLS LAST LIMIT 300`,
     [id],
   );
-  return { event: e, notes, mentions };
+  const tickets = await query<CrisisTicket>(
+    `SELECT k.id, k.number, k.subject, k.channel_kind, k.sentiment, k.created_at, k.external_thread_id,
+            (SELECT m.body FROM cx_messages m WHERE m.ticket_id=k.id AND m.direction='in' ORDER BY m.created_at, m.id LIMIT 1) AS first_body,
+            COALESCE(NULLIF(c.name,''), c.email) AS contact
+       FROM cx_crisis_tickets ct JOIN cx_tickets k ON k.id=ct.ticket_id LEFT JOIN cx_contacts c ON c.id=k.contact_id
+      WHERE ct.event_id=$1 ORDER BY k.created_at DESC LIMIT 300`,
+    [id],
+  );
+  return { event: e, notes, mentions, tickets };
+}
+export type CrisisTicket = { id: string; number: number; subject: string; channel_kind: string; sentiment: string | null; created_at: string; external_thread_id: string | null; first_body: string | null; contact: string | null };
+
+/**
+ * Keep listening and detection running: an hourly mention fetch once the brand has topics, an hourly detection
+ * run (which also covers social-channel tickets) and the hourly AI sentiment re-score. Paused schedules stay paused.
+ */
+export async function ensureCrisisSchedules(projectId: string) {
+  const { getSchedule, setSchedule } = await import("@/lib/jobs/queue");
+  const [fetch, detect, rescore, topics] = await Promise.all([getSchedule(projectId, "cx.listening.fetch"), getSchedule(projectId, "cx.listening.detect"), getSchedule(projectId, "cx.listening.rescore"), listTopics(projectId)]);
+  if (!fetch && topics.some((t) => t.active)) await setSchedule(projectId, "cx.listening.fetch", { cadence: "hourly" });
+  if (!detect) await setSchedule(projectId, "cx.listening.detect", { cadence: "hourly", startNow: true });
+  // Existing word-list sentiment is re-scored with Gemini in hourly batches until none is left.
+  if (!rescore) await setSchedule(projectId, "cx.listening.rescore", { cadence: "hourly", startNow: true });
+}
+
+/** The rows an event's scope counts: its topic's mentions, social-channel tickets ("social"), or both ("all"). */
+export async function eventScopeRows(projectId: string, e: Pick<CrisisEvent, "topic_id" | "scope_key">, from: string, to: string): Promise<Row[]> {
+  const mentions = e.scope_key === "social" ? [] : await query<Row>(
+    "SELECT id, topic_id, published_at, sentiment FROM cx_mentions WHERE project_id=$1 AND ($2::text IS NULL OR topic_id=$2) AND published_at > $3 AND published_at <= $4 AND status<>'ignored'",
+    [projectId, e.topic_id, from, to],
+  );
+  const tickets = e.scope_key === "social" || e.scope_key === "all" ? await ticketRows(projectId, from, to) : [];
+  return [...mentions, ...tickets];
 }
 
 /** Volume/negative windows around an event (baseline before it through now) for the timeline chart. */
@@ -148,10 +209,7 @@ export async function eventTimeline(project: Project, e: CrisisEvent): Promise<B
   const start = new Date(e.window_start).getTime() - Math.min(s.baselineDays * 24, 14 * 24) * 3600_000;
   const end = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() + w * 3600_000 : Date.now();
   const windows = Math.min(400, Math.max(2, Math.ceil((end - start) / (w * 3600_000))));
-  const rows = await query<Row>(
-    "SELECT id, topic_id, published_at, sentiment FROM cx_mentions WHERE project_id=$1 AND ($2::text IS NULL OR topic_id=$2) AND published_at > $3 AND published_at <= $4 AND status<>'ignored'",
-    [project.id, e.topic_id, new Date(end - windows * w * 3600_000).toISOString(), new Date(end).toISOString()],
-  );
+  const rows = await eventScopeRows(project.id, e, new Date(end - windows * w * 3600_000).toISOString(), new Date(end).toISOString());
   return bucketize(rows, new Date(end), w, windows - 1);
 }
 

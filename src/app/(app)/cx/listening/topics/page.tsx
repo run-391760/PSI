@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { BrandSwitcher } from "@/components/cx/brand-switcher";
 import { JobButton } from "@/components/cx/listening/job-button";
@@ -20,10 +21,14 @@ import { TopicEditor } from "./topic-editor";
 
 export const metadata: Metadata = { title: "Topics" };
 
-/** Topic editor (Konnect "Topics"): TOPICS panel with the topic list, the generated search query and the editor. */
+/**
+ * Topic editor: TOPICS panel with the topic list, the generated search query and the editor. Opened from
+ * Settings → Topics (?topic=<id> or ?topic=new); without a topic the list lives in Settings → Topics.
+ */
 export default async function TopicsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const user = await requirePageUser();
   const sp = await searchParams;
+  if (typeof sp.topic !== "string") redirect(typeof sp.brand === "string" ? `/cx/settings/topics?brand=${encodeURIComponent(sp.brand)}` : "/cx/settings/topics");
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Topics" />;
   const blocked = await ipBlocked(brand.id, user.id);

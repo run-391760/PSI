@@ -12,25 +12,6 @@ const HOUR = 3600000;
 
 // ------------------------------------------------------------------ period comparison
 
-/** Merge a previous-period series into the current one by position (day i of the period ↔ day i of the previous period). */
-export function withPrevious<T extends Record<string, unknown>>(cur: T[], prev: Record<string, unknown>[], keys: string[]) {
-  return cur.map((r, i) => ({ ...r, ...Object.fromEntries(keys.map((k) => [`prev_${k}`, (prev[i]?.[k] as number | undefined) ?? null])) }));
-}
-
-/** Count per key for two periods with change; rows sorted by current count. */
-export function compareCounts(cur: { key: string; count: number }[], prev: { key: string; count: number }[]) {
-  const p = new Map(prev.map((x) => [x.key, x.count]));
-  const keys = [...new Set([...cur.map((x) => x.key), ...prev.map((x) => x.key)])];
-  const c = new Map(cur.map((x) => [x.key, x.count]));
-  return keys
-    .map((key) => {
-      const now = c.get(key) ?? 0;
-      const before = p.get(key) ?? 0;
-      return { key, count: now, prev: before, change: before ? ((now - before) / before) * 100 : null };
-    })
-    .sort((a, b) => b.count - a.count || b.prev - a.prev);
-}
-
 // ------------------------------------------------------------------ clouds
 
 const own = (topics: TopicRef[]) => new Set(topics.flatMap((t) => t.keywords.flatMap((k) => parseRule(k).flat().flatMap((p) => [p, ...p.split(" ")]))));
@@ -84,54 +65,9 @@ export function topPhrases(rows: MentionRow[], topics: TopicRef[], n: 2 | 3, lim
   return rank(docFreq(rows, g), rows.length, limit, prevRows ? docFreq(prevRows, g) : undefined);
 }
 
-/** One word cloud per sentiment (terms colored by the cloud's sentiment) with previous-period counts. */
-export function sentimentClouds(rows: MentionRow[], topics: TopicRef[], limit = 25, prevRows: MentionRow[] = []) {
-  const ex = own(topics);
-  const g = (t: string) => tokenize(t).filter((w) => !ex.has(w));
-  const out = {} as Record<"positive" | "neutral" | "negative", Term[]>;
-  for (const s of ["positive", "neutral", "negative"] as const) {
-    const cur = rows.filter((r) => (r.sentiment ?? "neutral") === s);
-    const prev = prevRows.filter((r) => (r.sentiment ?? "neutral") === s);
-    out[s] = rank(docFreq(cur, g), cur.length, limit, docFreq(prev, g), s);
-  }
-  return out;
-}
-
 // ------------------------------------------------------------------ peak windows
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const wd = (d: Date) => (d.getUTCDay() + 6) % 7;
-
-/** Weekday × hour (UTC) activity grid and each source's busiest 3-hour window and weekday. */
-export function peakWindows(rows: Pick<MentionRow, "source" | "published_at">[]) {
-  const grid = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
-  const per = new Map<string, { hours: number[]; days: number[]; total: number }>();
-  for (const r of rows) {
-    if (!r.published_at) continue;
-    const d = new Date(r.published_at);
-    const h = d.getUTCHours();
-    grid[wd(d)][h]++;
-    const s = per.get(r.source) ?? { hours: Array(24).fill(0), days: Array(7).fill(0), total: 0 };
-    s.hours[h]++;
-    s.days[wd(d)]++;
-    s.total++;
-    per.set(r.source, s);
-  }
-  const bySource = [...per.entries()]
-    .map(([source, s]) => {
-      let best = 0;
-      let bestN = -1;
-      for (let h = 0; h < 24; h++) {
-        const n = s.hours[h] + s.hours[(h + 1) % 24] + s.hours[(h + 2) % 24];
-        if (n > bestN) [best, bestN] = [h, n];
-      }
-      const day = s.days.indexOf(Math.max(...s.days));
-      return { source, total: s.total, peakStart: best, peakEnd: (best + 3) % 24, peakShare: s.total ? bestN / s.total : null, peakDay: WEEKDAYS[day], peakDayShare: s.total ? s.days[day] / s.total : null };
-    })
-    .sort((a, b) => b.total - a.total);
-  const flat = grid.flatMap((row, d) => row.map((n, h) => ({ d, h, n }))).sort((a, b) => b.n - a.n);
-  return { grid, bySource, top: flat.filter((x) => x.n > 0).slice(0, 3).map((x) => ({ day: WEEKDAYS[x.d], hour: x.h, count: x.n })) };
-}
 
 // ------------------------------------------------------------------ trending issues (S12)
 
@@ -194,31 +130,6 @@ export const trendLabel = (t: TrendingIssue) => `${t.count} ${t.tickets && !t.me
 // ------------------------------------------------------------------ reviews (M8)
 
 export type Review = { published_at: string | null; rating: number | null };
-
-/** Daily average rating and count, plus a trailing 7-day average (null where no reviews). */
-export function ratingSeries(reviews: Review[], dayList: string[]) {
-  const by = new Map(dayList.map((d) => [d, { sum: 0, n: 0 }]));
-  for (const r of reviews) {
-    if (!r.published_at || r.rating == null) continue;
-    const e = by.get(r.published_at.slice(0, 10));
-    if (e) {
-      e.sum += r.rating;
-      e.n++;
-    }
-  }
-  return dayList.map((d, i) => {
-    const e = by.get(d)!;
-    const win = dayList.slice(Math.max(0, i - 6), i + 1).map((x) => by.get(x)!);
-    const n7 = win.reduce((a, w) => a + w.n, 0);
-    return { date: d, reviews: e.n, rating: e.n ? e.sum / e.n : null, rolling: n7 ? win.reduce((a, w) => a + w.sum, 0) / n7 : null };
-  });
-}
-
-export function ratingDistribution(reviews: Review[]) {
-  const d = [5, 4, 3, 2, 1].map((stars) => ({ stars, count: 0 }));
-  for (const r of reviews) if (r.rating != null && r.rating >= 1 && r.rating <= 5) d[5 - Math.round(r.rating)].count++;
-  return d;
-}
 
 /** Rating drop: recent average vs the preceding baseline average. Needs ≥ minRecent recent and ≥ 5 baseline reviews. */
 export function ratingDrop(reviews: Review[], now: Date, opts: { recentDays?: number; baselineDays?: number; threshold?: number; minRecent?: number } = {}) {
@@ -296,31 +207,3 @@ export type GeoNode = { name: string; value: number; children: GeoNode[] };
  * the publisher's country-code domain (news) or a place named in the text; state/city only from named places.
  */
 export type GeoRow = Pick<MentionRow, "source" | "author_handle" | "title" | "body"> & { country?: string | null };
-export function geoTree(rows: GeoRow[]) {
-  const root: GeoNode = { name: "All", value: 0, children: [] };
-  let located = 0;
-  const child = (n: GeoNode, name: string) => {
-    let c = n.children.find((x) => x.name === name);
-    if (!c) n.children.push((c = { name, value: 0, children: [] }));
-    c.value++;
-    return c;
-  };
-  for (const r of rows) {
-    const place = placeIn(`${r.title} ${r.body}`);
-    const country = r.country || (r.source === "news" ? countryFromHost(r.author_handle) : null) || place?.country || null;
-    if (!country) continue;
-    located++;
-    root.value++;
-    const c = child(root, country);
-    if (place && place.country === country) {
-      const s = child(c, place.state);
-      if (place.city) child(s, place.city);
-    }
-  }
-  const sort = (n: GeoNode) => {
-    n.children.sort((a, b) => b.value - a.value);
-    n.children.forEach(sort);
-  };
-  sort(root);
-  return { root, located, total: rows.length };
-}

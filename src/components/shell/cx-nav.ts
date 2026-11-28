@@ -5,37 +5,29 @@ import {
   Bookmark,
   Bot,
   CalendarDays,
-  ChartNoAxesColumn,
   ChartPie,
   ClipboardCheck,
   Clock,
   Code2,
   Columns3,
   Contact,
-  Download,
   Ear,
-  FileText,
   FlaskConical,
   Gauge,
   Images,
-  LayoutDashboard,
   LayoutGrid,
   Layers,
   Link2,
   ListOrdered,
-  MessageSquare,
   MessageSquareHeart,
   MonitorPlay,
   PenSquare,
   PlugZap,
-  Radar,
-  Search,
   Send,
   Settings,
   ShieldCheck,
   Siren,
   SquareCheckBig,
-  Star,
   Tag,
   Tags,
   ToggleRight,
@@ -49,7 +41,7 @@ import type { NavGroup, NavItem } from "./nav";
 
 /**
  * Navigation of the CX workspace (/cx), laid out like Konnect: four top tabs, a left sidebar per tab,
- * a hamburger menu of secondary modules, and secondary panels (SETTINGS, REPORTS, TOPICS) rendered by
+ * secondary panels (SETTINGS, REPORTS, TOPICS) rendered by
  * <SectionPanel> (./section-panel) next to an icon rail.
  *
  * Item hrefs may carry a query (`/cx/tasks?view=mine`). Active state: the item whose path (or one of
@@ -97,15 +89,17 @@ export const CX_NAV: CxNavGroup[] = [
     items: [
       { href: "/cx/inbox", label: "Tickets", icon: Tag, description: "Omnichannel conversations as tickets with SLAs.", match: ["/cx/ticket"] },
       { href: "/cx/inbox/queued", label: "Queued Tickets", icon: Clock, description: "Tickets waiting in the assignment queue." },
+      { href: "/cx/bookmarks", label: "Bookmarks", icon: Bookmark, description: "Messages you saved for later." },
     ],
   },
   {
     tab: "monitor",
-    id: "monitor-messages",
-    label: "Messages",
+    id: "monitor-listening",
+    label: "Listening",
     items: [
-      { href: "/cx/messages", label: "All Messages", icon: MessageSquare, description: "Every inbound item: ticket messages and listening mentions." },
-      { href: "/cx/bookmarks", label: "Bookmarks", icon: Bookmark, description: "Messages you saved for later." },
+      { href: "/cx/listening/platforms", label: "Social Listening", icon: Ear, description: "Mentions per platform: volume, sentiment, authors and the feed." },
+      { href: "/cx/crisis", label: "Crisis", icon: Siren, description: "Spike detection, crisis rooms, escalations and playbooks." },
+      { href: "/cx/command/streams", label: "Streams", icon: Columns3, description: "Boards of filtered live stream columns." },
     ],
   },
   {
@@ -113,10 +107,9 @@ export const CX_NAV: CxNavGroup[] = [
     id: "monitor-setup",
     label: "Setup",
     items: [
-      { href: "/cx/settings", label: "Settings", icon: Settings, description: "Omni-channel setup, topics, users, clusters, apps and admin." },
-      { href: "/cx/listening/topics", label: "Topics", icon: Layers, description: "Listening topics: keywords, exclusions, sources." },
+      // The topic editor is opened from Settings → Topics, so it highlights Settings.
+      { href: "/cx/settings", label: "Settings", icon: Settings, description: "Omni-channel setup, topics, users, quality, surveys, clusters, apps and admin.", match: ["/cx/listening/topics"] },
       { href: "/cx/ab-testing", label: "A/B Testing", icon: ToggleRight, description: "Compare post or reply variants and pick the winner." },
-      { href: "/cx/search", label: "Quick Search", icon: Search, description: "Search tickets, messages, contacts, mentions and tasks." },
     ],
   },
   {
@@ -124,10 +117,8 @@ export const CX_NAV: CxNavGroup[] = [
     id: "monitor-reports",
     label: "Reports",
     items: [
+      // Custom, one-click and download reports are the icons at the top of the Reports panel.
       { href: "/cx/reports", label: "Reports", icon: ChartPie, description: "Share of voice, sentiment, ticketing, CSAT and more." },
-      { href: "/cx/reports/download", label: "Download", icon: Download, description: "Download centre for report exports." },
-      { href: "/cx/reports/one-click", label: "One-Click Report", icon: FileText, description: "A complete report for a period in one click." },
-      { href: "/cx/reports/custom", label: "Custom Report", icon: ChartNoAxesColumn, description: "Build your own report from widgets." },
     ],
   },
   {
@@ -140,22 +131,13 @@ export const CX_NAV: CxNavGroup[] = [
     ],
   },
   {
-    // Hamburger modules: not in the sidebar by default; "Customize menu" can show them here.
+    // Extra modules: not in the sidebar by default; "Customize menu" can show them, and search finds them.
     tab: "monitor",
     id: "monitor-more",
     label: "More",
     items: [
-      { href: "/cx", label: "CX overview", icon: LayoutDashboard, description: "What needs attention right now.", defaultHidden: true, exact: true },
-      { href: "/cx/listening", label: "Mentions", icon: Ear, description: "Every mention of your brand across sources.", defaultHidden: true },
-      { href: "/cx/listening/dashboards", label: "Listening dashboards", icon: BarChart3, description: "Buzz, sentiment, share of voice, sources, authors.", defaultHidden: true },
-      { href: "/cx/listening/reviews", label: "Reviews", icon: Star, description: "Rating trend, star distribution and low-rating reviews.", defaultHidden: true },
-      { href: "/cx/listening/ugc", label: "UGC board", icon: Images, description: "User-generated media with consent tracking.", defaultHidden: true },
-      { href: "/cx/command/streams", label: "Streams", icon: Columns3, description: "Boards of filtered live stream columns.", defaultHidden: true },
       { href: "/cx/command", label: "Command Center", icon: MonitorPlay, description: "Full-screen live wall of mentions and KPIs.", defaultHidden: true },
-      { href: "/cx/mentions-tracker", label: "Mentions Tracker", icon: Radar, description: "Track specific posts, profiles and keywords over time.", defaultHidden: true },
       { href: "/cx/contacts", label: "Contacts", icon: Contact, description: "Unified customer profiles and history.", defaultHidden: true },
-      { href: "/cx/surveys", label: "Surveys", icon: MessageSquareHeart, description: "CSAT and NPS surveys and results.", defaultHidden: true },
-      { href: "/cx/quality", label: "Quality", icon: ClipboardCheck, description: "Score agent conversations and coach.", defaultHidden: true },
       { href: "/cx/knowledge", label: "Knowledge base", icon: BookOpen, description: "Articles for agents and AI answers.", defaultHidden: true },
       { href: "/cx/ask", label: "Ask AI", icon: Bot, description: "Questions about your CX metrics in plain language.", defaultHidden: true },
     ],
@@ -211,47 +193,6 @@ export const CX_NAV: CxNavGroup[] = [
 
 export const cxTabGroups = (tab: CxTab) => CX_NAV.filter((g) => g.tab === tab);
 
-/** Hamburger slide-in menu (spec §1): Konnect's own modules, our extra modules grouped, overview. */
-export type CxMenuSection = { id: string; label: string; items: { href: string; label: string; icon: LucideIcon; exact?: boolean }[] };
-export const CX_MENU: CxMenuSection[] = [
-  {
-    id: "konnect",
-    label: "",
-    items: [
-      { href: "/cx/settings/alerts", label: "Configure Alerts", icon: BellRing },
-      { href: "/cx/compose", label: "Compose Message", icon: PenSquare },
-      { href: "/cx/profile", label: "My Profile", icon: UserCog },
-      { href: "/cx/plan", label: "My Plan", icon: Gauge },
-      { href: "/cx/mentions-tracker", label: "Mentions Tracker", icon: Radar },
-      { href: "/cx/command", label: "Command Center", icon: MonitorPlay },
-    ],
-  },
-  {
-    id: "listening",
-    label: "Listening",
-    items: [
-      { href: "/cx/listening", label: "Mentions", icon: Ear },
-      { href: "/cx/listening/dashboards", label: "Listening dashboards", icon: BarChart3 },
-      { href: "/cx/listening/reviews", label: "Reviews", icon: Star },
-      { href: "/cx/listening/ugc", label: "UGC board", icon: Images },
-      { href: "/cx/crisis", label: "Crisis", icon: Siren },
-      { href: "/cx/command/streams", label: "Streams", icon: Columns3 },
-    ],
-  },
-  {
-    id: "customers",
-    label: "Customers",
-    items: [
-      { href: "/cx/contacts", label: "Contacts", icon: Contact },
-      { href: "/cx/surveys", label: "Surveys", icon: MessageSquareHeart },
-      { href: "/cx/quality", label: "Quality", icon: ClipboardCheck },
-      { href: "/cx/knowledge", label: "Knowledge base", icon: BookOpen },
-      { href: "/cx/ask", label: "Ask AI", icon: Bot },
-    ],
-  },
-  { id: "overview", label: "", items: [{ href: "/cx", label: "CX overview", icon: LayoutDashboard, exact: true }] },
-];
-
 // ------------------------------------------------------------------ secondary panels
 
 /** Data for <SectionPanel> (serializable, so server layouts can pass it to the client panel). */
@@ -269,6 +210,8 @@ export const CX_SETTINGS_PANEL: SectionPanelData = {
         { href: "/cx/settings/channels", label: "Omni-Channel Setup" },
         { href: "/cx/settings/topics", label: "Topics" },
         { href: "/cx/settings/users", label: "Users" },
+        { href: "/cx/settings/quality", label: "Quality" },
+        { href: "/cx/settings/surveys", label: "Surveys" },
         { href: "/cx/settings/clusters", label: "Clusters", match: ["/cx/settings/profile-groups"] },
         { href: "/cx/settings/social-profiles", label: "More Social Profiles" },
         { href: "/cx/settings/integrations", label: "Integrated Apps" },
@@ -341,7 +284,7 @@ export function matchScore(pathname: string, search: URLSearchParams, item: Matc
   return score;
 }
 
-/** Href of the best-matching item, or undefined (hamburger-only modules highlight nothing). */
+/** Href of the best-matching item, or undefined (pages outside the list highlight nothing). */
 export function pickActive<T extends Matchable>(pathname: string, search: URLSearchParams, items: T[]): string | undefined {
   let best: T | undefined;
   let bestScore = -1;
@@ -388,6 +331,8 @@ export const CX_SETTINGS: SettingsSection[] = [
       { href: "/cx/settings/team", label: "Team & SLAs", icon: Users, description: "Agents, teams, business hours and SLA policies." },
       { href: "/cx/settings/roles", label: "Roles & permissions", icon: ShieldCheck, description: "Custom roles, permissions and audit log." },
       { href: "/cx/settings/clusters", label: "Clusters", icon: Users, description: "Group profiles and topics for routing, filters and reports." },
+      { href: "/cx/settings/quality", label: "Quality", icon: ClipboardCheck, description: "Score agent conversations, scorecards and coaching." },
+      { href: "/cx/settings/surveys", label: "Surveys", icon: MessageSquareHeart, description: "CSAT and NPS surveys and their results." },
       { href: "/cx/profile", label: "My profile", icon: UserCog, description: "Your agent profile, signature and notifications." },
     ],
   },
@@ -404,7 +349,7 @@ export const CX_SETTINGS: SettingsSection[] = [
     id: "listening",
     label: "Listening",
     items: [
-      { href: "/cx/listening/topics", label: "Topics & competitors", icon: Layers, description: "Keywords, exclusions, sources and competitors to track." },
+      { href: "/cx/settings/topics", label: "Topics & competitors", icon: Layers, description: "Keywords, exclusions, sources and competitors to track." },
       { href: "/cx/settings/alerts", label: "Alerts", icon: BellRing, description: "Keyword and volume alerts by email, Slack or Telegram." },
     ],
   },
@@ -420,10 +365,9 @@ export const CX_SETTINGS: SettingsSection[] = [
 
 const TAB_LABEL: Record<CxTab, string> = { monitor: "Monitor", analytics: "Social analytics", publish: "Publish", dashboard: "Dashboard" };
 
-/** Everything searchable in the CX workspace: sidebar items (incl. hidden), hamburger modules, panels, settings. */
+/** Everything searchable in the CX workspace: sidebar items (incl. hidden), panels, settings. */
 export const CX_SEARCH: { href: string; label: string; description: string; group: string }[] = [
   ...CX_NAV.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: i.description, group: g.id === "monitor-more" ? "CX" : `${TAB_LABEL[g.tab]} · ${g.label}` }))),
-  ...CX_MENU.flatMap((s) => s.items.map((i) => ({ href: i.href, label: i.label, description: s.label ? `${s.label} module` : "CX module", group: s.label || "CX" }))),
   ...CX_REPORTS_PANEL.groups.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: `${g.label} report`, group: "Reports" }))),
   ...CX_SETTINGS_PANEL.groups.flatMap((g) => g.items.map((i) => ({ href: i.href, label: i.label, description: "Settings", group: "Settings" }))),
   ...CX_SETTINGS.flatMap((s) => s.items.filter((i) => !i.pending).map((i) => ({ href: i.href, label: i.label, description: i.description, group: "Settings" }))),

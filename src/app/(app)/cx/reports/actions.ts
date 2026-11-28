@@ -3,8 +3,6 @@
 import { revalidatePath } from "next/cache";
 import type { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { query } from "@/lib/db";
-import { AppError } from "@/lib/domain";
 import { getCxBrand } from "@/lib/cx/context";
 import { actionError, type ActionResult } from "@/app/(app)/projects/actions";
 import { deleteSchedule, deleteTemplate, getFile, runExport, saveSchedule, saveTemplate, toggleSchedule, type scheduleInput, type templateInput } from "@/lib/cx/insights/exports";
@@ -53,27 +51,6 @@ export async function saveTemplateAction(projectId: string, input: z.input<typeo
     return actionError(e);
   }
 }
-/**
- * Delete a Facebook/Instagram comment on the brand's own post straight from a report drill-down row.
- * Resolves the ticket's inbound comment message, then removes it from the platform via moderation
- * (`moderateComment` validates it is a deletable fbc/igc comment and that a Page token is configured).
- */
-export async function deleteCommentAction(projectId: string, ticketId: string): Promise<ActionResult<null>> {
-  try {
-    const user = await brand(projectId);
-    const [m] = await query<{ id: string }>(
-      "SELECT id FROM cx_messages WHERE ticket_id=$1 AND direction='in' AND external_id IS NOT NULL ORDER BY created_at ASC LIMIT 1",
-      [ticketId],
-    );
-    if (!m) throw new AppError("No comment was found on this item to delete.", 404);
-    const { moderateComment } = await import("@/lib/cx/inbox/social");
-    await moderateComment(projectId, ticketId, m.id, "delete", user.name || user.email);
-    return { ok: true, data: null };
-  } catch (e) {
-    return actionError(e);
-  }
-}
-
 export async function deleteTemplateAction(projectId: string, id: string): Promise<ActionResult<null>> {
   try {
     await brand(projectId);
@@ -118,6 +95,19 @@ export async function drillItemsAction(projectId: string, spec: DrillSpec, page 
     const user = await requireUser();
     const b = await getCxBrand(user.id, projectId, { write: false });
     return { ok: true, data: await drillItems({ id: b.id, name: b.name }, spec, { page, refine }) };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+/** Delete a drill-down ticket's Facebook / Instagram comment on the platform (the ticket stays, marked deleted). */
+export async function drillDeleteCommentAction(projectId: string, ticketId: string): Promise<ActionResult<null>> {
+  try {
+    const user = await brand(projectId);
+    const { deleteTicketComment } = await import("@/lib/cx/inbox/social");
+    await deleteTicketComment(projectId, ticketId, user.name || user.email);
+    revalidatePath("/cx/inbox");
+    return { ok: true, data: null };
   } catch (e) {
     return actionError(e);
   }

@@ -119,4 +119,7 @@ CREATE TABLE IF NOT EXISTS cx_mentions (
 CREATE INDEX IF NOT EXISTS cx_mentions_feed ON cx_mentions(project_id, published_at DESC);
 -- English translation of Indian-language mentions (Sarvam AI), shown under the original text.
 ALTER TABLE cx_mentions ADD COLUMN IF NOT EXISTS translation text;
+-- Where a sentiment label came from: 'ai' (Gemini/Sarvam), 'manual' (a person), 'rating' (stars); NULL = word list.
+ALTER TABLE cx_mentions ADD COLUMN IF NOT EXISTS sentiment_source text;
+ALTER TABLE cx_tickets ADD COLUMN IF NOT EXISTS sentiment_source text;
 `;

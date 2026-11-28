@@ -114,6 +114,8 @@ export type RRow = {
   profile?: string | null;
   agent?: string | null;
   inQueue?: boolean;
+  /** Ticket-only: a Facebook / Instagram comment on the brand's own post, so it can be deleted on the platform. */
+  deletable?: boolean;
 };
 export type Entity = { id: string; name: string; kind: "cluster" | "topic" | "profile" | "brand" | "owned" | "other" };
 

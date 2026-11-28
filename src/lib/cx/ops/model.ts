@@ -273,29 +273,7 @@ export function normHandle(v: string) {
   const fromUrl = /^https?:\/\/[^/]+\/@?([^/?#]+)/.exec(s);
   return (fromUrl ? fromUrl[1] : s).replace(/^@+/, "").toLowerCase();
 }
-/** Which tracked handles / posts a mention refers to (handle as "@handle" in the text, or links to a tracked post). */
-export function trackerMatches(m: { title?: string | null; body?: string | null; url?: string | null }, tracked: Tracked[]) {
-  const text = ` ${(m.title ?? "")} ${(m.body ?? "")} `.toLowerCase();
-  const urls = [m.url ?? "", ...((`${m.title ?? ""} ${m.body ?? ""}`).match(URL_IN_TEXT) ?? [])].map(normalizePostUrl).filter(Boolean) as string[];
-  return tracked.filter((t) => {
-    if (t.kind === "handle") {
-      const h = normHandle(t.value);
-      if (!h) return false;
-      const i = text.indexOf(`@${h}`);
-      return i >= 0 && !/[a-z0-9_]/.test(text[i + 1 + h.length] ?? " ");
-    }
-    const p = normalizePostUrl(t.value);
-    return !!p && urls.some((u) => u === p || u.startsWith(`${p}/`));
-  });
-}
 export type ResponseState = "responded" | "pending" | "ignored" | "in_progress";
-/** Response status of a tracked mention: ignored, responded (ticket replied / marked actioned without ticket), in progress (ticket open, no reply) or pending. */
-export function responseState(m: { status: string; ticket_id?: string | null; ticket_first_response_at?: string | null; ticket_status?: string | null }): ResponseState {
-  if (m.status === "ignored") return "ignored";
-  if (m.ticket_id) return m.ticket_first_response_at ? "responded" : m.ticket_status && ["solved", "closed"].includes(m.ticket_status) ? "responded" : "in_progress";
-  if (m.status === "actioned") return "responded";
-  return "pending";
-}
 
 // ---------------------------------------------------------------- Compose capabilities
 
@@ -316,17 +294,6 @@ export const COMPOSE_CAPS: ComposeCap[] = [
 export const composeCap = (kind: string): ComposeCap => COMPOSE_CAPS.find((c) => c.kind === kind) ?? { kind, canStart: false, how: "This channel has no API for starting conversations from here." };
 
 // ---------------------------------------------------------------- quick search
-
-/** Free-text part and field terms of a quick-search query, split by entity relevance. */
-export function searchScopes(terms: { field: string; value: string; neg: boolean }[]) {
-  const contact = new Set(["name", "email", "phone"]);
-  const mention = new Set(["sentiment", "topic", "lang"]);
-  return {
-    contacts: terms.filter((t) => contact.has(t.field)),
-    mentions: terms.filter((t) => mention.has(t.field)),
-    tasks: terms.filter((t) => ["status", "priority", "assignee", "ticket"].includes(t.field)),
-  };
-}
 
 /** Short snippet of `text` around the first occurrence of `q` (case-insensitive). */
 export function snippet(text: string, q: string, width = 140) {

@@ -51,6 +51,14 @@ export async function moderateCommentAction(brand: string, ticketId: string, mes
   });
 }
 
+/** Edit (Facebook) or delete (Facebook / Instagram) a public reply the team already posted, on the platform too. */
+export async function manageReplyAction(brand: string, ticketId: string, messageId: string, action: "edit" | "delete", text?: string): Promise<ActionResult<string | null>> {
+  return run(brand, async (user) => {
+    const { manageSentReply } = await import("@/lib/cx/inbox/social");
+    return manageSentReply(brand, ticketId, messageId, action, text ?? null, user.name);
+  });
+}
+
 /** Fetch new LinkedIn comments and mentions now (normally every 5 minutes). */
 export async function syncLinkedInAction(brand: string): Promise<ActionResult<number>> {
   return run(brand, async () => {

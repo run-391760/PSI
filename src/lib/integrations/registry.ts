@@ -57,7 +57,7 @@ const SHARED_AI: Power[] = [
   seo("Pre-Publish Optimizer: AI review, fix-it and brief", "/optimizer"),
   cx("Inbox suggested replies, grammar fix and translate", "/cx/inbox"),
   cx("Ask & executive briefs", "/cx/ask"),
-  cx("Quality AI pre-scoring", "/cx/quality"),
+  cx("Quality AI pre-scoring", "/cx/settings/quality"),
   cx("Crisis summaries", "/cx/crisis"),
   cx("Publishing AI compose", "/cx/publishing"),
   cx("Dashboard chart insights", "/cx/dashboards"),
@@ -121,7 +121,7 @@ export const CREDENTIALS: Credential[] = [
     detail: () => sarvamModel(),
     powers: [
       ...SHARED_AI,
-      cx("Listening: Indian-language detection, English translation and sentiment", "/cx/listening"),
+      cx("Listening: Indian-language detection, English translation and sentiment", "/cx/listening/platforms"),
       cx("Inbox translation to and from Indian languages", "/cx/inbox"),
     ],
     note: `${SHARED_AI_NOTE} Sarvam also translates new Indian-language listening mentions (Hindi, Bengali, Gujarati, Tamil, Telugu and more, plus romanized Hindi) to English before sentiment and intent scoring, up to 200 per fetch run, and handles inbox translation whenever either side is an Indian language.`,
@@ -175,7 +175,7 @@ export const CREDENTIALS: Credential[] = [
       seo("Google reviews", "/local/reviews"),
       seo("Map Rank Tracker", "/local/map-rank-tracker"),
       seo("AI Visibility: Google AI Overviews", "/ai-visibility"),
-      cx("Google reviews", "/cx/listening/reviews"),
+      cx("Google reviews", "/cx/listening/platforms"),
       cx("Plan & usage: paid-API spend", "/cx/plan"),
     ],
     note: "Every paid call reserves its worst-case cost against the monthly budget first (Settings → Budget).",
@@ -329,7 +329,7 @@ export const CREDENTIALS: Credential[] = [
     optional: ["YOUTUBE_UPLOAD_ACCESS_TOKEN"],
     configured: () => channelAvailable("youtube"),
     powers: [
-      cx("Listening: YouTube videos and comments", "/cx/listening"),
+      cx("Listening: YouTube videos and comments", "/cx/listening/platforms"),
       cx("Social profiles: @handle lookup", "/cx/settings/social-profiles"),
       cx("Publishing: YouTube channel insights", "/cx/publishing"),
     ],
@@ -343,7 +343,7 @@ export const CREDENTIALS: Credential[] = [
     kind: "key",
     env: [["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"]],
     configured: () => channelAvailable("reddit"),
-    powers: [cx("Listening: Reddit", "/cx/listening"), cx("Social profiles: Reddit", "/cx/settings/social-profiles")],
+    powers: [cx("Listening: Reddit", "/cx/listening/platforms"), cx("Social profiles: Reddit", "/cx/settings/social-profiles")],
     docs: "https://www.reddit.com/prefs/apps",
   },
   {
@@ -354,7 +354,7 @@ export const CREDENTIALS: Credential[] = [
     kind: "key",
     env: [["BLUESKY_HANDLE", "BLUESKY_APP_PASSWORD"]],
     configured: () => channelAvailable("bluesky"),
-    powers: [cx("Listening: Bluesky keyword search", "/cx/listening")],
+    powers: [cx("Listening: Bluesky keyword search", "/cx/listening/platforms")],
   },
   {
     id: "threads",
@@ -477,7 +477,7 @@ export const CREDENTIALS: Credential[] = [
     env: [["DATABASE_URL"]],
     configured: () => isSet("DATABASE_URL"),
     unsetNote: "Using the embedded PGlite database in .data/postgres",
-    powers: [seo("All SEO data", "/dashboard"), cx("All CX data", "/cx")],
+    powers: [seo("All SEO data", "/dashboard"), cx("All CX data", "/cx/inbox")],
     note: "Contains the database password.",
   },
   {
@@ -524,7 +524,7 @@ export const CREDENTIALS: Credential[] = [
     savedAt: { workspace: "CX", label: "Omni-Channel Setup", href: "/cx/settings/channels" },
     powers: [
       cx("Inbox: email", "/cx/inbox"),
-      cx("Surveys", "/cx/surveys"),
+      cx("Surveys", "/cx/settings/surveys"),
       cx("Scheduled report exports", "/cx/reports"),
       cx("Alerts, SLA and invite emails", "/cx/settings/alerts"),
     ],

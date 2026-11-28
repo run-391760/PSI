@@ -6,6 +6,7 @@ import { MEDIA_TYPES, mediaLabel, mediaTypeOf } from "@/lib/cx/ops/model";
 import { asSentiment, engagementOf, mentionMediaType, type Basis, type Entity, type Range, type RRow } from "./model";
 import { localToday, readFilters, type ReportFilters } from "./filters";
 import { resolveReportScope, type Scope } from "./scope";
+import { publicLink } from "@/lib/cx/inbox/links";
 
 /**
  * Report data loading (server-only). Conversations = listening mentions + tickets; a ticket created from a
@@ -115,7 +116,9 @@ export async function loadTicketRows(ctx: ReportCtx, span: Range, opts: { basis?
       avatar: t.avatar_url,
       title: t.subject,
       text: t.first_body ?? t.subject,
-      url: t.mention_url,
+      // The post or comment on the platform (Facebook comments open at the comment), or the mention.
+      url: publicLink({ threadKey: t.external_thread_id, mentionUrl: t.mention_url, firstBody: t.first_body }),
+      deletable: /^(fbc|igc):/.test(t.external_thread_id ?? ""),
       ticketId: t.id,
       ticketNumber: t.number,
       mentionId: t.mention_id,

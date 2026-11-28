@@ -278,28 +278,6 @@ function where(projectId: string, f: MentionFilters) {
   return { sql: conds.join(" AND "), params };
 }
 
-export async function listMentions(projectId: string, f: MentionFilters, page = 1, pageSize = 50) {
-  const w = where(projectId, f);
-  const [{ n }] = await query<{ n: number }>(`SELECT count(*)::int n FROM cx_mentions m WHERE ${w.sql}`, w.params);
-  const rows = await query<Mention>(
-    `SELECT m.*, t.name topic_name, t.kind topic_kind, k.number ticket_number FROM cx_mentions m
-     LEFT JOIN cx_topics t ON t.id=m.topic_id LEFT JOIN cx_tickets k ON k.id=m.ticket_id
-     WHERE ${w.sql} ORDER BY m.published_at DESC NULLS LAST, m.fetched_at DESC LIMIT ${pageSize} OFFSET ${(Math.max(1, page) - 1) * pageSize}`,
-    w.params,
-  );
-  return { total: n, rows };
-}
-
-export async function mentionFacets(projectId: string) {
-  const [counts] = await query<{ total: number; unread: number; negative_open: number }>(
-    "SELECT count(*)::int total, count(*) FILTER (WHERE status='new')::int unread, count(*) FILTER (WHERE status IN ('new','read') AND sentiment='negative')::int negative_open FROM cx_mentions WHERE project_id=$1",
-    [projectId],
-  );
-  const langs = await query<{ language: string; n: number }>("SELECT language, count(*)::int n FROM cx_mentions WHERE project_id=$1 AND language IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 20", [projectId]);
-  const tags = await query<{ tag: string; n: number }>("SELECT t tag, count(*)::int n FROM cx_mentions, jsonb_array_elements_text(tags) t WHERE project_id=$1 GROUP BY 1 ORDER BY 2 DESC LIMIT 30", [projectId]);
-  return { ...counts, languages: langs.map((l) => l.language), tags: tags.map((t) => t.tag) };
-}
-
 /** All mentions for export (capped). */
 export async function exportMentions(projectId: string, f: MentionFilters, limit = 10000) {
   const w = where(projectId, f);
@@ -327,7 +305,7 @@ export async function bulkUpdate(projectId: string, input: z.input<typeof bulkIn
 export async function updateMentionLabels(projectId: string, id: string, patch: { sentiment?: string; intent?: string }) {
   if (patch.sentiment && !(SENTIMENTS as readonly string[]).includes(patch.sentiment)) throw new AppError("Invalid sentiment.");
   if (patch.intent && !/^[a-z_]{2,20}$/.test(patch.intent)) throw new AppError("Invalid intent.");
-  await query("UPDATE cx_mentions SET sentiment=COALESCE($3,sentiment), intent=COALESCE($4,intent), status=CASE WHEN status='new' THEN 'read' ELSE status END WHERE id=$1 AND project_id=$2", [
+  await query("UPDATE cx_mentions SET sentiment=COALESCE($3,sentiment), sentiment_source=CASE WHEN $3::text IS NULL THEN sentiment_source ELSE 'manual' END, intent=COALESCE($4,intent), status=CASE WHEN status='new' THEN 'read' ELSE status END WHERE id=$1 AND project_id=$2", [
     id, projectId, patch.sentiment ?? null, patch.intent ?? null,
   ]);
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { query, transaction, type Query } from "@/lib/db";
 import { AppError } from "@/lib/domain";
 import { analyzeText } from "@/lib/cx/ai";
+import { aiSentiments } from "@/lib/cx/sentiment-ai";
 import { getTicketFields } from "@/lib/cx/admin/fields";
 import { evaluateRules, type Rule } from "./rules";
 import { agentsOf, listTeams as insightsTeams } from "@/lib/cx/insights/team";
@@ -38,8 +39,10 @@ export type TicketListRow = {
   post_key: string | null; post_url: string | null; post_tickets: number; bookmarked: boolean; tasks_open: number;
   /** Card view (WP-K2): attachments of the latest and first message, the listening mention URL. */
   last_attachments: Attachment[]; first_attachments: Attachment[]; mention_url: string | null;
+  /** Public-thread key (fbc:, igc:, lic|…) for links to the post or comment. */
+  external_thread_id: string | null;
 };
-export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null; external_id?: string | null; moderation?: string | null };
+export type MessageRow = { id: string; direction: "in" | "out" | "note"; author_name: string; author_user_id: string | null; body: string; html: string | null; attachments: Attachment[]; delivery: string; delivery_error: string | null; created_at: string; reply_to?: string | null; mentions?: string[]; from_ticket?: number | null; external_id?: string | null; moderation?: string | null; edited_at?: string | null };
 
 const DONE = "('solved','closed')";
 /** Effective CRM status in SQL (mirrors model.effectiveStatus). Needs aliases t (ticket) and tm (meta). */
@@ -211,7 +214,7 @@ export async function listTickets(projectId: string, userId: string, f: TicketFi
     : "CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, t.updated_at DESC";
   const lim = p(fieldTerms.length ? Math.max(limit, 2000) : limit);
   const rows = await query<TicketListRow>(
-    `SELECT t.id,t.number,t.subject,t.status,t.priority,t.channel_kind,t.channel_id,ch.name AS channel_name,t.contact_id,c.name AS contact_name,c.email AS contact_email,
+    `SELECT t.id,t.number,t.subject,t.status,t.priority,t.channel_kind,t.channel_id,t.external_thread_id,ch.name AS channel_name,t.contact_id,c.name AS contact_name,c.email AS contact_email,
             t.assignee_id,u.name AS assignee_name,t.team,t.tags,t.sentiment,t.intent,t.language,t.first_response_due,t.resolution_due,t.first_response_at,t.resolved_at,
             t.csat,t.created_at,t.updated_at,lm.body AS last_body,lm.direction AS last_direction,lm.created_at AS last_at,
             (SELECT count(*)::int FROM cx_messages x WHERE x.ticket_id=t.id AND x.direction<>'note') AS messages,
@@ -489,6 +492,10 @@ async function loadRules(q: Query, projectId: string) {
 export async function createTicket(input: InboundInput) {
   const text = `${input.subject}\n${input.body}`;
   const a = analyzeText(text);
+  // Gemini sentiment (Sarvam fallback) before rules run, so "negative" routing uses it; the lexicon score stays
+  // when AI is off, over its daily cap or slow (short timeout: webhooks must answer quickly).
+  const [ai] = await aiSentiments([text], { timeoutMs: 12_000 });
+  if (ai) { a.sentiment = ai.sentiment; a.sentimentScore = ai.score; }
   // Rules and SLA are resolved before the transaction (PGlite runs one connection; no queries outside `q` inside it).
   const rules = await loadRules(query, input.projectId);
   const { actions, matched } = evaluateRules(rules, { channel: input.channelKind, subject: input.subject, body: input.body, intent: a.intent, sentiment: a.sentiment, language: a.language, email: input.contact.email ?? null });
@@ -505,9 +512,9 @@ export async function createTicket(input: InboundInput) {
     const [{ n }] = await q<{ n: number }>("SELECT COALESCE(MAX(number),0)+1 AS n FROM cx_tickets WHERE project_id=$1", [input.projectId]);
     const id = randomUUID();
     await q(
-      `INSERT INTO cx_tickets(id,project_id,number,subject,status,priority,channel_kind,channel_id,contact_id,assignee_id,team,tags,sentiment,intent,language,external_thread_id,first_response_due,resolution_due,created_at,updated_at)
-       VALUES($1,$2,$3,$4,'new',$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$18)`,
-      [id, input.projectId, n, input.subject.slice(0, 300) || "(no subject)", priority, input.channelKind, input.channelId ?? null, contactId, assignee, actions.team, JSON.stringify(actions.tags), a.sentiment, a.intent, a.language, input.externalThreadId ?? null, due.firstResponseDue, due.resolutionDue, createdAt],
+      `INSERT INTO cx_tickets(id,project_id,number,subject,status,priority,channel_kind,channel_id,contact_id,assignee_id,team,tags,sentiment,intent,language,external_thread_id,first_response_due,resolution_due,created_at,updated_at,sentiment_source)
+       VALUES($1,$2,$3,$4,'new',$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$18,$19)`,
+      [id, input.projectId, n, input.subject.slice(0, 300) || "(no subject)", priority, input.channelKind, input.channelId ?? null, contactId, assignee, actions.team, JSON.stringify(ai?.abusive && !actions.tags.includes("abusive") ? [...actions.tags, "abusive"] : actions.tags), a.sentiment, a.intent, a.language, input.externalThreadId ?? null, due.firstResponseDue, due.resolutionDue, createdAt, ai ? "ai" : null],
     );
     await insertMessage(q, id, { direction: "in", authorName: input.authorName ?? input.contact.name ?? "", body: input.body, html: input.html, attachments: input.attachments, externalId: input.externalId, createdAt: input.createdAt });
     if (input.parentId) await q("INSERT INTO cx_inbox_ticket_meta(ticket_id,parent_id) VALUES($1,$2) ON CONFLICT(ticket_id) DO UPDATE SET parent_id=$2", [id, input.parentId]);
@@ -623,10 +630,10 @@ export async function getTicket(projectId: string, id: string) {
   if (!t) return null;
   const ticket = normTicket(t);
   const messages = (await query<MessageRow>(
-    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,m.external_id,mm.reply_to,mm.moderation,COALESCE(mm.mentions,'[]') AS mentions
+    `SELECT m.id,m.direction,m.author_name,m.author_user_id,m.body,m.html,m.attachments,m.delivery,m.delivery_error,m.created_at,m.external_id,mm.reply_to,mm.moderation,mm.edited_at,COALESCE(mm.mentions,'[]') AS mentions
        FROM cx_messages m LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id WHERE m.ticket_id=$1 ORDER BY m.created_at, m.id`,
     [id],
-  )).map((m) => ({ ...m, created_at: iso(m.created_at)! }));
+  )).map((m) => ({ ...m, created_at: iso(m.created_at)!, edited_at: iso(m.edited_at ?? null) }));
   const events = (await query<{ id: string; actor: string; kind: string; detail: string; created_at: string }>("SELECT id,actor,kind,detail,created_at FROM cx_inbox_events WHERE ticket_id=$1 ORDER BY created_at", [id])).map((e) => ({ ...e, created_at: iso(e.created_at)! }));
   const related = t.contact_id
     ? (await query<{ id: string; number: number; subject: string; status: string; channel_kind: string; created_at: string }>("SELECT id,number,subject,status,channel_kind,created_at FROM cx_tickets WHERE project_id=$1 AND contact_id=$2 AND id<>$3 ORDER BY created_at DESC LIMIT 8", [projectId, t.contact_id, id])).map((r) => ({ ...r, created_at: iso(r.created_at)! }))

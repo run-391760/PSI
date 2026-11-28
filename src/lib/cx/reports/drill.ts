@@ -1,6 +1,7 @@
 import { query } from "@/lib/db";
 import { buildXlsx, toCsv, type Cell } from "@/lib/cx/inbox/xlsx";
 import { mediaLabel } from "@/lib/cx/ops/model";
+import { appTicketLink } from "@/lib/cx/inbox/links";
 import { reportContext, loadMentionRows, loadTicketRows, applyFilters, type ReportCtx } from "./data";
 import { parseFilterQuery } from "./filters";
 import { asSentiment, drillMatches, drillWindow, ftrBucket, outCounts, pageOf, replyTat, refineMatches, SENTIMENT_LABEL, type DrillSpec, type Refine, type RRow, type Sentiment } from "./model";
@@ -30,6 +31,8 @@ export type DrillItem = {
   url: string | null;
   badge?: string | null;
   href?: string | null;
+  /** A Facebook / Instagram comment ticket that can be deleted on the platform from the drawer. */
+  deletable?: boolean;
 };
 const PAGE = 25;
 
@@ -55,6 +58,7 @@ const fromRow = (r: RRow): DrillItem => ({
   at: r.at,
   url: r.url,
   badge: r.kind === "ticket" ? (r.status ?? null) : null,
+  deletable: r.kind === "ticket" && !!r.deletable,
 });
 
 const DAY = 86400000;
@@ -230,8 +234,10 @@ export async function drillItems(brand: { id: string; name: string }, spec: Dril
 export async function drillExport(brand: { id: string; name: string }, spec: DrillSpec, format: "csv" | "xlsx", refine?: Refine) {
   const items = (await allItems(brand, spec)).filter((i) => refineItem(i, refine)).slice(0, 5000);
   const rows: Cell[][] = [
-    ["Date (local)", "Author", "Handle", "Network", "Media type", "Sentiment", "Title", "Text", "URL", "Ticket #", "Status"],
-    ...items.map((i) => [i.at.slice(0, 16).replace("T", " "), i.author, i.handle, i.network, mediaLabel(i.mediaType), i.sentiment ? SENTIMENT_LABEL[i.sentiment] : "", i.title, i.text, i.url, i.ticketNumber, i.badge ?? ""]),
+    ["Date (local)", "Author", "Handle", "Network", "Media type", "Sentiment", "Title", "Text", "Link", "Ticket #", "Status"],
+    ...items.map((i) => [i.at.slice(0, 16).replace("T", " "), i.author, i.handle, i.network, mediaLabel(i.mediaType), i.sentiment ? SENTIMENT_LABEL[i.sentiment] : "", i.title, i.text,
+      // The post or comment on the platform; conversations without a public page link to the ticket in the app.
+      i.url ?? (i.ticketId ? appTicketLink(i.ticketId, brand.id) : ""), i.ticketNumber, i.badge ?? ""]),
   ];
   const base = (spec.title || "drill-down").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "drill-down";
   if (format === "xlsx") return { name: `${base}.xlsx`, rows: items.length, data: buildXlsx([{ name: "Items", rows }]).toString("base64"), mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };

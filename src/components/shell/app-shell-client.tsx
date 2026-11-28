@@ -52,8 +52,8 @@ function SeoFrame({ user, unread, logoutAction, available, children }: FrameProp
 
 /**
  * CX workspace (Konnect layout): full-width brand header with tabs, a per-tab white sidebar that
- * becomes an icon rail (collapsed, focus mode, or when a <SectionPanel> is present), and the hamburger
- * menu. Phones get the sidebar inside the hamburger drawer.
+ * becomes an icon rail (collapsed, focus mode, or when a <SectionPanel> is present). No menu button on
+ * desktop; phones and tablets open the sidebar in a drawer from the header.
  */
 function CxFrame({ user, unread, logoutAction, children }: FrameProps) {
   const prefs = useFocusShortcuts();
@@ -72,7 +72,7 @@ function CxFrame({ user, unread, logoutAction, children }: FrameProps) {
         <CxSidebar />
         <main className="min-w-0 flex-1">{children}</main>
       </div>
-      <CxMenu open={menuOpen} onClose={close} logoutAction={logoutAction} />
+      <CxMenu open={menuOpen} onClose={close} />
     </div>
   );
 }

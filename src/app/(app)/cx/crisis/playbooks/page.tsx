@@ -6,7 +6,7 @@ import { NoBrand } from "@/components/cx/listening/no-brand";
 import { Page, PageHeader } from "@/components/shell/page";
 import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
-import { listPlaybooks } from "@/lib/cx/listening/crisis2";
+import { ensureStarterPlaybooks, listPlaybooks } from "@/lib/cx/listening/crisis2";
 
 export const metadata: Metadata = { title: "Crisis playbooks" };
 
@@ -15,6 +15,7 @@ export default async function PlaybooksPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Crisis playbooks" />;
+  if (brand.role !== "viewer") await ensureStarterPlaybooks(brand.id);
   const playbooks = await listPlaybooks(brand.id);
   return (
     <Page>

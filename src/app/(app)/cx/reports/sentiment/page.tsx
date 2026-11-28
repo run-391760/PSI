@@ -193,7 +193,7 @@ export default async function SentimentPage({ searchParams }: { searchParams: Pr
                 title={`Top ${SENTIMENT_LABEL[s]} Posts`}
                 info="Strongest sentiment score first, then engagement, then newest."
                 actions={<ParamSelect param="tp" value={v.top.entity} options={entOptions} label="Scope" />}
-                table={{ columns: ["Date", "Author", "Text"], rows: v.top[s].map((p) => [dmy(p.at), p.author, p.title || p.text]) }}
+                table={{ columns: ["Date", "Author", "Text", "Link"], rows: v.top[s].map((p) => [dmy(p.at), p.author, p.title || p.text, p.url ?? ""]) }}
               >
                 <PostListK posts={v.top[s]} drill={{ ...base, entity: ent(v.top.entity) }} empty={`No ${s} posts in this period.`} />
               </Widget>

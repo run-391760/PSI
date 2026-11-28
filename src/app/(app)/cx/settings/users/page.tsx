@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Page } from "@/components/shell/page";
+import { Leaderboard } from "@/components/cx/insights/leaderboard";
 import { Badge } from "@/components/ui/badge";
+import { getLeaderboard, LEADERBOARD_DAYS } from "@/lib/cx/insights/leaderboard";
 import { listTeams } from "@/lib/cx/insights/team";
 import { getIpSettings } from "@/lib/cx/admin/ip";
 import { listRoles } from "@/lib/cx/admin/roles";
@@ -12,10 +14,12 @@ import { UsersClient } from "./users-client";
 export const metadata: Metadata = { title: "Users" };
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const { el, ctx } = await settingsPage(await searchParams, { title: "Users", path: "/cx/settings/users", perm: "page:settings.team" });
+  const sp = await searchParams;
+  const { el, ctx } = await settingsPage(sp, { title: "Users", path: "/cx/settings/users", perm: "page:settings.team" });
   if (!ctx) return el;
   const id = ctx.brand.id;
-  const [users, groups, roles, teams, candidates, ip] = await Promise.all([listUsers(id), listUserGroups(id), listRoles(id), listTeams(id), existingUserCandidates(id, ctx.user.id), getIpSettings(id)]);
+  const lb = (LEADERBOARD_DAYS as readonly number[]).includes(Number(sp.lb)) ? Number(sp.lb) : 30;
+  const [users, groups, roles, teams, candidates, ip, leaders] = await Promise.all([listUsers(id), listUserGroups(id), listRoles(id), listTeams(id), existingUserCandidates(id, ctx.user.id), getIpSettings(id), getLeaderboard(id, lb)]);
   const link = "text-[12px] font-semibold tracking-[0.08em] text-text-2 uppercase hover:text-link";
   return (
     <Page>
@@ -35,6 +39,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         candidates={candidates}
         canEdit={ctx.canEdit}
       />
+      <Leaderboard rows={leaders} days={lb} href={(d) => `/cx/settings/users?brand=${id}&lb=${d}#leaderboard`} />
     </Page>
   );
 }

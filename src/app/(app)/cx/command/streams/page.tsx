@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/feedback";
 import { requirePageUser } from "@/lib/auth";
 import { cxContext } from "@/lib/cx/context";
-import { listBoards, streamItems, type StreamDef } from "@/lib/cx/listening/command";
+import { ensureDefaultBoard, listBoards, STREAM_CHANNELS, streamItems, type StreamDef } from "@/lib/cx/listening/command";
 import { listTopics } from "@/lib/cx/listening/data";
 import { LISTEN_SOURCES, sourceLabel } from "@/lib/cx/listening/sources";
 import { cn } from "@/lib/utils";
@@ -24,10 +24,12 @@ export default async function StreamsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const { brand, switcher } = await cxContext(user.id, sp);
   if (!brand) return <NoBrand title="Streams" />;
+  if (brand.role !== "viewer") await ensureDefaultBoard(brand.id);
   const [boards, topics] = await Promise.all([listBoards(brand.id), listTopics(brand.id)]);
   const board = boards.find((b) => b.id === sp.board) ?? boards[0];
   const topicOpts = topics.map((t) => ({ value: t.id, label: t.name }));
-  const sourceOpts = LISTEN_SOURCES.map((s) => ({ value: s, label: sourceLabel(s) }));
+  const CHANNEL_LABEL: Record<string, string> = { facebook: "Facebook (inbox)", instagram: "Instagram (inbox)", linkedin: "LinkedIn (inbox)", x: "X (inbox)", whatsapp: "WhatsApp", email: "Email", livechat: "Live chat", webform: "Web form" };
+  const sourceOpts = [...LISTEN_SOURCES.map((s) => ({ value: s, label: sourceLabel(s) })), ...STREAM_CHANNELS.map((c) => ({ value: c, label: CHANNEL_LABEL[c] }))];
   const streams = board ? await Promise.all(board.streams.map(async (s: StreamDef) => ({ ...s, items: await streamItems(brand.id, s, 30) }))) : [];
   return (
     <Page wide>
@@ -35,7 +37,7 @@ export default async function StreamsPage({ searchParams }: { searchParams: Prom
         breadcrumbs={[{ label: "CX" }, { label: "Command centre", href: `/cx/command?brand=${brand.id}` }, { label: "Streams" }]}
         title="Streams"
         subject={brand.name}
-        description="Social wall: boards of live mention streams filtered by topic, source, sentiment or keyword. Share, open or ticket any post from the wall."
+        description="Social wall: boards of live streams of listening mentions and connected-channel tickets (Facebook, Instagram, LinkedIn, email…), filtered by topic, source, sentiment or keyword."
         actions={
           <>
             <BrandSwitcher brands={switcher} current={brand.id} />

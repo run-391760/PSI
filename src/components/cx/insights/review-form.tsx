@@ -3,7 +3,7 @@
 import { Sparkles, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { acceptReviewAction, aiPrescoreAction, deleteReviewAction, disputeAction, resolveDisputeAction, saveReviewAction } from "@/app/(app)/cx/quality/actions";
+import { acceptReviewAction, aiPrescoreAction, deleteReviewAction, disputeAction, resolveDisputeAction, saveReviewAction } from "@/app/(app)/cx/settings/quality/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -220,7 +220,7 @@ export function ReviewForm({ brand, review, sections, passScore, ai, supervisors
           <Field label="Coaching notes for the agent" htmlFor="rv-coach"><Textarea id="rv-coach" rows={3} value={coaching} disabled={locked} onChange={(e) => setCoaching(e.target.value)} placeholder="What to keep doing, what to change, resources…" /></Field>
         </CardBody>
         <CardFooter className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="ghost" className="mr-auto" disabled={pending} onClick={async () => (await confirm({ title: "Delete this review?" })) && run(() => deleteReviewAction(brand, review.id), "Deleted", () => router.push(`/cx/quality?brand=${brand}&tab=queue`))}>
+          <Button variant="ghost" className="mr-auto" disabled={pending} onClick={async () => (await confirm({ title: "Delete this review?" })) && run(() => deleteReviewAction(brand, review.id), "Deleted", () => router.push(`/cx/settings/quality?brand=${brand}&tab=queue`))}>
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
           {!locked && (

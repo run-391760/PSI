@@ -3,7 +3,7 @@
 import { Check, Copy, ExternalLink, Link2, Pause, Play, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { deleteSurveyAction, ticketLinkAction, updateSurveyFlagsAction } from "@/app/(app)/cx/surveys/actions";
+import { deleteSurveyAction, ticketLinkAction, updateSurveyFlagsAction } from "@/app/(app)/cx/settings/surveys/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -71,7 +71,7 @@ export function SurveySharePanel({ brand, survey, origin, invites }: { brand: st
                 (await confirm({ title: "Delete this survey?", description: "All its responses are deleted too. This can't be undone." })) &&
                 start(async () => {
                   const r = await deleteSurveyAction(brand, survey.id);
-                  if (r.ok) router.push(`/cx/surveys?brand=${brand}`);
+                  if (r.ok) router.push(`/cx/settings/surveys?brand=${brand}`);
                   else setError(r.error);
                 })
               }

@@ -48,16 +48,36 @@ export async function graph(path: string, token: string, post?: Record<string, s
  * Store inbound WhatsApp / Messenger / Instagram messages: the channel is the cx_channels row whose
  * config.accountId equals the phone number id / page id / IG account id. One open ticket per sender.
  */
+const permalinks = new Map<string, string>();
+/** The public link of an Instagram post or reel (cached per process; null when the token can't read it). */
+async function instagramPermalink(ch: { project_id: string; config: Obj | null; secret_enc: string | null }, mediaId: string): Promise<string | null> {
+  const hit = permalinks.get(mediaId);
+  if (hit) return hit;
+  try {
+    const token = await metaToken(ch, "instagram");
+    if (!token) return null;
+    const link = (await graph(`${encodeURIComponent(mediaId)}?fields=permalink`, token)).permalink;
+    if (typeof link !== "string" || !link.startsWith("https://")) return null;
+    if (permalinks.size > 2000) permalinks.clear();
+    permalinks.set(mediaId, link);
+    return link;
+  } catch {
+    return null; // the comment is still stored, just without the post link
+  }
+}
+
 export async function storeSocial(items: InboundSocial[]) {
   let stored = 0;
   for (const m of items) {
-    const [ch] = await query<{ id: string; project_id: string }>("SELECT id,project_id FROM cx_channels WHERE kind=$1 AND config->>'accountId'=$2 AND status<>'paused' LIMIT 1", [m.platform, m.accountId]);
+    const [ch] = await query<{ id: string; project_id: string; config: Obj | null; secret_enc: string | null }>("SELECT id,project_id,config,secret_enc FROM cx_channels WHERE kind=$1 AND config->>'accountId'=$2 AND status<>'paused' LIMIT 1", [m.platform, m.accountId]);
     if (!ch) continue;
     if (m.messageId) {
       const [dupe] = await query("SELECT 1 FROM cx_messages mm JOIN cx_tickets t ON t.id=mm.ticket_id WHERE t.project_id=$1 AND mm.external_id=$2", [ch.project_id, m.messageId]);
       if (dupe) continue;
     }
     if (m.thread) {
+      // Instagram comment events carry only the media id: look up the post's link so staff can open it.
+      if (m.platform === "instagram" && !m.thread.link && m.thread.mediaId) m.thread.link = await instagramPermalink(ch, m.thread.mediaId);
       await storeThreaded(ch, { ...m, thread: m.thread });
       stored++;
       continue;
@@ -189,4 +209,58 @@ export async function moderateComment(projectId: string, ticketId: string, messa
   await query("INSERT INTO cx_inbox_message_meta(message_id,moderation) VALUES($1,$2) ON CONFLICT(message_id) DO UPDATE SET moderation=$2", [messageId, state]);
   await logEvent(query, ticketId, actor, "update", `${action === "delete" ? "deleted" : action === "hide" ? "hid" : "unhid"} a ${m.channel_kind === "instagram" ? "Instagram" : "Facebook"} comment`);
   return state;
+}
+
+/**
+ * Delete a comment ticket's comment on Facebook / Instagram (Reports drill-down): the thread's root comment,
+ * else its first inbound comment. Same rules and log entry as deleting it from the conversation.
+ */
+export async function deleteTicketComment(projectId: string, ticketId: string, actor: string) {
+  const { AppError } = await import("@/lib/domain");
+  const [m] = await query<{ id: string; moderation: string | null }>(
+    `SELECT m.id, mm.moderation FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id
+      WHERE t.project_id=$1 AND m.ticket_id=$2 AND m.direction='in' AND m.external_id IS NOT NULL AND t.external_thread_id ~ '^(fbc|igc):'
+      ORDER BY (m.external_id = split_part(t.external_thread_id, ':', 2)) DESC, m.created_at, m.id LIMIT 1`,
+    [projectId, ticketId],
+  );
+  if (!m) throw new AppError("This ticket isn't a Facebook or Instagram comment on your own post, so it can't be deleted from here.");
+  if (m.moderation === "deleted") throw new AppError("This comment was already deleted on the platform.");
+  return moderateComment(projectId, ticketId, m.id, "delete", actor);
+}
+
+/**
+ * Edit or delete a public reply the team already posted on Facebook / Instagram, on the platform itself.
+ * Facebook comments can be edited and deleted; Instagram comments can only be deleted (Instagram has no
+ * comment editing). The message stays in the ticket history: an edit replaces its text and marks it edited,
+ * a delete marks it "Deleted on the platform".
+ */
+export async function manageSentReply(projectId: string, ticketId: string, messageId: string, action: "edit" | "delete", text: string | null, actor: string) {
+  const { AppError } = await import("@/lib/domain");
+  const { sentReplyActions, toPlainText } = await import("./model");
+  const [m] = await query<{ external_id: string | null; direction: string; delivery: string; delivery_error: string | null; moderation: string | null; channel_kind: string; channel_id: string | null; external_thread_id: string | null }>(
+    `SELECT m.external_id,m.direction,m.delivery,m.delivery_error,mm.moderation,t.channel_kind,t.channel_id,t.external_thread_id
+       FROM cx_messages m JOIN cx_tickets t ON t.id=m.ticket_id LEFT JOIN cx_inbox_message_meta mm ON mm.message_id=m.id
+      WHERE m.id=$1 AND m.ticket_id=$2 AND t.project_id=$3`, [messageId, ticketId, projectId]);
+  if (!m) throw new AppError("Message not found.", 404);
+  const allowed = sentReplyActions(m, m.channel_kind, m.external_thread_id ?? "");
+  const net = m.channel_kind === "instagram" ? "Instagram" : "Facebook";
+  if (action === "edit" && !allowed.edit) throw new AppError(m.channel_kind === "instagram" ? "Instagram doesn't allow editing comments. Delete the reply and send a new one." : "Only public replies that were posted on Facebook can be edited.");
+  if (action === "delete" && !allowed.delete) throw new AppError("Only public replies that were posted on Facebook or Instagram can be deleted.");
+  const body = (text ?? "").trim();
+  if (action === "edit" && !body) throw new AppError("The reply can't be empty. Delete it instead.");
+  if (body.length > 8000) throw new AppError("The reply is too long (8,000 characters at most).");
+  const [ch] = m.channel_id ? await query<{ project_id: string; config: Obj; secret_enc: string | null }>("SELECT project_id,config,secret_enc FROM cx_channels WHERE id=$1 AND project_id=$2", [m.channel_id, projectId]) : [];
+  const token = ch ? await metaToken(ch, m.channel_kind === "instagram" ? "instagram" : "facebook") : null;
+  if (!token) throw new AppError(`Add a Page access token to the ${net} channel to change replies on ${net}.`);
+  if (action === "delete") {
+    await graph(m.external_id!, token, "DELETE");
+    await query("INSERT INTO cx_inbox_message_meta(message_id,moderation) VALUES($1,'deleted') ON CONFLICT(message_id) DO UPDATE SET moderation='deleted'", [messageId]);
+    await logEvent(query, ticketId, actor, "update", `deleted a ${net} reply`);
+    return null;
+  }
+  await graph(m.external_id!, token, { message: toPlainText(body) });
+  await query("UPDATE cx_messages SET body=$1, html=NULL WHERE id=$2", [body, messageId]);
+  await query("INSERT INTO cx_inbox_message_meta(message_id,edited_at) VALUES($1,now()) ON CONFLICT(message_id) DO UPDATE SET edited_at=now()", [messageId]);
+  await logEvent(query, ticketId, actor, "update", `edited a ${net} reply`);
+  return body;
 }

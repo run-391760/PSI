@@ -62,6 +62,25 @@ export type Playbook = { id: string; name: string; description: string; auto_att
 export type ChecklistItem = PlaybookStep & { done: boolean; by: string | null; at: string | null };
 export type Checklist = { playbook_id: string; name: string; items: ChecklistItem[] };
 
+/** Starter playbooks a brand gets once (edit or delete them freely; they are not re-created). */
+const STARTER_PLAYBOOKS: z.input<typeof playbookInput>[] = [
+  { name: "Negative spike response", description: "First-hour response to a negative sentiment spike.", autoAttach: "critical",
+    steps: ["Confirm the facts with the owning team", "Post a holding statement on affected channels", "Brief support agents with the reply template", "Reply to the top 10 most-followed authors", "Share an update within 4 hours", "Write the debrief once resolved"] },
+  { name: "Comment storm on our posts", description: "Many comments on the university's own Facebook, Instagram or LinkedIn posts.", autoAttach: "any",
+    steps: ["Open Social Listening and the linked tickets to see which post is affected", "Hide or delete abusive and spam comments (keep genuine criticism visible)", "Pin or post one factual reply on the post", "Answer direct questions from the inbox using the agreed template", "Escalate to the ORM lead if it reaches news or more than one platform", "Review sentiment after 24 hours and resolve or keep monitoring"] },
+  { name: "Admissions or fees complaint wave", description: "Repeated complaints about admissions, fees, results or placements.", autoAttach: "none",
+    steps: ["Collect the common questions from linked tickets and mentions", "Get the confirmed answer from the admissions or accounts office", "Add it to the knowledge base for agents and the AI assistant", "Reply to each open ticket with the confirmed answer", "Publish a clarification post if the issue is widespread", "Track resolution and close the event"] },
+];
+
+/** Give a brand the starter playbooks once, so Playbooks and auto-attach work from day one. */
+export async function ensureStarterPlaybooks(projectId: string) {
+  const [s] = await query<{ playbooks_seeded: boolean }>("SELECT playbooks_seeded FROM cx_listening_settings WHERE project_id=$1", [projectId]);
+  if (s?.playbooks_seeded) return;
+  const [{ n }] = await query<{ n: number }>("SELECT count(*)::int n FROM cx_crisis_playbooks WHERE project_id=$1", [projectId]);
+  if (!n) for (const p of STARTER_PLAYBOOKS) await savePlaybook(projectId, p);
+  await query("INSERT INTO cx_listening_settings(project_id,playbooks_seeded) VALUES($1,true) ON CONFLICT(project_id) DO UPDATE SET playbooks_seeded=true", [projectId]);
+}
+
 export async function listPlaybooks(projectId: string) {
   return query<Playbook>("SELECT id, name, description, auto_attach, steps, created_at FROM cx_crisis_playbooks WHERE project_id=$1 ORDER BY created_at", [projectId]);
 }
@@ -132,10 +151,8 @@ export async function eventRecovery(projectId: string, e: CrisisEvent, baselineD
   const start = new Date(e.window_start);
   const from = new Date(start.getTime() - baselineDays * 86400000);
   const to = new Date(Math.min(Date.now(), start.getTime() + 90 * 86400000));
-  const rows = await query<{ published_at: string | null; sentiment: string | null }>(
-    "SELECT published_at, sentiment FROM cx_mentions WHERE project_id=$1 AND ($2::text IS NULL OR topic_id=$2) AND published_at >= $3 AND published_at <= $4 AND status<>'ignored'",
-    [projectId, e.topic_id, from.toISOString(), to.toISOString()],
-  );
+  const { eventScopeRows } = await import("./crisis");
+  const rows = await eventScopeRows(projectId, e, from.toISOString(), to.toISOString());
   const coverage = await query<{ t: string | Date | null }>("SELECT min(published_at) t FROM cx_mentions WHERE project_id=$1 AND ($2::text IS NULL OR topic_id=$2)", [projectId, e.topic_id]);
   const since = coverage[0]?.t ? new Date(coverage[0].t).toISOString().slice(0, 10) : null;
   const daily = dailyCounts(rows, from.toISOString(), to.toISOString()).filter((d) => !since || d.date >= since);

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db";
 import { analyzeText } from "@/lib/cx/ai";
+import { aiSentiments } from "@/lib/cx/sentiment-ai";
 import type { Project } from "@/lib/projects";
 import { fetchSource, type RawMention } from "./connectors";
 import { dbIndicStore, endIndicRun, enrichIndic, runBudget, startIndicRun, type IndicBudget } from "./indic";
@@ -41,18 +42,20 @@ export function prepareMentions(raw: RawMention[], topic: TopicLike, source: Lis
  */
 export async function storeMentions(projectId: string, topicId: string | null, source: string, prepared: ReturnType<typeof prepareMentions>, opts: { indic?: IndicBudget } = {}) {
   const rows = await enrichIndic(prepared, opts.indic ?? runBudget(projectId), dbIndicStore(projectId, source));
+  await scoreNewWithAi(projectId, source, rows);
   let inserted = 0;
   const ids: string[] = [];
   for (const r of rows) {
     const res = await query(
-      `INSERT INTO cx_mentions(id,project_id,topic_id,source,external_id,url,author,author_handle,author_followers,title,body,language,country,published_at,sentiment,sentiment_score,intent,engagement,translation)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19)
+      `INSERT INTO cx_mentions(id,project_id,topic_id,source,external_id,url,author,author_handle,author_followers,title,body,language,country,published_at,sentiment,sentiment_score,intent,engagement,translation,sentiment_source)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)
        ON CONFLICT(project_id,source,external_id) DO UPDATE SET engagement=excluded.engagement, author_followers=COALESCE(excluded.author_followers, cx_mentions.author_followers), topic_id=COALESCE(cx_mentions.topic_id, excluded.topic_id)
        RETURNING id, (xmax = 0) inserted`,
       [
         randomUUID(), projectId, topicId, source, r.externalId.slice(0, 500), r.url, r.author.slice(0, 200), r.authorHandle, r.authorFollowers,
         r.title.slice(0, 500), r.body.slice(0, 8000), r.language, r.country, r.publishedAt, r.sentiment, r.sentimentScore, r.intent, JSON.stringify(r.engagement),
         ((r as { translation?: string }).translation ?? "").slice(0, 8000) || null,
+        (r as { sentimentSource?: string }).sentimentSource ?? (r.engagement.rating != null ? "rating" : null),
       ],
     );
     const row = res[0] as { id?: string; inserted?: boolean } | undefined;
@@ -62,6 +65,27 @@ export async function storeMentions(projectId: string, topicId: string | null, s
       await query("INSERT INTO cx_listening_media(mention_id,project_id,media) VALUES($1,$2,$3::jsonb) ON CONFLICT(mention_id) DO UPDATE SET media=excluded.media", [row.id, projectId, JSON.stringify(r.media.slice(0, 8))]);
   }
   return { inserted, ids };
+}
+
+/**
+ * Gemini sentiment (Sarvam fallback) for mentions not stored yet: stored ones keep their score and any manual
+ * correction. Star-rated reviews keep the rating-based label. Changes rows in place; never throws.
+ */
+async function scoreNewWithAi(projectId: string, source: string, rows: ReturnType<typeof prepareMentions>) {
+  try {
+    const ids = rows.map((r) => r.externalId.slice(0, 500));
+    if (!ids.length) return;
+    const known = new Set((await query<{ external_id: string }>("SELECT external_id FROM cx_mentions WHERE project_id=$1 AND source=$2 AND external_id = ANY($3)", [projectId, source, ids])).map((r) => r.external_id));
+    const todo = rows.filter((r, i) => !known.has(ids[i]) && r.engagement.rating == null);
+    if (!todo.length) return;
+    const scores = await aiSentiments(todo.map((r) => (r as { translation?: string }).translation || `${r.title} ${r.body}`.trim()));
+    todo.forEach((r, i) => {
+      const s = scores[i];
+      if (s) { r.sentiment = s.sentiment; r.sentimentScore = s.score; (r as { sentimentSource?: string }).sentimentSource = "ai"; }
+    });
+  } catch (e) {
+    console.warn(`[listening] AI sentiment skipped: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**

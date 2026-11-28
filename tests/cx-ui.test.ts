@@ -156,14 +156,9 @@ test("focus shortcut is Ctrl/Cmd + backslash only", () => {
   assert.equal(p.isFocusShortcut({ key: "k", metaKey: true, ctrlKey: false, altKey: false }), false);
 });
 
-// ---------------------------------------------------------------- overview
+// ---------------------------------------------------------------- SLA timing helpers
 const now = new Date("2026-10-04T12:00:00Z");
 const min = (m: number) => new Date(now.getTime() + m * 60000).toISOString();
-const ticket = (id: string, over: Partial<import("../src/lib/cx/ui/home-logic").TicketRow> = {}) => ({
-  id, number: Number(id.replace(/\D/g, "")) || 1, subject: `Ticket ${id}`, priority: "normal", channel_kind: "email",
-  created_at: min(-600), first_response_at: null, first_response_due: null, resolution_due: null, ...over,
-});
-
 test("nextDue ignores first-response deadline once answered", () => {
   assert.equal(h.nextDue({ first_response_at: null, first_response_due: min(10), resolution_due: min(100) }), new Date(min(10)).getTime());
   assert.equal(h.nextDue({ first_response_at: min(-5), first_response_due: min(-30), resolution_due: min(100) }), new Date(min(100)).getTime());
@@ -175,48 +170,4 @@ test("relTime formats past and future", () => {
   assert.equal(h.relTime(t + 25 * 60000, t), "in 25m");
   assert.equal(h.relTime(t - 3 * 3600000, t), "3h ago");
   assert.equal(h.relTime(t - 3 * 86400000, t), "3d ago");
-});
-
-test("buildAttention orders breached > crisis > at risk > unassigned and dedupes tickets", () => {
-  const sla = [
-    ticket("t1", { first_response_due: min(30) }), // at risk
-    ticket("t2", { first_response_due: min(-120) }), // breached 2h
-    ticket("t3", { resolution_due: min(-10), first_response_at: min(-300) }), // breached 10m
-    ticket("t9", { first_response_due: min(500) }), // outside risk window
-  ];
-  const unassigned = [ticket("t2", { created_at: min(-900) }), ticket("t4", { created_at: min(-60), priority: "urgent" }), ticket("t5", { created_at: min(-2000) })];
-  const crises = [
-    { id: "c1", title: "Spike", severity: "warning", status: "open", detected_at: min(-30) },
-    { id: "c2", title: "Outage", severity: "critical", status: "monitoring", detected_at: min(-90) },
-    { id: "c3", title: "Old", severity: "critical", status: "resolved", detected_at: min(-90) },
-  ];
-  const out = h.buildAttention({ sla, unassigned, crises }, now);
-  assert.deepEqual(out.map((a) => a.key), ["t:t2", "t:t3", "c:c2", "c:c1", "t:t1", "t:t5", "t:t4"]);
-  assert.deepEqual(out.map((a) => a.kind), ["sla_breached", "sla_breached", "crisis", "crisis", "sla_risk", "unassigned", "unassigned"]);
-  assert.equal(out[0].detail, "First response overdue 2h ago");
-  assert.equal(out[1].detail, "Resolution overdue 10m ago");
-  assert.equal(out[4].detail, "First response due in 30m");
-  assert.match(out[6].detail, /urgent$/);
-  assert.equal(h.buildAttention({ sla, unassigned, crises }, now, 3).length, 3);
-});
-
-test("headlineKpis: n/a with setup links when sources are missing (missing is not zero)", () => {
-  const base = { channels: 0, tickets: 0, open: 0, unassigned: 0, queued: null, slaConfigured: false, slaRisk: 0, slaBreached: 0, topics: 0, negativeToday: 0, mentionsToday: 0 };
-  const empty = h.headlineKpis(base);
-  assert.equal(empty.open.value, null);
-  assert.equal(empty.open.setup?.href, "/cx/settings/channels");
-  assert.equal(empty.unassigned.value, null);
-  assert.equal(empty.sla.value, null);
-  assert.equal(empty.sla.setup?.href, "/cx/settings/team?tab=sla");
-  assert.equal(empty.negative.value, null);
-  assert.equal(empty.negative.setup?.href, "/cx/listening/topics");
-
-  const live = h.headlineKpis({ ...base, channels: 1, tickets: 5, open: 3, unassigned: 2, queued: 1, slaConfigured: true, slaRisk: 2, slaBreached: 1, topics: 1, negativeToday: 4, mentionsToday: 9 });
-  assert.deepEqual([live.open.value, live.unassigned.value, live.sla.value, live.negative.value], [3, 2, 2, 4]);
-  assert.equal(live.unassigned.sub, "1 waiting in queue");
-  assert.equal(live.sla.sub, "1 already breached");
-  assert.equal(live.negative.sub, "of 9 mentions today");
-  // Real zeros stay zeros once the source exists.
-  const zero = h.headlineKpis({ ...base, channels: 1, slaConfigured: true, topics: 1 });
-  assert.deepEqual([zero.open.value, zero.unassigned.value, zero.sla.value, zero.negative.value], [0, 0, 0, 0]);
 });

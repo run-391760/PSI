@@ -158,6 +158,8 @@ test("Meta comments, visitor posts and mentions → threaded inbound items; own 
   ] }] };
   const g = wh.mapMetaChanges(ig);
   assert.deepEqual(g.items.map((i) => [i.messageId, i.thread?.key, i.thread?.label, i.senderName]), [["c9", "igc:c9", "Comment on your reel", "@asha"]]);
+  // The post's media id is kept so its link can be looked up when the comment is stored.
+  assert.equal(g.items[0].thread?.mediaId, "m1");
   assert.deepEqual(g.mentions, [{ accountId: "IG1", mediaId: "m7", commentId: "c77" }, { accountId: "IG1", mediaId: "m8", commentId: null }]);
   assert.deepEqual(wh.parseMetaThread("igm:m7:c77"), { kind: "igm", id: "m7", commentId: "c77" });
   assert.deepEqual(wh.parseMetaThread("igm:m8:"), { kind: "igm", id: "m8", commentId: null });

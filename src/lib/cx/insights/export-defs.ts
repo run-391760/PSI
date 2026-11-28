@@ -7,6 +7,7 @@ export const EXPORT_COLUMNS: Record<ExportSource, ExportColumn[]> = {
   tickets: [
     { key: "number", label: "Ticket #" },
     { key: "subject", label: "Subject" },
+    { key: "link", label: "Link" },
     { key: "status", label: "Status" },
     { key: "priority", label: "Priority" },
     { key: "channel", label: "Channel" },
@@ -38,6 +39,7 @@ export const EXPORT_COLUMNS: Record<ExportSource, ExportColumn[]> = {
     { key: "direction", label: "From" },
     { key: "author", label: "Author" },
     { key: "body", label: "Message" },
+    { key: "link", label: "Link" },
     { key: "created_at", label: "Sent (UTC)" },
     { key: "delivery", label: "Delivery" },
     { key: "reply_tat", label: "Reply TAT (HH:MM:SS)" },

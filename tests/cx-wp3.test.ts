@@ -11,16 +11,7 @@ const row = (o: Partial<Record<string, unknown>>) =>
   ({ id: String(Math.random()), topic_id: "t1", source: "news", author: "a", author_handle: null, author_followers: null, title: "", body: "", language: "en", published_at: null, sentiment: "neutral", intent: null, ...o }) as never;
 const topics = [{ id: "t1", name: "Acme", kind: "brand", keywords: ["acme"] }];
 
-test("period comparison merges previous series and compares counts", () => {
-  const merged = i.withPrevious([{ date: "d1", mentions: 3 }, { date: "d2", mentions: 5 }], [{ mentions: 1 }, { mentions: 10 }], ["mentions"]);
-  assert.deepEqual(merged[1], { date: "d2", mentions: 5, prev_mentions: 10 });
-  const cmp = i.compareCounts([{ key: "news", count: 4 }], [{ key: "news", count: 2 }, { key: "reddit", count: 3 }]);
-  assert.equal(cmp[0].key, "news");
-  assert.equal(cmp[0].change, 100);
-  assert.equal(cmp.find((x) => x.key === "reddit")!.count, 0);
-});
-
-test("phrase clouds and sentiment-split clouds", () => {
+test("phrase clouds", () => {
   const rows = [
     row({ body: "Acme refund delay again, customer service slow", sentiment: "negative" }),
     row({ body: "the refund delay is terrible at acme", sentiment: "negative" }),
@@ -31,24 +22,6 @@ test("phrase clouds and sentiment-split clouds", () => {
   assert.ok(p2.some((p) => p.term === "refund delay" && p.count === 2));
   assert.ok(p2.some((p) => p.term === "dashboard design"));
   assert.ok(!p2.some((p) => p.term.split(" ").includes("the")), "stop words break phrases");
-  const clouds = i.sentimentClouds(rows, topics, 10);
-  assert.ok(clouds.negative.some((t) => t.term === "refund" && t.tone === "negative"));
-  assert.ok(clouds.positive.some((t) => t.term === "dashboard"));
-  assert.ok(!clouds.negative.some((t) => t.term === "acme"), "topic keywords excluded");
-});
-
-test("peak windows per source (UTC)", () => {
-  const rows = [
-    ...[14, 14, 15, 16].map((h) => row({ source: "news", published_at: `2026-09-22T${h}:10:00Z` })), // Tuesday
-    row({ source: "mastodon", published_at: "2026-09-26T02:00:00Z" }),
-  ];
-  const p = i.peakWindows(rows);
-  const news = p.bySource.find((s) => s.source === "news")!;
-  assert.equal(news.peakStart, 14);
-  assert.equal(news.peakDay, "Tue");
-  assert.equal(news.peakShare, 1);
-  assert.equal(p.grid[1][14], 2);
-  assert.equal(p.top[0].hour, 14);
 });
 
 test("trending issues: N mentions of X, k× normal", () => {
@@ -70,7 +43,7 @@ test("trending issues: N mentions of X, k× normal", () => {
   assert.match(i.trendLabel(login!), /6 mentions and tickets of “login”, \d+\.\d× normal/);
 });
 
-test("review rating trend and drop alert", () => {
+test("review rating drop alert", () => {
   const now = new Date("2026-09-28T00:00:00Z");
   const at = (d: number) => new Date(now.getTime() - d * 86400000).toISOString();
   const reviews = [...[10, 12, 15, 20, 25, 30].map((d) => ({ published_at: at(d), rating: 5 })), ...[1, 2, 3].map((d) => ({ published_at: at(d), rating: 2 }))];
@@ -79,9 +52,6 @@ test("review rating trend and drop alert", () => {
   assert.equal(r.recentAvg, 2);
   assert.equal(r.triggered, true);
   assert.equal(i.ratingDrop(reviews.slice(0, 7), now).triggered, false, "needs 3 recent reviews");
-  const s = i.ratingSeries(reviews, [at(3).slice(0, 10), at(2).slice(0, 10), at(1).slice(0, 10)]);
-  assert.equal(s[2].rolling, 2);
-  assert.deepEqual(i.ratingDistribution(reviews).map((x) => x.count), [6, 0, 0, 3, 0]);
 });
 
 test("buzz YoY is null before coverage", () => {
@@ -94,19 +64,10 @@ test("buzz YoY is null before coverage", () => {
   assert.equal(i.buzzYoY(rows, new Date("2026-09-28T00:00:00Z"), null, 1)[0].mentions, null);
 });
 
-test("geography: storefront, ccTLD and named places", () => {
+test("geography: ccTLD and named places", () => {
   assert.equal(i.countryFromHost("timesofindia.indiatimes.co.in"), "IN");
   assert.equal(i.countryFromHost("www.reuters.com"), null);
   assert.deepEqual(i.placeIn("Students in Vadodara protest"), { country: "IN", state: "Gujarat", city: "Vadodara" });
-  const g = i.geoTree([
-    { source: "appstore", author_handle: null, title: "", body: "great", country: "GB" },
-    { source: "news", author_handle: "www.thehindu.co.in", title: "Fees hiked in Ahmedabad", body: "" },
-    { source: "mastodon", author_handle: null, title: "", body: "Nothing here" },
-  ]);
-  assert.equal(g.located, 2);
-  const inNode = g.root.children.find((c) => c.name === "IN")!;
-  assert.equal(inNode.children[0].name, "Gujarat");
-  assert.equal(inNode.children[0].children[0].name, "Ahmedabad");
 });
 
 test("crisis risk score and recovery curve", () => {

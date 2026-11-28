@@ -48,28 +48,6 @@ export async function metricsSnapshot(projectId: string, days: number, now = new
 }
 export type Snapshot = Awaited<ReturnType<typeof metricsSnapshot>>;
 
-const ASK_SYSTEM = `You are a customer-experience analyst. Answer the question using ONLY the aggregated metrics JSON provided.
-Rules: quote the exact numbers you use; null means unknown (say "not available", never guess); do not invent causes you cannot see in the data;
-if the data can't answer the question, say which metric would be needed. Be concise: at most 150 words, plain text, optional short bullet list.`;
-
-/** Natural-language Q&A over aggregated metrics (null when AI is not configured). */
-export async function askMetrics(projectId: string, userId: string, question: string, days = 30) {
-  if (!aiConfigured()) return null;
-  const q = question.trim().slice(0, 500);
-  const snap = await metricsSnapshot(projectId, days);
-  const answer = await complete(ASK_SYSTEM, `Metrics (last ${days} days):\n${JSON.stringify(snap)}\n\nQuestion: ${q}`, 700);
-  if (!answer) return null;
-  await query("INSERT INTO cx_ask_log(id,project_id,user_id,question,answer) VALUES($1,$2,$3,$4,$5)", [randomUUID(), projectId, userId, q, answer]);
-  return { answer, snapshot: snap };
-}
-
-export async function askHistory(projectId: string, limit = 20) {
-  return query<{ id: string; question: string; answer: string; created_at: string; asker: string | null }>(
-    "SELECT l.id,l.question,l.answer,l.created_at,COALESCE(NULLIF(u.name,''),u.email) AS asker FROM cx_ask_log l LEFT JOIN users u ON u.id=l.user_id WHERE l.project_id=$1 ORDER BY l.created_at DESC LIMIT $2",
-    [projectId, limit],
-  );
-}
-
 /** ~120-word insight for one chart from its plotted values only (null when AI is not configured). */
 export async function chartInsight(chart: { title: string; metric: string; range: string; rows: { key: string; value: number | null }[]; total: number | null; previous: number | null }) {
   if (!aiConfigured()) return null;

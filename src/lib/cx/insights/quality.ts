@@ -187,7 +187,7 @@ export async function saveReview(
       severity: res.fatal || (res.score ?? 100) < card.pass_score ? "warning" : "info",
       title: `New ${card.form_type === "coaching" ? "coaching" : "evaluation"} on ticket #${r.ticket_number}: ${res.score == null ? "n/a" : `${res.score.toFixed(0)}%`}`,
       body: `${card.name}${dueAt ? ` · accept or dispute by ${dueAt.toISOString().slice(0, 10)}` : ""}`,
-      link: `/cx/quality/review/${id}?brand=${projectId}`,
+      link: `/cx/settings/quality/review/${id}?brand=${projectId}`,
     }).catch(() => {});
   }
   return { ...res, status };
@@ -378,7 +378,7 @@ export async function assignCoaching(projectId: string, by: string, input: { age
     id, projectId, input.agentId, input.scorecardId || null, input.supervisorId || null, by, input.notes.slice(0, 4000), due,
   ]);
   if (input.agentId !== by)
-    await notify({ ownerId: input.agentId, projectId, tool: "cx-quality", severity: "info", title: "A coaching session was assigned to you", body: input.notes.slice(0, 200), link: `/cx/quality?brand=${projectId}&tab=coaching` }).catch(() => {});
+    await notify({ ownerId: input.agentId, projectId, tool: "cx-quality", severity: "info", title: "A coaching session was assigned to you", body: input.notes.slice(0, 200), link: `/cx/settings/quality?brand=${projectId}&tab=coaching` }).catch(() => {});
   return id;
 }
 

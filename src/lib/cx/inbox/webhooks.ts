@@ -8,7 +8,7 @@ export type InboundSocial = {
   platform: "whatsapp" | "facebook" | "instagram" | "linkedin"; accountId: string; senderId: string; senderName: string; messageId: string; text: string; timestamp: string;
   attachments: { type: string; url?: string; id?: string }[];
   /** Public conversations (comments, mentions, tags): one ticket per thread instead of one per sender. */
-  thread?: { key: string; label: string; link?: string | null };
+  thread?: { key: string; label: string; link?: string | null; /** Instagram media id: its permalink is looked up when stored. */ mediaId?: string | null };
 };
 
 /**
@@ -122,7 +122,7 @@ export function mapMetaChanges(body: Obj): { items: InboundSocial[]; mentions: P
         items.push({
           platform: "instagram", accountId, senderId: String(v.from?.id ?? v.from?.username ?? ""), senderName: v.from?.username ? `@${v.from.username}` : "", messageId: String(v.id),
           text: String(v.text ?? "[comment]"), timestamp: iso(v.timestamp ?? entry.time), attachments: [],
-          thread: { key: `igc:${root}`, label: v.media?.media_product_type === "REELS" ? "Comment on your reel" : "Comment on your post", link: null },
+          thread: { key: `igc:${root}`, label: v.media?.media_product_type === "REELS" ? "Comment on your reel" : "Comment on your post", link: null, mediaId: v.media?.id ? String(v.media.id) : null },
         });
       }
       if (object === "instagram" && ch.field === "mentions" && v.media_id) mentions.push({ accountId, mediaId: String(v.media_id), commentId: v.comment_id ? String(v.comment_id) : null });
